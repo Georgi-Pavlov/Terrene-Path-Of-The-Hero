@@ -209,12 +209,10 @@ func _restock_npc_potion(hero_id: String, potion_id: String) -> void:
 #     column" concept) but still applies its real stun duration.
 #   - Dark Pact hits EVERY living enemy regardless of level's radius
 #     field, since there are no columns to restrict it to.
-#   - _apply_armor_reduction() below is a best-effort reimplementation
-#     of whatever formula battle.gd actually uses for the real game -
-#     it isn't shared code (battle.gd isn't part of this step), so
-#     it's worth diffing the two once battle.gd is back in scope
-#     (Step 4) to make sure simulated and real combat never drift
-#     apart on damage math.
+#   - _apply_armor_reduction() below is verified to exactly match
+#     battle.gd's own formula (as of Step 4) - if that formula ever
+#     changes there, this copy needs updating too, since it isn't
+#     shared code.
 # ------------------------------------------------------------------
 
 # Loss/stalemate cap - if the fight hasn't resolved by this many turns,
@@ -263,6 +261,99 @@ func simulate_npc_stage_attempt(hero_id: String, hero_static: Dictionary) -> Dic
 	restock_npc_potions(hero_id)
 
 	return fight
+
+
+## The full per-hero simulation step, called once per hero per player
+## Battle-scene load (see battle.gd) - Step 4's actual "tick":
+## initializes a never-before-seen hero, runs one stage attempt, and
+## - if that attempt just fully cleared their home zone's final stage
+## - follows up with a fight against a zone-mate, if one is still
+## alive (exactly mirroring the player's own post-stage-3 hero fight,
+## just from this hero's perspective). A hero with no living zone-mate
+## left is marked freed; what a freed hero does next is Step 5.
+## Does nothing once a hero is already freed - that's Step 5's domain.
+func tick_npc_hero(hero_id: String, hero_static: Dictionary) -> void:
+	if not PlayerManager.npc_is_initialized(hero_id):
+		PlayerManager.initialize_npc_hero(hero_static, GameManager.get_zone_id_for_hero(hero_id))
+
+	if PlayerManager.is_npc_freed(hero_id):
+		return
+
+	var stage_before: int = PlayerManager.get_npc_current_stage(hero_id)
+	var fight: Dictionary = simulate_npc_stage_attempt(hero_id, hero_static)
+
+	if fight["result"] == "win" and stage_before >= GameManager.MAX_ZONE_STAGE:
+		_try_npc_zone_mate_fight(hero_id, hero_static)
+
+
+## After fully clearing their own home zone's final stage, fights a
+## random undefeated zone-mate if one exists - the exact same
+## one-sided "hero as a single tough enemy" model the player fights
+## via GameManager.build_hero_fight_enemy_def(), just simulated. If no
+## zone-mate is left alive, this hero is now free.
+## Winning uses the XP bounty formula (get_hero_kill_bounty) rather
+## than the enemy_def's own built-in XP field, since that field is
+## sized for a flat creep-style reward, not a hero kill - gold still
+## comes from the enemy_def as normal, since only the XP formula was
+## asked to change for hero kills.
+func _try_npc_zone_mate_fight(hero_id: String, hero_static: Dictionary) -> void:
+	var home_zone_id: String = GameManager.get_zone_id_for_hero(hero_id)
+	var zone_mates: Array = []
+	for hero in GameManager.get_zone(home_zone_id).get("heroes", []):
+		var mate_id: String = hero.get("id", "")
+		if mate_id == hero_id or PlayerManager.is_hero_defeated(mate_id):
+			continue
+		zone_mates.append(hero)
+
+	if zone_mates.is_empty():
+		PlayerManager.set_npc_freed(hero_id)
+		return
+
+	var opponent_static: Dictionary = zone_mates[randi() % zone_mates.size()]
+	var opponent_id: String = opponent_static.get("id", "")
+
+	var enemy_def: Dictionary = GameManager.build_hero_fight_enemy_def(opponent_static)
+	var enemies: Array = [{"static": enemy_def, "current_hp": float(enemy_def.get("hp", 1))}]
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies)
+
+	if fight["gold_gained"] > 0:
+		PlayerManager.add_npc_gold(hero_id, fight["gold_gained"])
+
+	if fight["result"] == "win":
+		PlayerManager.mark_hero_defeated(opponent_id)
+		award_npc_xp(hero_id, hero_static, get_hero_kill_bounty(opponent_id))
+
+	# A loss/stalemate here leaves current_stage at MAX_ZONE_STAGE
+	# (set by simulate_npc_stage_attempt just before this ran) with no
+	# other persisted penalty - next tick just re-clears the home
+	# zone's creeps again and retries this same fight, same as
+	# reaching 0 HP anywhere else in simulation.
+	restock_npc_potions(hero_id)
+
+
+## Every hero in the game except `exclude_hero_id` (the player's own
+## recruited hero) - the full tick pool for battle.gd's per-Battle-
+## load simulation pass.
+func get_all_npc_hero_ids(exclude_hero_id: String) -> Array:
+	var ids: Array = []
+	for zone_id in GameManager.zones.keys():
+		for hero in GameManager.zones[zone_id].get("heroes", []):
+			var hero_id: String = hero.get("id", "")
+			if hero_id != "" and hero_id != exclude_hero_id:
+				ids.append(hero_id)
+	return ids
+
+
+## Runs tick_npc_hero() for every hero in the game except the
+## player's own and anyone already defeated. Call this once per
+## player Battle-scene load (see battle.gd's _ready()) - "every
+## player attempt" is the agreed trigger, not just full zone clears,
+## so background progress can't be avoided by fleeing early.
+func tick_all_npc_heroes(player_hero_id: String) -> void:
+	for hero_id in get_all_npc_hero_ids(player_hero_id):
+		if PlayerManager.is_hero_defeated(hero_id):
+			continue
+		tick_npc_hero(hero_id, GameManager.get_hero_by_id(hero_id))
 
 
 ## Builds this stage's enemy list the same way battle.gd's
@@ -499,10 +590,11 @@ func _roll_gold(gold_range: String) -> int:
 ## Best-effort reimplementation of a Dota-style diminishing-returns
 ## armor curve - see the note at the top of this section about
 ## reconciling this with battle.gd's actual formula in Step 4.
+## Exactly matches battle.gd's own _apply_armor_reduction/
+## _damage_reduction - verified against the real source rather than
+## assumed. Negative armor increases damage taken (via the same
+## formula, not a separate branch); the result is clamped to 0 so it
+## can never flip a hit into a heal.
 func _apply_armor_reduction(damage: float, armor: float) -> float:
-	var reduction: float
-	if armor >= 0.0:
-		reduction = (0.06 * armor) / (1.0 + 0.06 * armor)
-	else:
-		reduction = (0.06 * armor) / (1.0 - 0.06 * armor)
+	var reduction: float = (0.06 * armor) / (1.0 + 0.06 * armor)
 	return maxf(0.0, damage * (1.0 - reduction))

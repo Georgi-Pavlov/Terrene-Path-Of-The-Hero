@@ -132,6 +132,13 @@ func _ready() -> void:
 	_hero_static = GameManager.get_hero_by_id(_recruited["id"])
 	_current_stage = PlayerManager.get_zone_start_stage(GameManager.selected_zone)
 
+	# Every player battle attempt (not just full zone clears - fleeing
+	# after a partial clear still counts) also ticks the background
+	# simulation for every other hero in the game, so their world
+	# keeps progressing whether or not the player's own runs finish.
+	# See EnemyHeroManager.tick_all_npc_heroes().
+	EnemyHeroManager.tick_all_npc_heroes(_recruited["id"])
+
 	_load_battle_background()
 	_load_hero_image()
 	_build_bar_styles()
