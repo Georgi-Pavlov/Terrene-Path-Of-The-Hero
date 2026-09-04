@@ -1,0 +1,699 @@
+[gd_scene format=3 uid="uid://6cu18we47c5r"]
+
+[ext_resource type="Script" uid="uid://bdn36d065q6d8" path="res://scripts/battle.gd" id="1"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_bdmed"]
+
+[sub_resource type="StyleBoxFlat" id="BattleSkillsPanelStyle"]
+bg_color = Color(0.14, 0.09, 0.02, 0.85)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.85, 0.65, 0.2, 0.85)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="BattleItemsPanelStyle"]
+bg_color = Color(0.08, 0.1, 0.09, 0.85)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.3, 0.55, 0.5, 0.8)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="DefeatPopupStyle"]
+bg_color = Color(0.12, 0.03, 0.03, 0.95)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.7, 0.15, 0.15, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="LevelUpPopupStyle"]
+bg_color = Color(0.1, 0.08, 0.02, 0.96)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(1, 0.8, 0.2, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="SkillChoicePopupStyle"]
+bg_color = Color(0.05, 0.06, 0.12, 0.96)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.45, 0.55, 1, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="Battle" type="Control" unique_id=880113958]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="FallbackColor" type="ColorRect" parent="." unique_id=1959432214]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.05, 0.05, 0.08, 1)
+
+[node name="Background" type="TextureRect" parent="." unique_id=1948885832]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="HeroImage" type="TextureRect" parent="." unique_id=277620845]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 260.0
+offset_right = 240.0
+offset_bottom = 460.0
+expand_mode = 5
+stretch_mode = 5
+
+[node name="EnemiesLayer" type="Control" parent="." unique_id=1288477418]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 1.0
+offset_top = 9.0
+offset_right = 1.0
+offset_bottom = 9.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="StagePanel" type="PanelContainer" parent="." unique_id=241310791]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.791
+anchor_top = 0.029000001
+anchor_right = 0.88400006
+anchor_bottom = 0.082
+offset_left = -0.47998047
+offset_top = 0.11999893
+offset_right = 0.47998047
+offset_bottom = -0.040000916
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="StageMargin" type="MarginContainer" parent="StagePanel" unique_id=139403612]
+layout_mode = 2
+theme_override_constants/margin_left = 10
+theme_override_constants/margin_top = 4
+theme_override_constants/margin_right = 10
+theme_override_constants/margin_bottom = 4
+
+[node name="StageLabel" type="Label" parent="StagePanel/StageMargin" unique_id=85666486]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 18
+text = "Stage 1/3"
+label_settings = SubResource("LabelSettings_bdmed")
+horizontal_alignment = 1
+
+[node name="BarsBox" type="VBoxContainer" parent="." unique_id=1839370953]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.02
+anchor_top = 0.03
+anchor_right = 0.46
+anchor_bottom = 0.19
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 8
+
+[node name="HPRow" type="HBoxContainer" parent="BarsBox" unique_id=943805675]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="HPLabel" type="Label" parent="BarsBox/HPRow" unique_id=225813080]
+custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+text = "HP"
+
+[node name="HPBar" type="ProgressBar" parent="BarsBox/HPRow" unique_id=1994048903]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+show_percentage = false
+
+[node name="HPValueLabel" type="Label" parent="BarsBox/HPRow/HPBar" unique_id=1125111492]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ManaRow" type="HBoxContainer" parent="BarsBox" unique_id=1750954146]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ManaLabel" type="Label" parent="BarsBox/ManaRow" unique_id=1733111914]
+custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+text = "MP"
+
+[node name="ManaBar" type="ProgressBar" parent="BarsBox/ManaRow" unique_id=629633056]
+custom_minimum_size = Vector2(0, 28)
+layout_mode = 2
+size_flags_horizontal = 3
+show_percentage = false
+
+[node name="ManaValueLabel" type="Label" parent="BarsBox/ManaRow/ManaBar" unique_id=347490080]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="XPRow" type="HBoxContainer" parent="BarsBox" unique_id=391757159]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="XPLabel" type="Label" parent="BarsBox/XPRow" unique_id=392572414]
+custom_minimum_size = Vector2(48, 0)
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+text = "XP"
+
+[node name="XPBar" type="ProgressBar" parent="BarsBox/XPRow" unique_id=946044384]
+layout_mode = 2
+size_flags_horizontal = 3
+show_percentage = false
+
+[node name="SkillsPanel" type="PanelContainer" parent="." unique_id=886769240]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.056
+anchor_top = 0.81100005
+anchor_right = 0.59900004
+anchor_bottom = 0.9850001
+offset_left = 0.3199997
+offset_top = 0.079956055
+offset_right = 0.27996826
+offset_bottom = -0.20007324
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("BattleSkillsPanelStyle")
+
+[node name="SkillsMargin" type="MarginContainer" parent="SkillsPanel" unique_id=761815284]
+layout_mode = 2
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
+
+[node name="SkillButtons" type="HBoxContainer" parent="SkillsPanel/SkillsMargin" unique_id=31662337]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ItemsPanel" type="PanelContainer" parent="." unique_id=417457343]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.666
+anchor_top = 0.78300005
+anchor_right = 0.90400004
+anchor_bottom = 0.98700005
+offset_left = -0.47998047
+offset_top = 0.23999023
+offset_right = -0.12011719
+offset_bottom = 0.35998535
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("BattleItemsPanelStyle")
+
+[node name="ItemsMargin" type="MarginContainer" parent="ItemsPanel" unique_id=1858898215]
+layout_mode = 2
+theme_override_constants/margin_left = 6
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 6
+theme_override_constants/margin_bottom = 6
+
+[node name="ItemsVBox" type="VBoxContainer" parent="ItemsPanel/ItemsMargin" unique_id=1858898216]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="GoldRow" type="HBoxContainer" parent="ItemsPanel/ItemsMargin/ItemsVBox" unique_id=1858898217]
+layout_mode = 2
+theme_override_constants/separation = 6
+alignment = 1
+
+[node name="GoldLabel" type="Label" parent="ItemsPanel/ItemsMargin/ItemsVBox/GoldRow" unique_id=1858898218]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+text = "Gold:"
+
+[node name="GoldValueLabel" type="Label" parent="ItemsPanel/ItemsMargin/ItemsVBox/GoldRow" unique_id=1858898219]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+text = "0"
+
+[node name="ItemsGrid" type="GridContainer" parent="ItemsPanel/ItemsMargin/ItemsVBox" unique_id=1466407127]
+layout_mode = 2
+theme_override_constants/h_separation = 6
+theme_override_constants/v_separation = 6
+columns = 3
+
+[node name="ItemSlot0" type="Button" parent="ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid" unique_id=1240339002]
+custom_minimum_size = Vector2(64, 44)
+layout_mode = 2
+disabled = true
+expand_icon = true
+
+[node name="ItemSlot1" type="Button" parent="ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid" unique_id=1210337641]
+custom_minimum_size = Vector2(64, 44)
+layout_mode = 2
+disabled = true
+expand_icon = true
+
+[node name="ItemSlot2" type="Button" parent="ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid" unique_id=1430728625]
+custom_minimum_size = Vector2(64, 44)
+layout_mode = 2
+disabled = true
+expand_icon = true
+
+[node name="ItemSlot3" type="Button" parent="ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid" unique_id=457536535]
+custom_minimum_size = Vector2(64, 44)
+layout_mode = 2
+disabled = true
+expand_icon = true
+
+[node name="ItemSlot4" type="Button" parent="ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid" unique_id=379164556]
+custom_minimum_size = Vector2(64, 44)
+layout_mode = 2
+disabled = true
+expand_icon = true
+
+[node name="ItemSlot5" type="Button" parent="ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid" unique_id=301761348]
+custom_minimum_size = Vector2(64, 44)
+layout_mode = 2
+disabled = true
+expand_icon = true
+
+[node name="ActionsPanel" type="VBoxContainer" parent="." unique_id=700540644]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.90400004
+anchor_top = 0.786
+anchor_right = 0.998
+anchor_bottom = 0.98300004
+offset_left = -0.12011719
+offset_top = 0.08001709
+offset_right = -0.44006348
+offset_bottom = 0.23999023
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 6
+
+[node name="AttackButton" type="Button" parent="ActionsPanel" unique_id=1372549992]
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+text = "Attack"
+
+[node name="MoveRow" type="HBoxContainer" parent="ActionsPanel" unique_id=867688528]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="MoveLeftButton" type="Button" parent="ActionsPanel/MoveRow" unique_id=1230612055]
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+size_flags_horizontal = 3
+text = "<"
+
+[node name="MoveRightButton" type="Button" parent="ActionsPanel/MoveRow" unique_id=1836642772]
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+size_flags_horizontal = 3
+text = ">"
+
+[node name="EndTurnButton" type="Button" parent="ActionsPanel" unique_id=1889148304]
+custom_minimum_size = Vector2(0, 36)
+layout_mode = 2
+text = "End Turn"
+
+[node name="FleeButton" type="Button" parent="." unique_id=801310593]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -136.0
+offset_top = 20.0
+offset_right = -16.0
+offset_bottom = 60.0
+grow_horizontal = 0
+text = "Flee"
+
+[node name="DefeatPopup" type="PanelContainer" parent="." unique_id=227682934]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -90.0
+offset_right = 220.0
+offset_bottom = 90.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("DefeatPopupStyle")
+
+[node name="DefeatMargin" type="MarginContainer" parent="DefeatPopup" unique_id=1875905709]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 18
+
+[node name="DefeatVBox" type="VBoxContainer" parent="DefeatPopup/DefeatMargin" unique_id=1698445553]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="DefeatLabel" type="Label" parent="DefeatPopup/DefeatMargin/DefeatVBox" unique_id=639202894]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.85, 1)
+theme_override_font_sizes/font_size = 22
+text = "You will not be remembered"
+horizontal_alignment = 1
+autowrap_mode = 3
+
+[node name="DefeatOkButton" type="Button" parent="DefeatPopup/DefeatMargin/DefeatVBox" unique_id=2051238606]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+text = "OK"
+
+[node name="LevelUpPopup" type="PanelContainer" parent="." unique_id=1070960210]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -190.0
+offset_right = 220.0
+offset_bottom = 190.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("LevelUpPopupStyle")
+
+[node name="LevelUpMargin" type="MarginContainer" parent="LevelUpPopup" unique_id=795137980]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 18
+
+[node name="LevelUpVBox" type="VBoxContainer" parent="LevelUpPopup/LevelUpMargin" unique_id=153849404]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="LevelUpTitleLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox" unique_id=889808101]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 26
+text = "LEVEL UP"
+horizontal_alignment = 1
+
+[node name="LevelUpLevelLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox" unique_id=1769855555]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "Level 2"
+horizontal_alignment = 1
+
+[node name="StatsGrid" type="GridContainer" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox" unique_id=2056036009]
+layout_mode = 2
+theme_override_constants/h_separation = 20
+theme_override_constants/v_separation = 6
+columns = 3
+
+[node name="StatHeader" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1319842613]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "Stat"
+
+[node name="OldHeader" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=481971943]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "Old"
+horizontal_alignment = 1
+
+[node name="NewHeader" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=156421845]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.8, 0.8, 1)
+theme_override_font_sizes/font_size = 14
+text = "New"
+horizontal_alignment = 1
+
+[node name="StrengthLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1243121310]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "Strength"
+
+[node name="StrengthOld" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1686029575]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.75, 0.75, 0.75, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="StrengthNew" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=36084065]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.4, 0.95, 0.4, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="AgilityLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1025761493]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "Agility"
+
+[node name="AgilityOld" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=2011573427]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.75, 0.75, 0.75, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="AgilityNew" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1868919385]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.4, 0.95, 0.4, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="IntelligenceLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=325608101]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "Intelligence"
+
+[node name="IntelligenceOld" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=207025744]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.75, 0.75, 0.75, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="IntelligenceNew" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=674824685]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.4, 0.95, 0.4, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="HPLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1751864575]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "HP"
+
+[node name="HPOld" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1739530448]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.75, 0.75, 0.75, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="HPNew" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1902680825]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.4, 0.95, 0.4, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="ManaLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=856453185]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "Mana"
+
+[node name="ManaOld" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=2077849340]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.75, 0.75, 0.75, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="ManaNew" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1100880768]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.4, 0.95, 0.4, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="DamageLabel" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=580733863]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 15
+text = "Damage"
+
+[node name="DamageOld" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1753470003]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.75, 0.75, 0.75, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="DamageNew" type="Label" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox/StatsGrid" unique_id=1976275960]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.6, 0.6, 0.6, 1)
+theme_override_font_sizes/font_size = 15
+text = "-"
+horizontal_alignment = 1
+
+[node name="LevelUpOkButton" type="Button" parent="LevelUpPopup/LevelUpMargin/LevelUpVBox" unique_id=1983625955]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+text = "Continue"
+
+[node name="SkillChoicePopup" type="PanelContainer" parent="." unique_id=764180090]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -170.0
+offset_right = 220.0
+offset_bottom = 170.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("SkillChoicePopupStyle")
+
+[node name="SkillChoiceMargin" type="MarginContainer" parent="SkillChoicePopup" unique_id=1069304848]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 18
+
+[node name="SkillChoiceVBox" type="VBoxContainer" parent="SkillChoicePopup/SkillChoiceMargin" unique_id=172679802]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="SkillChoiceTitleLabel" type="Label" parent="SkillChoicePopup/SkillChoiceMargin/SkillChoiceVBox" unique_id=1486814677]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.6, 0.7, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 24
+text = "Skill Point Available!"
+horizontal_alignment = 1
+
+[node name="SkillChoicePointsLabel" type="Label" parent="SkillChoicePopup/SkillChoiceMargin/SkillChoiceVBox" unique_id=1745387325]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_font_sizes/font_size = 14
+text = "You have 1 skill point to spend"
+horizontal_alignment = 1
+
+[node name="SkillChoiceOptions" type="VBoxContainer" parent="SkillChoicePopup/SkillChoiceMargin/SkillChoiceVBox" unique_id=1163033644]
+layout_mode = 2
+theme_override_constants/separation = 8

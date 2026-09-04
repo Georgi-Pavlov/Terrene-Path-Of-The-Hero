@@ -1,0 +1,315 @@
+[gd_scene format=3 uid="uid://cc6xlbfh263dn"]
+
+[ext_resource type="Script" uid="uid://bklsl80wkncih" path="res://scripts/Shop.gd" id="1"]
+[ext_resource type="Texture2D" uid="uid://cn1x8vhdbu417" path="res://assets/shop_menu.png" id="2"]
+
+[sub_resource type="StyleBoxFlat" id="ShopGoldPanelStyle"]
+bg_color = Color(0, 0, 0, 0.55)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(1, 1, 1, 0.25)
+corner_radius_top_left = 8
+corner_radius_top_right = 8
+corner_radius_bottom_right = 8
+corner_radius_bottom_left = 8
+
+[sub_resource type="StyleBoxFlat" id="ShopItemsPanelStyle"]
+bg_color = Color(0.08, 0.1, 0.09, 0.85)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.3, 0.55, 0.5, 0.8)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="ShopDetailsPanelStyle"]
+bg_color = Color(0.05, 0.04, 0.03, 0.9)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.6, 0.5, 0.3, 0.85)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="SellPopupStyle"]
+bg_color = Color(0.04, 0.09, 0.05, 0.97)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.3, 0.85, 0.4, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="Shop" type="Control" unique_id=1608418072]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Background" type="TextureRect" parent="." unique_id=1961203182]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = ExtResource("2")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="BackButton" type="Button" parent="." unique_id=1963096287]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 1172.0
+offset_top = -44.0
+offset_right = 1272.0
+offset_bottom = -8.0
+grow_vertical = 0
+text = "Back"
+
+[node name="GoldPanel" type="PanelContainer" parent="." unique_id=926532572]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -160.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = 52.0
+grow_horizontal = 0
+theme_override_styles/panel = SubResource("ShopGoldPanelStyle")
+
+[node name="GoldMargin" type="MarginContainer" parent="GoldPanel" unique_id=1027795871]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 6
+
+[node name="GoldRow" type="HBoxContainer" parent="GoldPanel/GoldMargin" unique_id=1807915755]
+layout_mode = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="GoldLabel" type="Label" parent="GoldPanel/GoldMargin/GoldRow" unique_id=293551058]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 16
+text = "Gold:"
+
+[node name="GoldValueLabel" type="Label" parent="GoldPanel/GoldMargin/GoldRow" unique_id=1361975407]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 16
+text = "0"
+
+[node name="SellButton" type="Button" parent="." unique_id=1712745367]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -160.0
+offset_top = 64.0
+offset_right = -16.0
+offset_bottom = 98.0
+grow_horizontal = 0
+text = "Sell Items"
+
+[node name="ShopItemsPanel" type="PanelContainer" parent="." unique_id=240671295]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.39100003
+anchor_top = 0.22100002
+anchor_right = 0.92300004
+anchor_bottom = 0.81100005
+offset_left = -0.4800415
+offset_top = -0.120010376
+offset_right = -0.44006348
+offset_bottom = 0.079956055
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("ShopItemsPanelStyle")
+
+[node name="ItemsMargin" type="MarginContainer" parent="ShopItemsPanel" unique_id=1249276693]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="ItemsVBox" type="VBoxContainer" parent="ShopItemsPanel/ItemsMargin" unique_id=1476365054]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="TitleRow" type="HBoxContainer" parent="ShopItemsPanel/ItemsMargin/ItemsVBox" unique_id=107181351]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="PrevPageButton" type="Button" parent="ShopItemsPanel/ItemsMargin/ItemsVBox/TitleRow" unique_id=1525250964]
+custom_minimum_size = Vector2(36, 32)
+layout_mode = 2
+text = "<"
+
+[node name="TitleLabel" type="Label" parent="ShopItemsPanel/ItemsMargin/ItemsVBox/TitleRow" unique_id=812052636]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 20
+text = "For Sale"
+horizontal_alignment = 1
+
+[node name="NextPageButton" type="Button" parent="ShopItemsPanel/ItemsMargin/ItemsVBox/TitleRow" unique_id=693477131]
+custom_minimum_size = Vector2(36, 32)
+layout_mode = 2
+text = ">"
+
+[node name="ItemsGrid" type="GridContainer" parent="ShopItemsPanel/ItemsMargin/ItemsVBox" unique_id=1938864948]
+layout_mode = 2
+theme_override_constants/h_separation = 20
+theme_override_constants/v_separation = 18
+columns = 3
+
+[node name="MessageLabel" type="Label" parent="." unique_id=202803221]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.017
+anchor_top = 0.63900006
+anchor_right = 0.337
+anchor_bottom = 0.70900005
+offset_left = 0.23999786
+offset_top = -0.08004761
+offset_right = 0.23995972
+offset_bottom = -0.080078125
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 0.9, 0.5, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+
+[node name="ItemDetailsPanel" type="PanelContainer" parent="." unique_id=1507692581]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.020000001
+anchor_top = 0.768
+anchor_right = 0.34
+anchor_bottom = 0.98
+offset_top = 0.039978027
+offset_right = -0.2000122
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("ShopDetailsPanelStyle")
+
+[node name="DetailsMargin" type="MarginContainer" parent="ItemDetailsPanel" unique_id=1064224483]
+layout_mode = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 12
+
+[node name="DetailsVBox" type="VBoxContainer" parent="ItemDetailsPanel/DetailsMargin" unique_id=441214577]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="DetailsNameLabel" type="Label" parent="ItemDetailsPanel/DetailsMargin/DetailsVBox" unique_id=2124784410]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 18
+text = "Select an item to see its details"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="DetailsDescriptionLabel" type="Label" parent="ItemDetailsPanel/DetailsMargin/DetailsVBox" unique_id=1254142957]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_colors/font_color = Color(0.85, 0.85, 0.85, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 14
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
+[node name="DetailsCostLabel" type="Label" parent="ItemDetailsPanel/DetailsMargin/DetailsVBox" unique_id=1443081243]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 14
+horizontal_alignment = 1
+
+[node name="DetailsBuyButton" type="Button" parent="ItemDetailsPanel/DetailsMargin/DetailsVBox" unique_id=191491299]
+visible = false
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+text = "Buy"
+
+[node name="SellPopup" type="PanelContainer" parent="." unique_id=765932440]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -260.0
+offset_top = -220.0
+offset_right = 260.0
+offset_bottom = 220.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("SellPopupStyle")
+
+[node name="SellMargin" type="MarginContainer" parent="SellPopup" unique_id=1169861698]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 18
+
+[node name="SellVBox" type="VBoxContainer" parent="SellPopup/SellMargin" unique_id=1462113972]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="SellTitleLabel" type="Label" parent="SellPopup/SellMargin/SellVBox" unique_id=1076395699]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.5, 1, 0.6, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 24
+text = "Sell Items"
+horizontal_alignment = 1
+
+[node name="SellItemsList" type="VBoxContainer" parent="SellPopup/SellMargin/SellVBox" unique_id=514736882]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SellCloseButton" type="Button" parent="SellPopup/SellMargin/SellVBox" unique_id=1718123026]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+text = "Close"
