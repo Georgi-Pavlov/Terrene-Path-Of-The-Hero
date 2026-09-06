@@ -55,12 +55,15 @@ const REGIONS := [
 func _ready() -> void:
 	$BackButton.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/PostLogin.tscn"))
 	$ShopButton.pressed.connect(_on_shop_pressed)
+	$WorldStatusButton.pressed.connect(_on_world_status_pressed)
+	$EventsPopup/Margin/VBox/CloseButton.pressed.connect(_on_events_popup_closed)
 	_home_zone_id = PlayerManager.get_home_zone_id()
 	_home_zone_cleared = PlayerManager.is_home_zone_cleared()
 	_style_legend_dots()
 	_spawn_region_buttons()
 	_style_stats_panel()
 	_refresh_stats_panel()
+	_maybe_show_queued_events()
 
 func _style_legend_dots() -> void:
 	var ready_style := StyleBoxFlat.new()
@@ -116,6 +119,10 @@ func _refresh_stats_panel() -> void:
 
 func _on_shop_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/Shop.tscn")
+
+
+func _on_world_status_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/WorldStatus.tscn")
 
 func _spawn_region_buttons() -> void:
 	var screen_size := get_viewport_rect().size
@@ -194,3 +201,30 @@ func _show_lock_message(text: String) -> void:
 	_lock_message_tween = create_tween()
 	_lock_message_tween.tween_interval(1.4)
 	_lock_message_tween.tween_property($LockMessageLabel, "modulate:a", 0.0, 0.6)
+
+
+# ------------------------------------------------------------------
+# "While you were away" popup: every rival-hero kill (and zone-wipe)
+# that happened in the background gets queued as a one-line event by
+# PlayerManager (see its "Event queue" section) - shown here, once,
+# the next time the Map loads, then cleared so they never repeat.
+# ------------------------------------------------------------------
+
+## Shows the popup if there's anything queued - does nothing otherwise,
+## so a Map visit with no news behind it stays silent.
+func _maybe_show_queued_events() -> void:
+	var events: Array = PlayerManager.get_queued_events()
+	if events.is_empty():
+		return
+
+	$EventsPopup/Margin/VBox/EventsScroll/EventsLabel.text = "\n".join(events)
+	$EventsPopup.popup_centered()
+
+
+## The queue is only cleared once the player has actually dismissed
+## the popup - closing the Map some other way (e.g. the Back button)
+## leaves it queued so it shows again next visit instead of silently
+## disappearing unseen.
+func _on_events_popup_closed() -> void:
+	PlayerManager.clear_queued_events()
+	$EventsPopup.hide()

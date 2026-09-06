@@ -1952,11 +1952,18 @@ func get_zone_id_for_hero(hero_id: String) -> String:
 # heroes (or, in a foreign zone, any of its heroes) - see battle.gd's
 # _try_start_hero_fight(). A rival hero doesn't have creep-style
 # hp/damage/XP/gold fields of its own, so build_hero_fight_enemy_def()
-# derives them from the hero's own stats; tune the multipliers below
-# to rebalance the reward without touching battle.gd.
+# derives them from the hero's own stats; tune the gold multipliers
+# below to rebalance that reward without touching battle.gd.
+#
+# The XP field used to be a flat hp-based multiplier (hp * 0.5) - as
+# of Step 5 it's the same hero-kill bounty formula EnemyHeroManager
+# uses for an NPC-kills-NPC duel (see EnemyHeroManager.
+# get_hero_kill_bounty), so a hero's death is worth the same XP no
+# matter who lands the killing blow. Routing it through here rather
+# than through battle.gd means both cases share one formula for free,
+# since battle.gd just reads whatever XP this enemy_def declares.
 # ------------------------------------------------------------------
 
-const HERO_FIGHT_XP_MULTIPLIER: float = 0.5
 const HERO_FIGHT_GOLD_MIN_MULTIPLIER: float = 0.3
 const HERO_FIGHT_GOLD_MAX_MULTIPLIER: float = 0.4
 
@@ -1971,6 +1978,7 @@ const HERO_FIGHT_GOLD_MAX_MULTIPLIER: float = 0.4
 func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 	var stats: Dictionary = hero_static.get("stats", {})
 	var hp: float = float(stats.get("hp", 1))
+	var hero_id: String = hero_static.get("id", "")
 
 	var damage_parts: PackedStringArray = str(stats.get("damage", "0-0")).split("-")
 	var damage_min: float = float(damage_parts[0]) if damage_parts.size() > 0 else 0.0
@@ -1980,14 +1988,14 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 	var is_ranged: bool = str(hero_static.get("range_type", "")).to_lower().begins_with("range")
 
 	return {
-		"id": hero_static.get("id", ""),
+		"id": hero_id,
 		"name": hero_static.get("name", "Rival Hero"),
 		"image": hero_static.get("image", ""),
 		"type": "range" if is_ranged else "mele",
 		"hp": hp,
 		"damage": flat_damage,
 		"armor": float(stats.get("armor", 0)),
-		"XP": roundi(hp * HERO_FIGHT_XP_MULTIPLIER),
+		"XP": roundi(EnemyHeroManager.get_hero_kill_bounty(hero_id)),
 		"gold": "%d-%d" % [roundi(hp * HERO_FIGHT_GOLD_MIN_MULTIPLIER), roundi(hp * HERO_FIGHT_GOLD_MAX_MULTIPLIER)],
 		# Hero portraits are drawn facing right; battle.gd's
 		# _spawn_enemy() uses this to mirror the art when it's placed

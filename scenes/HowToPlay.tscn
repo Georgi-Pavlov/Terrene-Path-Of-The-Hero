@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://b2b6s0lvtsf7l"]
 
 [ext_resource type="Script" uid="uid://bpbv3p14cscwl" path="res://scripts/HowToPlay.gd" id="1"]
-[ext_resource type="Texture2D" uid="uid://c71hccueg17mr" path="res://assets/how_to_play.png" id="2"]
+[ext_resource type="Texture2D" uid="uid://cm8axn1bkbgcj" path="res://assets/how_to_play.jpg" id="2_j20v8"]
 
 [node name="HowToPlay" type="Control" unique_id=2087002107]
 layout_mode = 3
@@ -28,7 +28,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-texture = ExtResource("2")
+texture = ExtResource("2_j20v8")
 expand_mode = 1
 stretch_mode = 6
 

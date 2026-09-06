@@ -8,11 +8,24 @@ Fight the enemies in each zone in a turn based battle. Each turn you may use onl
 
 The if you chose range hero or you are casting a spell/skill, you have to chose your target as well (highlighted if in range).
 
-When you kill and enemie you will receive XP points that will help you level up and gold, that you can spend in the shop on the map.
+Killing an enemy earns XP, which helps you level up, and gold, which you can spend at the Shop on the map.
 
 Potions and stat-boost items in your inventory can be used any time, free of your turn's move/attack allowance.
 
-Clear every enemy in a zone to return to the map. If your HP reaches zero, your run ends - your best XP is saved as a high score before you're sent back to the main menu."""
+Clear every stage in a zone and you may be challenged by one of that zone's rival heroes in a duel.
+
+Win, and you take their bounty in XP and gold. Clear your starting zone entirely and you unlock all other zones on the map.
+
+You're not the only hero out there. Every other zone's hero is fighting their way through their own home turf in the background, leveling up and dueling their own rivals even while you're elsewhere.
+
+Once a hero has cleared their home zone, they go looking for a new fight - picking a target anywhere on the map, fighting through that zone, and challenging its hero when they get there.
+
+If a rival falls - to you or to another hero - you'll hear about it: check the map when you return from battle for a "While you were away..." message with the latest news.
+
+Want the full picture? Tap World Status next to the Shop to see every zone, every hero in it, and whether they're still standing - including you.
+
+If your HP reaches zero, your run ends - your best XP is saved as a high score before you're sent back to the main menu.
+"""
 
 
 func _ready() -> void:

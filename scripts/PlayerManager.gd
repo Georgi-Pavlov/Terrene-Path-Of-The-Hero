@@ -16,7 +16,18 @@ extends Node
 const PLAYERS_FILE := "user://players.txt"
 const PLAYER_DATA_DIR := "user://players/"
 
-var current_player := ""
+## Switching players (login/logout/new game) flushes whatever the
+## previous player had pending, then drops the cache below so the new
+## player's data gets read fresh on next access. See the "Data cache"
+## section further down for what actually backs get/set calls.
+var current_player: String = "":
+	set(value):
+		if value != current_player:
+			flush_player_data()
+			_cache_loaded = false
+			_data_cache = {}
+		current_player = value
+
 var selected_region := ""
 
 func _ready() -> void:
@@ -25,6 +36,15 @@ func _ready() -> void:
 	if not FileAccess.file_exists(PLAYERS_FILE):
 		var f := FileAccess.open(PLAYERS_FILE, FileAccess.WRITE)
 		f.close()
+
+
+## Autoloads live for the whole process, so this is the safety net for
+## an abrupt quit (or the app losing focus/being backgrounded on
+## mobile) leaving a dirty in-memory cache never explicitly flushed.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED \
+	or what == NOTIFICATION_CRASH:
+		flush_player_data()
 
 ## Returns true if a username already appears in players.txt
 func player_exists(username: String) -> bool:
@@ -85,7 +105,74 @@ func current_player_file() -> String:
 	return PLAYER_DATA_DIR + current_player + ".txt"
 
 ## Reads a player's "key=value" data file into a Dictionary.
+##
+## Every getter and setter in this file funnels through here and
+## _write_player_data() below - originally each call re-opened,
+## re-parsed, or fully rewrote the data file from scratch, which was
+## fine one-off but got very slow doing it dozens of times per hero
+## across every NPC hero on every single Battle-scene load (see
+## EnemyHeroManager.tick_all_npc_heroes). As of this optimization pass
+## the *current* player's data is cached in memory after its first
+## read and mutated in place; only flush_player_data() actually
+## touches disk, and only if something changed since the last flush.
+## A username other than current_player (shouldn't normally happen -
+## every call site in this file passes current_player) bypasses the
+## cache entirely and hits disk directly, so behavior for that edge
+## case is unchanged.
 func _read_player_data(username: String) -> Dictionary:
+	if username != current_player:
+		return _read_player_data_from_disk(username)
+
+	if not _cache_loaded:
+		_data_cache = _read_player_data_from_disk(username)
+		_cache_loaded = true
+
+	return _data_cache
+
+## Updates the in-memory cache for the current player (marking it
+## dirty so flush_player_data() knows to persist it) - or, for any
+## other username, writes straight through to disk as before.
+func _write_player_data(username: String, data: Dictionary) -> void:
+	if username != current_player:
+		_write_player_data_to_disk(username, data)
+		return
+
+	_data_cache = data
+	_cache_loaded = true
+	_cache_dirty = true
+
+
+# ------------------------------------------------------------------
+# Data cache: backs _read_player_data()/_write_player_data() above so
+# a whole batch of field reads/writes (e.g. one tick_all_npc_heroes()
+# pass over every rival hero) costs one disk read the first time it's
+# touched and one disk write at the end, instead of one of each per
+# field per hero. Nothing outside this file needs to know this cache
+# exists - flush_player_data() is called automatically at the natural
+# checkpoints below (end of an NPC tick batch, losing focus, quitting,
+# switching players) so callers just keep using get_x()/set_x() as
+# before.
+# ------------------------------------------------------------------
+
+var _data_cache: Dictionary = {}
+var _cache_loaded: bool = false
+var _cache_dirty: bool = false
+
+
+## Actually persists the current player's cached data to disk, if
+## anything has changed since the last flush - a no-op otherwise, so
+## it's always safe to call opportunistically without worrying about
+## redundant disk writes.
+func flush_player_data() -> void:
+	if not _cache_dirty or current_player == "":
+		return
+	_write_player_data_to_disk(current_player, _data_cache)
+	_cache_dirty = false
+
+
+## The actual disk read, unconditionally - what _read_player_data()
+## used to be before caching was added.
+func _read_player_data_from_disk(username: String) -> Dictionary:
 	var data := {}
 	var f := FileAccess.open(PLAYER_DATA_DIR + username + ".txt", FileAccess.READ)
 	if f == null:
@@ -103,8 +190,9 @@ func _read_player_data(username: String) -> Dictionary:
 	f.close()
 	return data
 
-## Writes a Dictionary back out as "key=value" lines, one per line.
-func _write_player_data(username: String, data: Dictionary) -> void:
+## The actual disk write, unconditionally - what _write_player_data()
+## used to be before caching was added.
+func _write_player_data_to_disk(username: String, data: Dictionary) -> void:
 	var f := FileAccess.open(PLAYER_DATA_DIR + username + ".txt", FileAccess.WRITE)
 	for key in data.keys():
 		f.store_line(str(key) + "=" + str(data[key]))
@@ -482,6 +570,11 @@ func is_hero_defeated(hero_id: String) -> bool:
 
 
 ## Marks `hero_id` as defeated - permanent, until a new game clears it.
+## Also queues the kill-notification events Map's popup will surface
+## (see the "Event queue" section below): one for this hero's own
+## death, plus a follow-up if it was the last hero standing in its
+## zone. Both are skipped if the hero was already marked defeated, so
+## this only ever fires once per hero.
 func mark_hero_defeated(hero_id: String) -> void:
 	if current_player == "" or hero_id == "" or is_hero_defeated(hero_id):
 		return
@@ -489,6 +582,89 @@ func mark_hero_defeated(hero_id: String) -> void:
 	defeated.append(hero_id)
 	var data := _read_player_data(current_player)
 	data["defeated_heroes"] = ",".join(defeated)
+	_write_player_data(current_player, data)
+
+	_queue_hero_defeat_events(hero_id)
+
+
+## Builds and queues the event(s) for `hero_id` just having been
+## defeated. Doesn't need to know who did the killing - it fires from
+## mark_hero_defeated() itself, which every death path (the player
+## winning a hero fight in battle.gd, or a rival hero winning one in
+## EnemyHeroManager) already funnels through - so a single hook here
+## covers every kill uniformly.
+func _queue_hero_defeat_events(hero_id: String) -> void:
+	var hero_static: Dictionary = GameManager.get_hero_by_id(hero_id)
+	var hero_name: String = hero_static.get("name", hero_id)
+	queue_event(hero_name + " has been slain!")
+
+	var zone_id: String = GameManager.get_zone_id_for_hero(hero_id)
+	if zone_id == "":
+		return
+	var zone_heroes: Array = GameManager.get_zone(zone_id).get("heroes", [])
+	if zone_heroes.is_empty():
+		return
+	for hero in zone_heroes:
+		if not is_hero_defeated(hero.get("id", "")):
+			# Someone in this zone (possibly the player's own hero,
+			# which never appears in defeated_heroes while alive) is
+			# still standing, so the zone-wipe message isn't due yet.
+			return
+
+	var zone_name: String = GameManager.get_zone(zone_id).get("name", zone_id)
+	queue_event("All " + zone_name + " protectors are dead!")
+
+
+# ------------------------------------------------------------------
+# Event queue: one-time notifications (hero kill messages, zone-wipe
+# announcements - see _queue_hero_defeat_events above) that accumulate
+# in the background while the player is off in a Battle scene, then
+# get surfaced once as a Map popup and cleared. Stored as an ordered
+# "event_0".."event_<N-1>" list plus an "event_count" line, rather
+# than one comma-joined line like defeated_heroes, since event text is
+# free-form sentences that could themselves contain commas.
+# ------------------------------------------------------------------
+
+## Appends one event message to the end of the queue.
+func queue_event(text: String) -> void:
+	if current_player == "" or text == "":
+		return
+	var data := _read_player_data(current_player)
+	var count: int = int(data.get("event_count", "0"))
+	data["event_" + str(count)] = text
+	data["event_count"] = str(count + 1)
+	_write_player_data(current_player, data)
+
+
+## Every queued event message, oldest first - empty if none are
+## waiting. Does not clear anything; call clear_queued_events()
+## separately once they've actually been shown.
+func get_queued_events() -> Array:
+	if current_player == "":
+		return []
+	var data := _read_player_data(current_player)
+	var count: int = int(data.get("event_count", "0"))
+	var events: Array = []
+	for i in range(count):
+		events.append(data.get("event_" + str(i), ""))
+	return events
+
+
+## True if there's at least one queued event waiting to be shown.
+func has_queued_events() -> bool:
+	return current_player != "" and int(_read_player_data(current_player).get("event_count", "0")) > 0
+
+
+## Wipes every queued event - call this once the Map popup showing
+## them has been dismissed.
+func clear_queued_events() -> void:
+	if current_player == "":
+		return
+	var data := _read_player_data(current_player)
+	var count: int = int(data.get("event_count", "0"))
+	for i in range(count):
+		data.erase("event_" + str(i))
+	data.erase("event_count")
 	_write_player_data(current_player, data)
 
 
@@ -1073,7 +1249,8 @@ func clear_recruited_hero() -> void:
 		or key == "inventory" or key == "skill_points" or key == "defeated_heroes" \
 		or key.begins_with("hero_stat_") or key.begins_with("hero_skill_") \
 		or key.begins_with("skill_cooldown_") or key.begins_with("skill_level_") \
-		or key.begins_with("zone_cleared_") or key.begins_with("npc_"):
+		or key.begins_with("zone_cleared_") or key.begins_with("npc_") \
+		or key.begins_with("event_"):
 			keys_to_clear.append(key)
 
 	for key in keys_to_clear:

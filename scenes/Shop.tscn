@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://cc6xlbfh263dn"]
 
 [ext_resource type="Script" uid="uid://bklsl80wkncih" path="res://scripts/Shop.gd" id="1"]
-[ext_resource type="Texture2D" uid="uid://cn1x8vhdbu417" path="res://assets/shop_menu.png" id="2"]
+[ext_resource type="Texture2D" uid="uid://dbsedb3urnq3v" path="res://assets/shop_menu.jpg" id="2_ec5oe"]
 
 [sub_resource type="StyleBoxFlat" id="ShopGoldPanelStyle"]
 bg_color = Color(0, 0, 0, 0.55)
@@ -67,7 +67,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-texture = ExtResource("2")
+texture = ExtResource("2_ec5oe")
 expand_mode = 1
 stretch_mode = 6
 

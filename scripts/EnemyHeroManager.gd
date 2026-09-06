@@ -4,15 +4,15 @@ extends Node
 # EnemyHeroManager
 # ============================================================
 # Owns the decision-making for every rival hero's simulated progress:
-# leveling up, choosing which skill to spend a point on, and buying
-# potions. All actual state lives in PlayerManager (see its "NPC hero
-# state" section) - this autoload is pure logic on top of it, plus the
-# hero-kill XP bounty formula used both here and by battle.gd.
-#
-# This step deliberately has NO combat simulation yet (that's Step 3)
-# and no invasion/freedom logic yet (Step 5) - award_npc_xp() and
-# restock_npc_potions() are meant to be called BY that future combat
-# loop once it exists, not by anything yet.
+# leveling up, choosing which skill to spend a point on, buying
+# potions, running its stage/hero-fight combat simulation, and - once
+# a hero has cleared its own home zone (Step 5) - picking an invasion
+# target and grinding/dueling toward it instead. All actual state
+# lives in PlayerManager (see its "NPC hero state" section) - this
+# autoload is pure logic on top of it, plus the hero-kill XP bounty
+# formula used everywhere a hero dies (this file's own zone-mate/
+# invasion duels, and GameManager.build_hero_fight_enemy_def() for
+# when the player lands the killing blow instead).
 #
 # Add this script as an autoload singleton named "EnemyHeroManager"
 # (Project Settings > Autoload), alongside GameManager and
@@ -270,13 +270,14 @@ func simulate_npc_stage_attempt(hero_id: String, hero_static: Dictionary) -> Dic
 ## - follows up with a fight against a zone-mate, if one is still
 ## alive (exactly mirroring the player's own post-stage-3 hero fight,
 ## just from this hero's perspective). A hero with no living zone-mate
-## left is marked freed; what a freed hero does next is Step 5.
-## Does nothing once a hero is already freed - that's Step 5's domain.
+## left is marked freed, at which point every future tick is handed
+## off to _tick_freed_npc_hero() (Step 5) instead of grinding home.
 func tick_npc_hero(hero_id: String, hero_static: Dictionary) -> void:
 	if not PlayerManager.npc_is_initialized(hero_id):
 		PlayerManager.initialize_npc_hero(hero_static, GameManager.get_zone_id_for_hero(hero_id))
 
 	if PlayerManager.is_npc_freed(hero_id):
+		_tick_freed_npc_hero(hero_id, hero_static)
 		return
 
 	var stage_before: int = PlayerManager.get_npc_current_stage(hero_id)
@@ -331,6 +332,100 @@ func _try_npc_zone_mate_fight(hero_id: String, hero_static: Dictionary) -> void:
 	restock_npc_potions(hero_id)
 
 
+# ------------------------------------------------------------------
+# Freedom + invasion (Step 5): once a hero has cleared its own home
+# zone and beaten (or outlived) every zone-mate, is_npc_freed() is
+# true and tick_npc_hero() routes here instead. A freed hero commits
+# to one random invasion target - any hero in the game except the
+# player's own and itself - grinds that target's home zone the exact
+# same way it ground its own, and duels the target on that zone's
+# final stage. If the target dies to someone else first, the next
+# tick notices and picks a fresh target before doing anything else.
+# ------------------------------------------------------------------
+
+## A freed hero's tick: makes sure there's a live invasion target
+## (picking/committing to a new one if there isn't), then runs one
+## stage attempt against that target's zone and - once its final
+## stage is cleared - the actual duel against the target hero.
+func _tick_freed_npc_hero(hero_id: String, hero_static: Dictionary) -> void:
+	var target_id: String = PlayerManager.get_npc_invasion_target(hero_id)
+
+	if target_id == "" or PlayerManager.is_hero_defeated(target_id):
+		target_id = _pick_invasion_target(hero_id)
+		if target_id == "":
+			# Nobody left to invade (every other hero is already
+			# dead) - nothing more this freed hero can do right now.
+			return
+		PlayerManager.set_npc_invasion_target(hero_id, target_id)
+		PlayerManager.set_npc_current_zone(hero_id, GameManager.get_zone_id_for_hero(target_id))
+		PlayerManager.set_npc_current_stage(hero_id, 1)
+
+	var stage_before: int = PlayerManager.get_npc_current_stage(hero_id)
+	var fight: Dictionary = simulate_npc_stage_attempt(hero_id, hero_static)
+
+	if fight["result"] == "win" and stage_before >= GameManager.MAX_ZONE_STAGE:
+		_try_npc_invasion_duel(hero_id, hero_static, target_id)
+
+
+## One random undefeated hero from anywhere in the game, excluding
+## `hero_id` itself and the player's own recruited hero - "" if no
+## such hero remains. Doesn't need to be in a different zone from any
+## other freed hero; several rivals can invade (or even duel) the
+## same target independently.
+func _pick_invasion_target(hero_id: String) -> String:
+	var player_hero_id: String = PlayerManager.get_recruited_hero().get("id", "")
+	var candidates: Array = []
+
+	for zone_id in GameManager.zones.keys():
+		for hero in GameManager.zones[zone_id].get("heroes", []):
+			var candidate_id: String = hero.get("id", "")
+			if candidate_id == "" or candidate_id == hero_id or candidate_id == player_hero_id:
+				continue
+			if PlayerManager.is_hero_defeated(candidate_id):
+				continue
+			candidates.append(candidate_id)
+
+	if candidates.is_empty():
+		return ""
+	return candidates[randi() % candidates.size()]
+
+
+## The invasion duel itself, once `hero_id` has cleared `target_id`'s
+## zone's final stage - the same one-sided "hero as a single tough
+## enemy" fight as _try_npc_zone_mate_fight, just against a committed
+## invasion target instead of a random zone-mate. Uses the shared
+## hero-kill bounty formula on a win, same as every other hero kill.
+func _try_npc_invasion_duel(hero_id: String, hero_static: Dictionary, target_id: String) -> void:
+	if PlayerManager.is_hero_defeated(target_id):
+		# The target died to someone else first while this hero was
+		# still grinding toward the duel - clear it so next tick picks
+		# a fresh target instead of fighting a hero that's already gone.
+		PlayerManager.set_npc_invasion_target(hero_id, "")
+		return
+
+	var target_static: Dictionary = GameManager.get_hero_by_id(target_id)
+	var enemy_def: Dictionary = GameManager.build_hero_fight_enemy_def(target_static)
+	var enemies: Array = [{"static": enemy_def, "current_hp": float(enemy_def.get("hp", 1))}]
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies)
+
+	if fight["gold_gained"] > 0:
+		PlayerManager.add_npc_gold(hero_id, fight["gold_gained"])
+
+	if fight["result"] == "win":
+		PlayerManager.mark_hero_defeated(target_id)
+		award_npc_xp(hero_id, hero_static, get_hero_kill_bounty(target_id))
+		# The target is gone - clear it so the next tick commits to a
+		# fresh one rather than re-fighting a hero that no longer exists.
+		PlayerManager.set_npc_invasion_target(hero_id, "")
+
+	# A loss/stalemate leaves current_stage at MAX_ZONE_STAGE (set by
+	# simulate_npc_stage_attempt just before this ran) and the target
+	# unchanged, so next tick just re-clears the target's zone again
+	# and retries this same duel - identical to the home-zone-mate
+	# fight's own retry behavior.
+	restock_npc_potions(hero_id)
+
+
 ## Every hero in the game except `exclude_hero_id` (the player's own
 ## recruited hero) - the full tick pool for battle.gd's per-Battle-
 ## load simulation pass.
@@ -349,11 +444,19 @@ func get_all_npc_hero_ids(exclude_hero_id: String) -> Array:
 ## player Battle-scene load (see battle.gd's _ready()) - "every
 ## player attempt" is the agreed trigger, not just full zone clears,
 ## so background progress can't be avoided by fleeing early.
+## Runs tick_npc_hero() for every rival hero in the game (skipping any
+## already-defeated one), then flushes PlayerManager's data cache
+## exactly once. Every individual tick's field reads/writes hit that
+## in-memory cache only - see PlayerManager's "Data cache" section -
+## so a full pass over dozens of heroes costs one disk read (already
+## paid for by the time this runs) and one disk write here, instead
+## of dozens of each.
 func tick_all_npc_heroes(player_hero_id: String) -> void:
 	for hero_id in get_all_npc_hero_ids(player_hero_id):
 		if PlayerManager.is_hero_defeated(hero_id):
 			continue
 		tick_npc_hero(hero_id, GameManager.get_hero_by_id(hero_id))
+	PlayerManager.flush_player_data()
 
 
 ## Builds this stage's enemy list the same way battle.gd's

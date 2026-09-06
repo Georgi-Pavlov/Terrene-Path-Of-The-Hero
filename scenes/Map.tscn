@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://buqowdjvrd4ti" path="res://scripts/Map.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://ckg6n07eojf74" path="res://assets/map_bg.jpg" id="2"]
-[ext_resource type="Texture2D" uid="uid://11eqfas66gxv" path="res://assets/shop.png" id="3"]
+[ext_resource type="Texture2D" uid="uid://bfoxsltgx6ur" path="res://assets/shop.png" id="3"]
 
 [node name="Map" type="Control" unique_id=502966162]
 layout_mode = 3
@@ -71,6 +71,14 @@ offset_top = 144.0
 offset_right = 140.0
 offset_bottom = 178.0
 text = "Shop"
+
+[node name="WorldStatusButton" type="Button" parent="." unique_id=625887086]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 182.0
+offset_right = 140.0
+offset_bottom = 216.0
+text = "World Status"
 
 [node name="StatsPanel" type="PanelContainer" parent="." unique_id=-913939552]
 layout_mode = 1
@@ -230,16 +238,16 @@ theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 14
 text = "Coming soon"
 
-[node name="LockedRow" type="HBoxContainer" parent="Legend"]
+[node name="LockedRow" type="HBoxContainer" parent="Legend" unique_id=1325564143]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="LockedDot" type="Panel" parent="Legend/LockedRow"]
+[node name="LockedDot" type="Panel" parent="Legend/LockedRow" unique_id=467020976]
 custom_minimum_size = Vector2(10, 10)
 layout_mode = 2
 size_flags_vertical = 4
 
-[node name="LockedLabel" type="Label" parent="Legend/LockedRow"]
+[node name="LockedLabel" type="Label" parent="Legend/LockedRow" unique_id=1110464298]
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 1, 1, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
@@ -247,7 +255,7 @@ theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 14
 text = "Locked"
 
-[node name="LockMessageLabel" type="Label" parent="."]
+[node name="LockMessageLabel" type="Label" parent="." unique_id=492599840]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.25
@@ -260,5 +268,51 @@ theme_override_colors/font_color = Color(1, 0.6, 0.5, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 18
-text = ""
 horizontal_alignment = 1
+
+[node name="EventsPopup" type="PopupPanel" parent="." unique_id=683107224]
+title = "While you were away..."
+size = Vector2i(420, 320)
+exclusive = true
+
+[node name="Margin" type="MarginContainer" parent="EventsPopup" unique_id=683107225]
+offset_left = 4.0
+offset_top = 4.0
+offset_right = 416.0
+offset_bottom = 321.0
+theme_override_constants/margin_left = 18
+theme_override_constants/margin_top = 18
+theme_override_constants/margin_right = 18
+theme_override_constants/margin_bottom = 18
+
+[node name="VBox" type="VBoxContainer" parent="EventsPopup/Margin" unique_id=683107226]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="TitleLabel" type="Label" parent="EventsPopup/Margin/VBox" unique_id=683107227]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 18
+text = "While you were away..."
+horizontal_alignment = 1
+
+[node name="EventsScroll" type="ScrollContainer" parent="EventsPopup/Margin/VBox" unique_id=683107228]
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="EventsLabel" type="Label" parent="EventsPopup/Margin/VBox/EventsScroll" unique_id=683107229]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
+
+[node name="CloseButton" type="Button" parent="EventsPopup/Margin/VBox" unique_id=683107230]
+layout_mode = 2
+size_flags_horizontal = 4
+text = "OK"

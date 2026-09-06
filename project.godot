@@ -25,6 +25,7 @@ PlayerManager="*res://scripts/PlayerManager.gd"
 GameManager="*uid://c2p0wlc2hxhwt"
 AudioManager="*uid://6x6bgmma1k8e"
 SettingsManager="*uid://bluwmmrno6l61"
+EnemyHeroManager="*uid://c5bp5purrwlcx"
 
 [display]
 

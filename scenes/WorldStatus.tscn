@@ -1,0 +1,73 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/WorldStatus.gd" id="1"]
+
+[node name="WorldStatus" type="Control" unique_id=725100001]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Background" type="ColorRect" parent="." unique_id=725100002]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.06, 0.06, 0.08, 1)
+
+[node name="TitleLabel" type="Label" parent="." unique_id=725100003]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.0
+anchor_right = 1.0
+offset_top = 20.0
+offset_bottom = 60.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 28
+text = "World Status"
+horizontal_alignment = 1
+
+[node name="ListPanel" type="PanelContainer" parent="." unique_id=725100004]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.15
+anchor_top = 0.1
+anchor_right = 0.85
+anchor_bottom = 0.92
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Margin" type="MarginContainer" parent="ListPanel" unique_id=725100005]
+layout_mode = 2
+theme_override_constants/margin_left = 20
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 20
+theme_override_constants/margin_bottom = 16
+
+[node name="ScrollContainer" type="ScrollContainer" parent="ListPanel/Margin" unique_id=725100006]
+layout_mode = 2
+
+[node name="ZonesList" type="VBoxContainer" parent="ListPanel/Margin/ScrollContainer" unique_id=725100007]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="BackButton" type="Button" parent="." unique_id=725100008]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 1123.0
+offset_top = -68.0
+offset_right = 1244.0
+offset_bottom = -31.0
+grow_vertical = 0
+text = "Back"
