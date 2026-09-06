@@ -1,85 +1,79 @@
-# Terrence: Path of the Hero — starter project
+# Terrence: Path of the Hero
 
-## 1. Install Godot
-Download **Godot 4.3** (or newer 4.x) from https://godotengine.org/download — pick the
-"Standard" version, not .NET, unless you specifically want C#. It's a single
-executable, no install needed.
+A turn-based hero RPG built in Godot 4, where you recruit a hero, fight your way through a world of zones, and level up while every *other* hero in that world is quietly doing the exact same thing in the background.
 
-## 2. Open the project
-Launch Godot → **Import** → point it at this folder's `project.godot` file → **Import & Edit**.
+---
 
-## 3. Run it
-Press **F5** (or the ▶ button, top right). The first time, Godot will ask which
-scene is the main one — `scenes/MainMenu.tscn` is already set as default in
-`project.godot`, so you can just hit F5 from now on.
+## About the Game
 
-To test a single screen in isolation (handy while tuning the map), open that
-scene in the editor and press **F6**.
+Pick a hero from any unlocked zone, choose their starting skill, and fight your way through turn-based battles - moving, attacking, casting skills, or using items - to clear every stage. Defeat a zone's final stage and you may be challenged to a duel by one of its other heroes; win, and you unlock the next zone.
 
-## What's already built
+But you're not the only one adventuring. Every rival hero on the map is simultaneously grinding their own home zone, leveling up, learning skills, and dueling their own rivals - all simulated in the background. Once a hero clears their home turf, they go looking for a fight elsewhere: picking a target zone, grinding through it, and challenging its hero when they arrive. Heroes rise, fall, and get replaced as targets over the course of a run, and you'll get notified the next time you check the map.
+
+### Key Features
+
+- **Turn-based combat** - movement, attacks, skills, and items, with range and targeting that actually matter.
+- **Hero recruitment** - pick a hero and a starting skill; that choice is locked in for the run.
+- **Leveling & itemization** - earn XP and gold from kills, spend gold at the Shop, and grow your stats and skills.
+- **A living world** - every rival hero levels up, fights, and dies in the background, whether you're watching or not.
+- **Hero duels & bounties** - clearing a zone can trigger a duel against its hero, with rewards scaled to that hero's own progress.
+- **Freedom & invasion** - a hero who clears their home zone sets out to invade another, targeting, re-targeting, and dueling across the map.
+- **"While you were away"** - a one-time notification queue on the map surfaces kills and zone wipes that happened since your last visit.
+- **World Status screen** - a full at-a-glance view of every zone, every hero in it, and whether they're still alive.
+- **High scores** - your best XP is saved when a run ends.
+
+---
+
+## How to Play
+
+Each zone on the map with a green dot offers one or more heroes - browse them with the arrows, pick a skill, and press Accept. Your hero and that skill are locked in for the rest of the run; starting over requires a fresh "New Game."
+
+Fight enemies in turn-based battles. Each turn you may use only one of: movement, attack, skill, or item. Enemies will chase or flee, and you can only attack what's in range - ranged heroes and skills require choosing a target as well.
+
+Killing enemies earns XP (for leveling up) and gold (to spend at the Shop). Potions and stat-boost items can be used any time, free of your turn's move/attack allowance.
+
+Clear every stage in a zone and you may be challenged to a duel by one of that zone's rival heroes - win it and you unlock the next zone, plus take their bounty in XP and gold. Every other hero on the map is doing the same thing in the background, and once a hero clears their own zone they'll go hunt for a new one to invade. Check the map after a battle for news of anyone who's fallen, and use the World Status screen (next to the Shop) to see the state of the entire world at a glance.
+
+If your HP reaches zero, your run ends and your best XP is saved as a high score before you're returned to the main menu.
+
+---
+
+## Tech Stack
+
+- **Engine:** [Godot 4](https://godotengine.org/) (GDScript)
+- **Persistence:** Local per-player save files under `user://players/`
+
+## Project Structure
 
 ```
-MainMenu  →  New Player  →  Register  →  PostLogin  →  New Game → Map → AreaScreen
-          →  Log In      →  Login    →     ↑                        ↑
-          →  High Scores (stub)        Continue (stub)      click any region
+res://
+├── scenes/
+│   ├── Map.tscn            # World map, zone navigation, World Status/Shop entry points
+│   ├── Shop.tscn           # Item shop
+│   ├── WorldStatus.tscn    # Full zone/hero status overview
+│   └── ...                 # Battle, hero-select, login, etc.
+├── scripts/
+│   ├── GameManager.gd      # Zone/hero/enemy static data, XP & skill tables, stage/hero-fight logic
+│   ├── PlayerManager.gd    # Player + NPC hero state, save/load, event queue
+│   ├── EnemyHeroManager.gd # Rival hero simulation: leveling, shopping, combat, invasion AI
+│   ├── Map.gd
+│   ├── Shop.gd
+│   ├── WorldStatus.gd
+│   └── battle.gd           # Player battle flow
+└── assets/                 # Sprites, portraits, zone backgrounds, music
 ```
 
-- **MainMenu** — your `menu.jpg` as background, 3 buttons.
-- **Register** — Name / Password / Repeat Password. Validates: name not empty
-  and not already taken, password not empty, password > 3 characters, no
-  spaces in the password, and both password fields match.
-- **Login** — Name / Password, checked against the same records.
-- **PostLogin** — same background, now shows New Game / Continue / High Scores.
-- **Map** — your `map.jpg`, with an invisible ~18×18px button generated over
-  every region name, plus a Back button.
-- **AreaScreen** — an empty placeholder that just shows which region you
-  clicked. This is the "for now just opening empty screen" bit — build each
-  region's real content here later.
+## Running the Project
 
-## Where the player data lives
-`PlayerManager.gd` is an **autoload** (a singleton, always loaded — see
-`project.godot` → `[autoload]`), so any script can call
-`PlayerManager.player_exists(...)`, `PlayerManager.register_player(...)`, etc.
+1. Install [Godot 4.x](https://godotengine.org/download).
+2. Clone this repository.
+3. Open the project folder in Godot (`project.godot`).
+4. Press **Run** (F5).
 
-It writes two things at runtime, under `user://` (a real folder Godot manages
-for you — never inside your project folder, and it's the only place writable
-once you export the game):
+## Contributing
 
-- `user://players.txt` — one line per player: `name|password`
-- `user://players/<name>.txt` — a growing per-player file, currently just
-  `name=`, `hero=`, `level=1`, `stats=` placeholders for you to fill in as
-  you add hero selection, leveling, etc.
+Issues and pull requests are welcome. If you're adding a new hero, zone, or system, please keep gameplay-affecting balance changes (XP tables, item costs, bounty formulas) called out clearly in your PR description.
 
-To find that folder on your machine while testing in the editor: **Project →
-Open User Data Folder** in the Godot menu.
+## License
 
-⚠️ Passwords are stored as plain text, exactly as you asked. That's fine for a
-personal/learning project, but don't reuse a real password when testing, and
-if this ever ships publicly you'd want to hash passwords instead of storing
-them raw.
-
-## Positioning the map buttons precisely
-`scripts/Map.gd` has a `REGIONS` array — one `{"name": ..., "pos": Vector2(x, y)}`
-entry per label, where `x` and `y` are **percentages of the screen** (0.0 to
-1.0), not pixels. I estimated these by eye from your map image, so they're in
-the right neighborhood but not pixel-perfect. Fastest way to fix them:
-
-1. Open `scenes/Map.tscn`, press **F6** to run just that scene.
-2. Click near a region's button — if it's off, note roughly how far off.
-3. Nudge that region's `Vector2(x, y)` in `Map.gd` (right is +x, down is +y)
-   and re-run. Repeat.
-
-Since positions are percentages, they'll stay lined up on any screen size.
-
-## Sizing / mobile
-The project is set to a 1280×720 base resolution with `stretch/mode =
-"canvas_items"`, which scales everything to fit the device screen while
-keeping your UI code working in one consistent coordinate space — you don't
-need to think about actual device resolution anywhere in the scripts above.
-
-## Natural next steps
-- Hero selection screen after "New Game", before the map.
-- Wire `Continue` to read `PlayerManager.current_player_file()`.
-- Give each region in `AreaScreen.gd` its own real scene instead of the
-  shared placeholder.
-- High scores: probably another `user://` text file, sorted on load.
+[MIT](LICENSE) - update this section if you're using a different license.
