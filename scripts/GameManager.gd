@@ -95,6 +95,11 @@ const ARMOR_PER_AGILITY: float = 0.167
 const MANA_PER_INTELLIGENCE: float = 12.0
 const DAMAGE_PER_MAIN_STAT: float = 1.0
 
+# Slark's Essence Shift (see battle.gd's _apply_essence_shift_steal):
+# an enemy's main_stat_value is never drained below this floor, so a
+# long fight can't leave an enemy sitting at 0 or negative stats.
+const ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT: int = 5
+
 
 ## Computes a hero's effective hp/mana/armor/damage from how far
 ## strength/agility/intelligence have grown past that hero's base
@@ -256,21 +261,24 @@ var zones: Dictionary = {
 						"id": "essence_shift",
 						"name": "Essence Shift",
 						"type": "standard",
-						"description": "Melee attacks steal a small amount of stats from the enemy hit, weakening them and empowering Slark.",
-						"cooldown": 3,
-						"mana_cost": 0
+						"description": "Activates for a number of turns - Slark's next several melee attacks each steal 1 point of the target's main stat, weakening them and empowering Slark.",
+						"levels": [
+							{"attacks": 2, "steal_per_hit": 1, "duration": 4, "mana_cost": 30, "cooldown": 3},
+							{"attacks": 3, "steal_per_hit": 1, "duration": 4, "mana_cost": 35, "cooldown": 3},
+							{"attacks": 3, "steal_per_hit": 1, "duration": 5, "mana_cost": 40, "cooldown": 3},
+							{"attacks": 4, "steal_per_hit": 1, "duration": 6, "mana_cost": 45, "cooldown": 3}
+						]
 					},
 					{
 						"id": "dark_pact",
 						"name": "Dark Pact",
 						"type": "standard",
 						"description": "Deals damage in a radius around Slark and silences all enemies caught in it.",
-						"mana_cost": 65,
 						"levels": [
-							{"damage_multiplier": 0.75, "radius": 0, "cooldown": 4},
-							{"damage_multiplier": 1.0, "radius": 0, "cooldown": 4},
-							{"damage_multiplier": 1.25, "radius": 0, "cooldown": 3},
-							{"damage_multiplier": 1.5, "radius": 1, "cooldown": 3}
+							{"damage_multiplier": 0.75, "radius": 0, "mana_cost": 65, "cooldown": 4},
+							{"damage_multiplier": 1.0, "radius": 0, "mana_cost": 70, "cooldown": 4},
+							{"damage_multiplier": 1.25, "radius": 0, "mana_cost": 75, "cooldown": 3},
+							{"damage_multiplier": 1.5, "radius": 1, "mana_cost": 80, "cooldown": 3}
 						]
 					},
 					{
@@ -278,21 +286,23 @@ var zones: Dictionary = {
 						"name": "Pounce",
 						"type": "standard",
 						"description": "Leaps forward, stunning and damaging the first enemy hero hit.",
-						"mana_cost": 75,
 						"levels": [
-							{"distance": 2, "stun_turns": 1, "cooldown": 5},
-							{"distance": 3, "stun_turns": 1, "cooldown": 5},
-							{"distance": 3, "stun_turns": 2, "cooldown": 4},
-							{"distance": 4, "stun_turns": 2, "cooldown": 4}
+							{"distance": 2, "stun_turns": 1, "mana_cost": 75, "cooldown": 5},
+							{"distance": 3, "stun_turns": 1, "mana_cost": 80, "cooldown": 5},
+							{"distance": 3, "stun_turns": 2, "mana_cost": 90, "cooldown": 4},
+							{"distance": 4, "stun_turns": 2, "mana_cost": 100, "cooldown": 4}
 						]
 					},
 					{
 						"id": "shadow_dance",
 						"name": "Shadow Dance",
 						"type": "ultimate",
-						"description": "Ultimate: grants invisibility and bonus movement speed. Locked until a higher level.",
-						"cooldown": 10,
-						"mana_cost": 100
+						"description": "Ultimate: Slark turns invisible and can't be attacked. His next attack while hidden deals bonus damage and ends the invisibility early - otherwise it simply runs out after a number of turns.",
+						"levels": [
+							{"duration": 2, "bonus_damage": 20, "mana_cost": 80, "cooldown": 8},
+							{"duration": 3, "bonus_damage": 35, "mana_cost": 90, "cooldown": 7},
+							{"duration": 4, "bonus_damage": 50, "mana_cost": 100, "cooldown": 6}
+						]
 					}
 				],
 				"level_up": {
@@ -308,6 +318,8 @@ var zones: Dictionary = {
 				"name": "Dark Reef mele creep",
 				"image": "res://assets/enemies/Dark_Reef_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -321,6 +333,8 @@ var zones: Dictionary = {
 				"name": "Dark Reef mele creep",
 				"image": "res://assets/enemies/Dark_Reef_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -334,6 +348,8 @@ var zones: Dictionary = {
 				"name": "Dark Reef range creep",
 				"image": "res://assets/enemies/Dark_Reef_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -394,7 +410,7 @@ var zones: Dictionary = {
 						"id": "spirit_link",
 						"name": "Spirit Link",
 						"type": "standard",
-						"description": "The druid and his spirit bear share % of their armor and lestsheal. Increse attack speed.",
+						"description": "The druid and his spirit bear share % of their armor and lestsheal.",
 						"cooldown": 3,
 						"mana_cost": 50
 					},
@@ -428,6 +444,8 @@ var zones: Dictionary = {
 				"name": "Northern Pine mele creep",
 				"image": "res://assets/enemies/Northern_Pine_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -441,6 +459,8 @@ var zones: Dictionary = {
 				"name": "Northern Pine mele creep",
 				"image": "res://assets/enemies/Northern_Pine_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -454,6 +474,8 @@ var zones: Dictionary = {
 				"name": "Northern Pine range creep",
 				"image": "res://assets/enemies/Northern_Pine_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -478,7 +500,7 @@ var zones: Dictionary = {
 		"music": "avarice",
 		"heroes": [
 			{
-				"id": "аbaddon",
+				"id": "аbaddon", 
 				"name": "Abaddon",
 				"image": "res://assets/heroes/Abaddon.png",
 				"background": "res://assets/zones/Avarice.png",
@@ -543,6 +565,8 @@ var zones: Dictionary = {
 				"name": "Avarice mele creep",
 				"image": "res://assets/enemies/Avarice_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -556,6 +580,8 @@ var zones: Dictionary = {
 				"name": "Avarice mele creep",
 				"image": "res://assets/enemies/Avarice_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -569,6 +595,8 @@ var zones: Dictionary = {
 				"name": "Avarice range creep",
 				"image": "res://assets/enemies/Avarice_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -656,6 +684,8 @@ var zones: Dictionary = {
 				"name": "Cladd Isles mele creep",
 				"image": "res://assets/enemies/Cladd Isles_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -669,6 +699,8 @@ var zones: Dictionary = {
 				"name": "Cladd Isles mele creep",
 				"image": "res://assets/enemies/Cladd Isles_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -682,6 +714,8 @@ var zones: Dictionary = {
 				"name": "Cladd Isles range creep",
 				"image": "res://assets/enemies/Cladd Isles_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -826,6 +860,8 @@ var zones: Dictionary = {
 				"name": "White Spire mele creep",
 				"image": "res://assets/enemies/white_spire_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -839,6 +875,8 @@ var zones: Dictionary = {
 				"name": "White Spire mele creep",
 				"image": "res://assets/enemies/white_spire_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -852,6 +890,8 @@ var zones: Dictionary = {
 				"name": "White Spire range creep",
 				"image": "res://assets/enemies/white_spire_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -997,6 +1037,8 @@ var zones: Dictionary = {
 				"name": "Frozen Realm mele creep",
 				"image": "res://assets/enemies/Frozen_Realm_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1010,6 +1052,8 @@ var zones: Dictionary = {
 				"name": "Frozen Realm mele creep",
 				"image": "res://assets/enemies/Frozen_Realm_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1023,6 +1067,8 @@ var zones: Dictionary = {
 				"name": "Frozen Realm range creep",
 				"image": "res://assets/enemies/Frozen_Realm_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -1229,6 +1275,8 @@ var zones: Dictionary = {
 				"name": "Vale of Augury mele creep",
 				"image": "res://assets/enemies/vale_of_augury_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1242,6 +1290,8 @@ var zones: Dictionary = {
 				"name": "Vale of Augury mele creep",
 				"image": "res://assets/enemies/vale_of_augury_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1255,6 +1305,8 @@ var zones: Dictionary = {
 				"name": "Vale of Augury range creep",
 				"image": "res://assets/enemies/vale_of_augury_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -1420,6 +1472,8 @@ var zones: Dictionary = {
 				"name": "Sunken Cities mele creep",
 				"image": "res://assets/enemies/Sunken Cities_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1433,6 +1487,8 @@ var zones: Dictionary = {
 				"name": "Sunken Cities mele creep",
 				"image": "res://assets/enemies/Sunken Cities_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1446,6 +1502,8 @@ var zones: Dictionary = {
 				"name": "Sunken Cities range",
 				"image": "res://assets/enemies/Sunken Cities_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,
@@ -1592,6 +1650,8 @@ var zones: Dictionary = {
 				"name": "Nightsilver Woods mele creep",
 				"image": "res://assets/enemies/Nightsilver_Woods_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1605,6 +1665,8 @@ var zones: Dictionary = {
 				"name": "Nightsilver Woods mele creep",
 				"image": "res://assets/enemies/Nightsilver_Woods_mele.png",
 				"type": "mele",
+				"main_stat": "strength",
+				"main_stat_value": 10,
 				"hp": 150,
 				"mana": 50,
 				"damage": 10,
@@ -1618,6 +1680,8 @@ var zones: Dictionary = {
 				"name": "Nightsilver Woods range creep",
 				"image": "res://assets/enemies/Nightsilver_Woods_range.png",
 				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
 				"hp": 100,
 				"mana": 50,
 				"damage": 20,

@@ -372,6 +372,10 @@ custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 text = "Attack"
 
+[node name="ActionsSpacer" type="Control" parent="ActionsPanel" unique_id=1889148305]
+custom_minimum_size = Vector2(0, 26)
+layout_mode = 2
+
 [node name="MoveRow" type="HBoxContainer" parent="ActionsPanel" unique_id=867688528]
 layout_mode = 2
 theme_override_constants/separation = 6
@@ -387,11 +391,6 @@ custom_minimum_size = Vector2(0, 36)
 layout_mode = 2
 size_flags_horizontal = 3
 text = ">"
-
-[node name="EndTurnButton" type="Button" parent="ActionsPanel" unique_id=1889148304]
-custom_minimum_size = Vector2(0, 36)
-layout_mode = 2
-text = "End Turn"
 
 [node name="FleeButton" type="Button" parent="." unique_id=801310593]
 layout_mode = 1

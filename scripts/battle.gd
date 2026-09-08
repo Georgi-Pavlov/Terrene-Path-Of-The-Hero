@@ -14,7 +14,6 @@ extends Control
 @onready var move_left_button: Button = $ActionsPanel/MoveRow/MoveLeftButton
 @onready var move_right_button: Button = $ActionsPanel/MoveRow/MoveRightButton
 @onready var attack_button: Button = $ActionsPanel/AttackButton
-@onready var end_turn_button: Button = $ActionsPanel/EndTurnButton
 @onready var flee_button: Button = $FleeButton
 @onready var defeat_popup: PanelContainer = $DefeatPopup
 @onready var defeat_ok_button: Button = $DefeatPopup/DefeatMargin/DefeatVBox/DefeatOkButton
@@ -48,11 +47,11 @@ var _recruited: Dictionary = {}     # saved state from PlayerManager (current hp
 
 var _hero_pos_index: int = 1
 
-# Each entry: {static, current_hp, pos_index, node}
+# Each entry: {static, current_hp, current_main_stat_value, pos_index, node}
 var _enemies: Array = []
 
 # Turn state: exactly one action - move, attack, skill, or item - per
-# turn, then End Turn.
+# turn, then the turn ends automatically (see _mark_turn_used()).
 var _has_acted_this_turn: bool = false
 var _battle_over: bool = false
 
@@ -68,6 +67,50 @@ var _skill_cooldowns: Dictionary = {}
 # "N turns left".
 var _skill_cooldown_labels: Dictionary = {}
 
+# ------------------------------------------------------------------
+# Slark's Essence Shift: while active, Slark's next
+# _essence_shift_attacks_remaining melee hits each steal 1 point of
+# the target's main stat (see _apply_essence_shift_steal()). All
+# currently-borrowed stats are handed back - to whichever donor
+# enemies are still alive - together, once
+# _essence_shift_turns_remaining counts down to 0 (see
+# _tick_essence_shift() / _end_essence_shift()).
+# ------------------------------------------------------------------
+var _essence_shift_active: bool = false
+var _essence_shift_attacks_remaining: int = 0
+var _essence_shift_turns_remaining: int = 0
+# True from the moment the skill is cast until the first End Turn
+# after that - the casting turn itself doesn't count against the
+# duration, so this makes _tick_essence_shift() skip exactly one
+# decrement before duration starts counting down for real.
+var _essence_shift_duration_pending_start: bool = false
+# Every point currently borrowed, so it can be handed back on expiry:
+# each entry is {enemy: Dictionary (that enemy's own _enemies entry),
+# stat: String, amount: int}.
+var _essence_shift_stolen: Array = []
+# Running total of the borrowed stats currently added to Slark -
+# purely a battle-local calculation/display modifier (see
+# _roll_hero_damage(), _hero_armor(), _refresh_bars()). Never written
+# to PlayerManager, so it naturally has no effect outside this fight.
+var _essence_shift_bonus: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+# ------------------------------------------------------------------
+# Slark's Shadow Dance: while active, the hero is hidden (see
+# _is_hero_hidden()) - regular enemy attacks can't land on him at all
+# (see _enemy_turn()). His next Attack while hidden adds
+# _shadow_dance_bonus_damage on top of the normal roll (still mitigated
+# by the target's armor same as any other damage) and ends the
+# invisibility right there; casting any OTHER skill also ends it
+# early with no bonus damage; using an item does not. Otherwise it
+# just runs out on its own after _shadow_dance_turns_remaining turns.
+# ------------------------------------------------------------------
+var _shadow_dance_active: bool = false
+var _shadow_dance_bonus_damage: float = 0.0
+var _shadow_dance_turns_remaining: int = 0
+# Same "doesn't count on the casting turn" behavior as Essence Shift's
+# duration - see _essence_shift_duration_pending_start.
+var _shadow_dance_duration_pending_start: bool = false
+
 # Ranged-hero target selection: when true, the enemies in
 # _valid_targets are highlighted and clickable; clicking one resolves
 # the attack.
@@ -78,10 +121,10 @@ const RANGE_ENEMY_ATTACK_RANGE := 3
 const RANGE_ENEMY_FLEE_DISTANCE := 1
 
 # Reinforcements: if the hero hasn't cleared every enemy within this
-# many End Turns, one melee and one ranged enemy (picked from the
-# zone's own enemy roster) join the fight. Resets naturally every
-# REINFORCEMENT_INTERVAL turns via the modulo check in
-# _on_end_turn_pressed(), so it can trigger more than once in a long fight.
+# many turns, one melee and one ranged enemy (picked from the zone's
+# own enemy roster) join the fight. Resets naturally every
+# REINFORCEMENT_INTERVAL turns via the modulo check in _end_turn(), so
+# it can trigger more than once in a long fight.
 const REINFORCEMENT_INTERVAL := 20
 var _turn_count: int = 0
 
@@ -121,7 +164,6 @@ func _ready() -> void:
 	move_left_button.pressed.connect(_on_move_left_pressed)
 	move_right_button.pressed.connect(_on_move_right_pressed)
 	attack_button.pressed.connect(_on_attack_pressed)
-	end_turn_button.pressed.connect(_on_end_turn_pressed)
 	level_up_ok_button.pressed.connect(_on_level_up_continue_pressed)
 
 	_recruited = PlayerManager.get_recruited_hero()
@@ -196,10 +238,11 @@ func _apply_armor_reduction(raw_damage: float, armor: float) -> float:
 
 ## Hero's total armor: base stat from GameManager plus any permanent
 ## bonus picked up from items (mirrors how damage bonus is combined
-## in _roll_hero_damage).
+## in _roll_hero_damage), plus any armor currently borrowed via
+## Essence Shift.
 func _hero_armor() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("armor", 0))
+	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0)
 
 
 ## Which direction (+1 or -1) is the shorter path from `from` to `to`,
@@ -351,6 +394,7 @@ func _spawn_enemy(enemy_def: Dictionary) -> void:
 	var enemy_data := {
 		"static": enemy_def,
 		"current_hp": float(enemy_def.get("hp", 1)),
+		"current_main_stat_value": float(enemy_def.get("main_stat_value", 0)),
 		"pos_index": pos_index,
 		"node": tex_rect,
 	}
@@ -473,8 +517,7 @@ func _on_item_pressed(item_id: String) -> void:
 		"mana":
 			restore_mana(value)
 
-	_has_acted_this_turn = true
-	_update_action_buttons()
+	_mark_turn_used()
 
 
 func _build_bar_styles() -> void:
@@ -507,11 +550,14 @@ func _refresh_bars() -> void:
 	_recruited = PlayerManager.get_recruited_hero()
 	var stats: Dictionary = _recruited.get("stats", {})
 
-	hp_bar.max_value = float(stats.get("hp", 1))
+	# Essence Shift's borrowed hp/mana show up as extra max here - a
+	# battle-local display bonus only, never written back to
+	# PlayerManager (see _essence_shift_bonus).
+	hp_bar.max_value = float(stats.get("hp", 1)) + _essence_shift_bonus.get("hp", 0.0)
 	hp_bar.value = _recruited.get("current_hp", 0)
 	hp_value_label.text = str(int(hp_bar.value)) + "/" + str(int(hp_bar.max_value))
 
-	mana_bar.max_value = float(stats.get("mana", 1))
+	mana_bar.max_value = float(stats.get("mana", 1)) + _essence_shift_bonus.get("mana", 0.0)
 	mana_bar.value = _recruited.get("current_mana", 0)
 	mana_value_label.text = str(int(mana_bar.value)) + "/" + str(int(mana_bar.max_value))
 
@@ -590,7 +636,10 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 
 	var level_data: Dictionary = GameManager.get_skill_level_data(skill, skill_level)
 
-	var mana_cost: float = float(skill.get("mana_cost", 0))
+	# Mana cost lives per-level now (like every other per-level number),
+	# so it can be tuned per level - skill.get() is only a fallback for
+	# a skill that hasn't been given a "levels" array at all.
+	var mana_cost: float = float(level_data.get("mana_cost", skill.get("mana_cost", 0)))
 	if _recruited.get("current_mana", 0) < mana_cost:
 		_show_message_over_hero("Not enough mana")
 		return
@@ -607,11 +656,22 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			if not _cast_dark_pact(level_data):
 				# No enemies in range - same as above, no-op.
 				return
+		"essence_shift":
+			_activate_essence_shift(level_data)
+		"shadow_dance":
+			_activate_shadow_dance(level_data)
 		_:
 			# No effect implemented yet for other skills - this is the
 			# hook point for when they're added. For now it just
 			# confirms the wiring works end to end.
 			print("Used skill: ", skill.get("name", ""))
+
+	# Shadow Dance only breaks from attacking or casting ANOTHER
+	# skill - not from the cast that just activated it in the first
+	# place, and not from items/potions (those never reach this
+	# function at all).
+	if _is_hero_hidden() and skill_id != "shadow_dance":
+		_end_shadow_dance()
 
 	spend_mana(mana_cost)
 	_skill_cooldowns[skill_id] = int(level_data.get("cooldown", 0))
@@ -626,8 +686,7 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 	if _battle_over or _stage_generation != generation_before:
 		return
 
-	_has_acted_this_turn = true
-	_update_action_buttons()
+	_mark_turn_used()
 
 
 ## Slark's Pounce: leaps `level_data.distance` columns toward the
@@ -711,6 +770,188 @@ func _cast_dark_pact(level_data: Dictionary) -> bool:
 	return true
 
 
+## Activates Essence Shift: arms the next `level_data.attacks` melee
+## hits to each steal 1 point of their target's main stat, for
+## `level_data.duration` turns. Always "succeeds" (there's no target
+## or range requirement to activate it, unlike Pounce/Dark Pact) - it
+## just arms the effect for upcoming attacks. Recasting while a
+## previous activation is still running first returns everything that
+## one had borrowed (as if its duration had just run out) so the two
+## instances' durations/attack counts never get mixed together.
+func _activate_essence_shift(level_data: Dictionary) -> void:
+	if _essence_shift_active:
+		_end_essence_shift()
+
+	_essence_shift_active = true
+	_essence_shift_attacks_remaining = int(level_data.get("attacks", 0))
+	_essence_shift_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_essence_shift()).
+	_essence_shift_duration_pending_start = true
+
+
+## Called right after a melee Attack lands (see _apply_hero_attack()).
+## If Essence Shift is active and still has attacks banked, steals 1
+## point of `target`'s main stat - down to
+## GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT, never lower - and
+## converts it into the matching Slark bonus via
+## _essence_shift_contribution_for(). A hit that can't steal anything
+## (enemy already at the floor, or has no main stat at all) doesn't
+## spend one of the banked attacks.
+func _apply_essence_shift_steal(target: Dictionary) -> void:
+	if not _essence_shift_active or _essence_shift_attacks_remaining <= 0:
+		return
+
+	var stat_name: String = str(target["static"].get("main_stat", "")).to_lower()
+	if stat_name == "":
+		return
+
+	var current_value: float = float(target.get("current_main_stat_value", 0.0))
+	if current_value <= GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT:
+		_show_message_over_hero("Nothing left to steal")
+		return
+
+	target["current_main_stat_value"] = current_value - 1.0
+	_essence_shift_attacks_remaining -= 1
+	_essence_shift_stolen.append({"enemy": target, "stat": stat_name, "amount": 1.0})
+
+	var contribution: Dictionary = _essence_shift_contribution_for(stat_name)
+	_essence_shift_bonus["damage"] = _essence_shift_bonus.get("damage", 0.0) + contribution["damage"]
+	_essence_shift_bonus["hp"] = _essence_shift_bonus.get("hp", 0.0) + contribution["hp"]
+	_essence_shift_bonus["mana"] = _essence_shift_bonus.get("mana", 0.0) + contribution["mana"]
+	_essence_shift_bonus["armor"] = _essence_shift_bonus.get("armor", 0.0) + contribution["armor"]
+
+	_refresh_bars()
+
+
+## What 1 stolen point of `stat_name` ("strength"/"agility"/
+## "intelligence") is worth to Slark, in the same battle-facing terms
+## his own stat growth uses (see GameManager.compute_derived_stats):
+## strength -> hp, agility -> armor, intelligence -> mana, each at
+## that same per-point rate. On top of that, if `stat_name` happens to
+## be Slark's own main stat, the point also adds damage - exactly like
+## a hero's main-stat growth does.
+func _essence_shift_contribution_for(stat_name: String) -> Dictionary:
+	var contribution: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+	match stat_name:
+		"strength":
+			contribution["hp"] = GameManager.HP_PER_STRENGTH
+		"agility":
+			contribution["armor"] = GameManager.ARMOR_PER_AGILITY
+		"intelligence":
+			contribution["mana"] = GameManager.MANA_PER_INTELLIGENCE
+
+	if stat_name == str(_hero_static.get("main_stat", "")).to_lower():
+		contribution["damage"] = GameManager.DAMAGE_PER_MAIN_STAT
+
+	return contribution
+
+
+## Ticks Essence Shift's duration down once per End Turn, same timing
+## as _tick_skill_cooldowns() - except the very first call after the
+## skill is cast is skipped (see _essence_shift_duration_pending_start)
+## so the casting turn itself doesn't count against the duration.
+func _tick_essence_shift() -> void:
+	if not _essence_shift_active:
+		return
+
+	if _essence_shift_duration_pending_start:
+		_essence_shift_duration_pending_start = false
+		return
+
+	_essence_shift_turns_remaining -= 1
+	if _essence_shift_turns_remaining <= 0:
+		_end_essence_shift()
+
+
+## Essence Shift has run its course: Slark loses every borrowed point
+## and each donor enemy that's still alive gets its point(s) back
+## (donors from a stage/hero fight that's already moved on are simply
+## skipped - see _is_enemy_still_active()).
+func _end_essence_shift() -> void:
+	for entry in _essence_shift_stolen:
+		var donor: Dictionary = entry["enemy"]
+		if _is_enemy_still_active(donor):
+			donor["current_main_stat_value"] = float(donor.get("current_main_stat_value", 0.0)) + float(entry["amount"])
+
+	_essence_shift_stolen.clear()
+	_essence_shift_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_essence_shift_active = false
+	_essence_shift_attacks_remaining = 0
+	_essence_shift_turns_remaining = 0
+	_essence_shift_duration_pending_start = false
+
+	_refresh_bars()
+	_show_message_over_hero("Essence Shift wore off")
+
+
+## Whether `enemy_ref` (one of _enemies' own dictionaries, stashed
+## earlier in _essence_shift_stolen) is still part of the current
+## fight - false once it's died, or once a stage/hero-fight transition
+## has cleared and replaced the whole _enemies roster.
+func _is_enemy_still_active(enemy_ref: Dictionary) -> bool:
+	for enemy in _enemies:
+		if enemy == enemy_ref:
+			return true
+	return false
+
+
+# ------------------------------------------------------------------
+# Slark's Shadow Dance.
+# ------------------------------------------------------------------
+
+## True while Slark is hidden by Shadow Dance. Enemy attacks check
+## this in _enemy_turn() and simply don't land while it's true.
+func _is_hero_hidden() -> bool:
+	return _shadow_dance_active
+
+
+## Activates Shadow Dance: hides Slark for `level_data.duration` turns
+## (not counting the casting turn itself - see
+## _shadow_dance_duration_pending_start) and arms
+## `level_data.bonus_damage` for whichever comes first, his next
+## Attack or the duration running out.
+func _activate_shadow_dance(level_data: Dictionary) -> void:
+	_shadow_dance_active = true
+	_shadow_dance_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_shadow_dance_turns_remaining = int(level_data.get("duration", 0))
+	_shadow_dance_duration_pending_start = true
+	_update_hero_visibility()
+
+
+## Ticks Shadow Dance's duration down once per End Turn, same timing
+## and same "casting turn doesn't count" rule as Essence Shift (see
+## _tick_essence_shift()).
+func _tick_shadow_dance() -> void:
+	if not _shadow_dance_active:
+		return
+
+	if _shadow_dance_duration_pending_start:
+		_shadow_dance_duration_pending_start = false
+		return
+
+	_shadow_dance_turns_remaining -= 1
+	if _shadow_dance_turns_remaining <= 0:
+		_end_shadow_dance()
+
+
+## Ends Shadow Dance, whether from its duration running out, Slark
+## attacking while hidden, or casting another skill while hidden.
+func _end_shadow_dance() -> void:
+	_shadow_dance_active = false
+	_shadow_dance_bonus_damage = 0.0
+	_shadow_dance_turns_remaining = 0
+	_shadow_dance_duration_pending_start = false
+	_update_hero_visibility()
+
+
+## Slight fade to represent invisibility - fully opaque and visible
+## otherwise. Called whenever Shadow Dance starts or ends.
+func _update_hero_visibility() -> void:
+	hero_image.modulate = Color(1, 1, 1, 0.4) if _is_hero_hidden() else Color(1, 1, 1, 1)
+
+
 ## Updates every skill's cooldown label - "Ready" or "N turns left" -
 ## to match _skill_cooldowns. Called after a skill is used and after
 ## cooldowns tick down at End Turn.
@@ -727,13 +968,17 @@ func _refresh_skill_cooldown_labels() -> void:
 			label.add_theme_color_override("font_color", Color(1, 0.6, 0.4, 1))
 
 
-## Ticks every tracked skill cooldown down by one turn, clamped at 0.
-## Called once per End Turn.
+## Ticks every tracked skill cooldown down by one turn, clamped at 0,
+## and ticks Essence Shift's and Shadow Dance's durations alongside
+## them. Called once per End Turn.
 func _tick_skill_cooldowns() -> void:
 	for skill_id in _skill_cooldowns.keys():
 		var new_value: int = maxi(0, _skill_cooldowns[skill_id] - 1)
 		_skill_cooldowns[skill_id] = new_value
 		PlayerManager.set_skill_cooldown(skill_id, new_value)
+
+	_tick_essence_shift()
+	_tick_shadow_dance()
 
 
 # ------------------------------------------------------------------
@@ -917,8 +1162,7 @@ func _hero_move(direction: int) -> void:
 		_hero_pos_index = _melee_move_target(_hero_pos_index, direction, distance)
 
 	_update_hero_position()
-	_has_acted_this_turn = true
-	_update_action_buttons()
+	_mark_turn_used()
 
 
 func _on_move_left_pressed() -> void:
@@ -997,7 +1241,17 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 
 func _apply_hero_attack(target: Dictionary) -> void:
 	var generation_before: int = _stage_generation
-	_deal_damage_to_enemy(target)
+
+	# If Slark is hidden, this Attack gets Shadow Dance's bonus damage
+	# (added into the roll so it goes through armor mitigation exactly
+	# like the rest of the hit - see _roll_hero_damage()) and ends the
+	# invisibility right here, whether or not the hit kills the target.
+	var shadow_dance_bonus: float = _shadow_dance_bonus_damage if _is_hero_hidden() else 0.0
+	_deal_fixed_damage_to_enemy(target, _roll_hero_damage(shadow_dance_bonus))
+	_apply_essence_shift_steal(target)
+
+	if shadow_dance_bonus > 0.0:
+		_end_shadow_dance()
 
 	# If that kill cleared the stage (or won a hero fight) and a fresh
 	# encounter started, the turn lock has already been reset for it -
@@ -1006,15 +1260,16 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	if _battle_over or _stage_generation != generation_before:
 		return
 
-	_has_acted_this_turn = true
-	_update_action_buttons()
+	_mark_turn_used()
 
 
 ## Rolls hero damage, applies the target's armor mitigation, subtracts
 ## it from the target's HP, and kills it if that brings it to 0.
-## Shared by the Attack button (_apply_hero_attack) and skills like
-## Pounce that deal a standard attack as part of their effect but
-## shouldn't duplicate the turn-flag/button-update bookkeeping.
+## Shared by Pounce and other skills that deal a standard attack as
+## part of their effect but shouldn't duplicate the turn-flag/button
+## bookkeeping (the plain Attack button goes through
+## _apply_hero_attack() directly instead, since it also needs to fold
+## in Shadow Dance's one-shot bonus damage).
 ## Rolls hero damage and applies it to a single target via
 ## _deal_fixed_damage_to_enemy. Used by the plain Attack button and by
 ## skills (like Pounce) that deal exactly one standard attack.
@@ -1043,12 +1298,24 @@ func _get_enemy_at(pos_index: int) -> Dictionary:
 	return {}
 
 
-func _roll_hero_damage() -> float:
+## Rolls a hero attack's damage, adding Essence Shift's ongoing
+## borrowed damage plus (for the single hit that triggers it) Shadow
+## Dance's one-shot `extra_bonus`, before mitigation.
+func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
 	var damage_str: String = str(stats.get("damage", "0-0"))
 	var parts: PackedStringArray = damage_str.split("-")
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
+
+	# Essence Shift's borrowed damage applies on top of both ends of
+	# the roll, same as a permanent damage bonus would - Shadow
+	# Dance's bonus (passed in by the caller, only for the specific
+	# hit that triggers it) stacks on top of that the same way.
+	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + extra_bonus
+	min_dmg += bonus_damage
+	max_dmg += bonus_damage
+
 	return randi_range(int(min_dmg), int(max_dmg))
 
 
@@ -1265,12 +1532,24 @@ func _update_stage_label() -> void:
 
 
 # ------------------------------------------------------------------
-# End Turn: range enemies attack every turn; melee enemies attack
-# only if sharing the hero's column, otherwise take one step toward
-# the hero. Then the turn's move/attack allowance resets.
+# End of turn: the hero only gets one action (move, attack, skill, or
+# item) per turn, so as soon as one resolves, the turn ends on its
+# own - no End Turn button to press. Range enemies then attack every
+# turn; melee enemies attack only if sharing the hero's column,
+# otherwise take one step toward the hero. Then the turn's
+# move/attack allowance resets.
 # ------------------------------------------------------------------
 
-func _on_end_turn_pressed() -> void:
+## Locks the action buttons and, after a brief pause so the player can
+## see the result of their action (damage numbers, messages, etc.),
+## triggers the enemies' turn automatically.
+func _mark_turn_used() -> void:
+	_has_acted_this_turn = true
+	_update_action_buttons()
+	get_tree().create_timer(0.9).timeout.connect(_end_turn)
+
+
+func _end_turn() -> void:
 	if _battle_over:
 		return
 
@@ -1306,6 +1585,10 @@ func _on_end_turn_pressed() -> void:
 ##        too far
 ##            |
 ##          MOVE
+##
+## While Slark is hidden by Shadow Dance (_is_hero_hidden()), neither
+## enemy type's attack can land - they still hold their position/
+## approach/flee logic as normal, they just can't find him to swing.
 func _enemy_turn() -> void:
 	for enemy in _enemies.duplicate():
 		var stun_turns_left: int = enemy.get("stun_turns_left", 0)
@@ -1328,8 +1611,10 @@ func _enemy_turn() -> void:
 				_move_enemy(enemy, _get_flee_position(enemy))
 
 			elif distance <= RANGE_ENEMY_ATTACK_RANGE:
-				# SAFE RANGE: attack, stay put.
-				apply_damage(enemy_damage)
+				# SAFE RANGE: attack, stay put - unless Slark is hidden,
+				# in which case there's nothing to hit.
+				if not _is_hero_hidden():
+					apply_damage(enemy_damage)
 
 			else:
 				# TOO FAR: close the distance.
@@ -1338,7 +1623,8 @@ func _enemy_turn() -> void:
 
 		elif enemy_type == "mele":
 			if enemy["pos_index"] == _hero_pos_index:
-				apply_damage(enemy_damage)
+				if not _is_hero_hidden():
+					apply_damage(enemy_damage)
 			else:
 				var step: int = _step_toward(enemy["pos_index"], _hero_pos_index)
 				_move_enemy(enemy, enemy["pos_index"] + step)
@@ -1382,7 +1668,6 @@ func _update_action_buttons() -> void:
 	move_left_button.disabled = locked
 	move_right_button.disabled = locked
 	attack_button.disabled = locked
-	end_turn_button.disabled = _battle_over
 
 	for skill_id in _skill_buttons.keys():
 		var on_cooldown: bool = _skill_cooldowns.get(skill_id, 0) > 0
