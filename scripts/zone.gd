@@ -21,9 +21,11 @@ extends Control
 @onready var skill_ok_button: Button = $SkillDescriptionPanel/SkillDescMargin/SkillDescVBox/SkillDescButtons/OkButton
 @onready var skill_close_button: Button = $SkillDescriptionPanel/SkillDescMargin/SkillDescVBox/SkillDescButtons/CloseButton
 
-# How many of the hero's skills are selectable on this screen.
-# The rest are still shown, just disabled (e.g. locked until a higher level).
-const ACTIVE_SKILL_COUNT := 3
+# Every skill button on this screen is clickable so the player can
+# read any skill's description (including the ultimate) before
+# recruiting - but the ultimate itself can't be chosen as the
+# starting skill (see _on_skill_ok_pressed()).
+const ULTIMATE_FIRST_SKILL_ERROR := "You can't start with your ultimate - pick it after recruiting, once you've earned skill points."
 
 # Friendly labels for the stat dictionary keys, in the order they're shown.
 const STAT_ORDER := ["strength", "agility", "intelligence", "range", "hp", "mana", "armor", "damage", "speed"]
@@ -58,6 +60,9 @@ var _pending_skill: Dictionary = {}
 var _selected_skill: Dictionary = {}
 # skill id -> Button, so the OK handler can restyle the chosen one.
 var _skill_buttons_by_id: Dictionary = {}
+# skill_error_label's original text ("Choose a skill..."), restored
+# whenever it's been overwritten with the ultimate-specific message.
+var _default_skill_error_text: String = ""
 
 
 func _ready() -> void:
@@ -67,6 +72,8 @@ func _ready() -> void:
 	next_hero_button.pressed.connect(_on_next_hero_pressed)
 	skill_ok_button.pressed.connect(_on_skill_ok_pressed)
 	skill_close_button.pressed.connect(_on_skill_close_pressed)
+
+	_default_skill_error_text = skill_error_label.text
 
 	_build_skill_button_styles()
 
@@ -236,7 +243,10 @@ func _populate_skill_buttons() -> void:
 		btn.text = skill.get("name", "Skill")
 		btn.custom_minimum_size = Vector2(0, 40)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.disabled = i >= ACTIVE_SKILL_COUNT
+		# Every skill is clickable here so the player can read its
+		# description (including the ultimate) - whether it can
+		# actually be SELECTED as the starting skill is enforced
+		# separately, in _on_skill_ok_pressed().
 
 		btn.add_theme_stylebox_override("normal", _skill_style_normal)
 		btn.add_theme_stylebox_override("hover", _skill_style_hover)
@@ -262,6 +272,13 @@ func _on_skill_button_pressed(skill: Dictionary) -> void:
 
 func _on_skill_ok_pressed() -> void:
 	if not _pending_skill.is_empty():
+		if str(_pending_skill.get("type", "")).to_lower() == "ultimate":
+			# Can look at it, can't start with it - ultimates only
+			# become choosable later, once skill points are earned.
+			skill_error_label.text = ULTIMATE_FIRST_SKILL_ERROR
+			skill_error_label.visible = true
+			skill_desc_panel.visible = false
+			return
 		_select_skill(_pending_skill)
 	skill_desc_panel.visible = false
 
@@ -293,6 +310,7 @@ func _on_skill_close_pressed() -> void:
 
 func _on_accept_button_pressed() -> void:
 	if _selected_skill.is_empty():
+		skill_error_label.text = _default_skill_error_text
 		skill_error_label.visible = true
 		return
 

@@ -394,41 +394,60 @@ var zones: Dictionary = {
 						"id": "summon_spirit_bear",
 						"name": "Summon Spirit Bear",
 						"type": "standard",
-						"description": "Summon a powerfull spirit companion. If the bear spirit dies druid loose 20% of his max HP.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Summons a Spirit Bear that fights alongside Sylla until it's killed - it acts automatically every turn, attacking any enemy sharing its column or closing in on the nearest one otherwise. If the bear dies, Sylla loses 20% of his max HP (never enough to knock him out on its own). Recasting replaces the current bear with a fresh one at the skill's current level.",
+						"levels": [
+							{"hp": 300, "damage_min": 25, "damage_max": 30, "armor": 3.0, "speed": 1, "mana_cost": 80, "cooldown": 8},
+							{"hp": 400, "damage_min": 32, "damage_max": 38, "armor": 4.0, "speed": 1, "mana_cost": 90, "cooldown": 7},
+							{"hp": 525, "damage_min": 40, "damage_max": 47, "armor": 5.5, "speed": 1, "mana_cost": 100, "cooldown": 6},
+							{"hp": 675, "damage_min": 50, "damage_max": 58, "armor": 7.0, "speed": 2, "mana_cost": 110, "cooldown": 5}
+						]
 					},
 					{
 						"id": "entangle",
 						"name": "Entangle",
 						"type": "standard",
-						"description": "When cast applies 2 stacks on each enemy. After 5 accumulated stacks enemies get rooted and take damage over time.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Roots a targeted enemy in place - it can't move (though it can still attack if something is in range), and it's silenced so it can't cast skills while rooted. Also deals damage over time for the rooted duration.",
+						"levels": [
+							{"root_turns": 1, "silence_turns": 1, "dot_damage": 5, "dot_duration": 2, "mana_cost": 50, "cooldown": 3},
+							{"root_turns": 1, "silence_turns": 1, "dot_damage": 10, "dot_duration": 2, "mana_cost": 55, "cooldown": 3},
+							{"root_turns": 2, "silence_turns": 2, "dot_damage": 15, "dot_duration": 3, "mana_cost": 60, "cooldown": 4},
+							{"root_turns": 2, "silence_turns": 2, "dot_damage": 20, "dot_duration": 3, "mana_cost": 65, "cooldown": 4}
+						]
 					},
 					{
 						"id": "spirit_link",
 						"name": "Spirit Link",
 						"type": "standard",
-						"description": "The druid and his spirit bear share % of their armor and lestsheal.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "The druid gains bonus armor and lifesteal for the duration - lifesteal converts a percentage of Attack damage into HP after the target's armor has reduced it. Only Attacks trigger it; skill damage never does.",
+						"levels": [
+							{"lifesteal_pct": 0.05, "bonus_armor": 2, "duration": 3, "mana_cost": 50, "cooldown": 5},
+							{"lifesteal_pct": 0.08, "bonus_armor": 3, "duration": 3, "mana_cost": 55, "cooldown": 5},
+							{"lifesteal_pct": 0.11, "bonus_armor": 4, "duration": 4, "mana_cost": 60, "cooldown": 4},
+							{"lifesteal_pct": 0.14, "bonus_armor": 5, "duration": 4, "mana_cost": 65, "cooldown": 4}
+						]
 					},
 					{
 						"id": "savage_roar",
 						"name": "Savage Roar",
-						"type": "standard",
-						"description": "Increase move speed. All enemies are frighten and run away",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: while the druid's HP is below 50%, he and his spirit bear move extra columns and take reduced damage. Wears off once his HP climbs back to 80% or higher.",
+						"levels": [
+							{"bonus_movement": 1, "damage_reduction_pct": 0.05},
+							{"bonus_movement": 1, "damage_reduction_pct": 0.10},
+							{"bonus_movement": 2, "damage_reduction_pct": 0.15},
+							{"bonus_movement": 2, "damage_reduction_pct": 0.20}
+						]
 					},
 					{
 						"id": "true_form",
 						"name": "True Form",
 						"type": "ultimate",
-						"description": "Ultimate: Druid morphs himself into a raging bear gaining bonus armor, health and damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: the druid morphs into a raging bear for the duration, gaining bonus HP (added immediately, then taken back off when it ends) and bonus damage - but he fights at melee range for as long as the transformation lasts, whatever his normal range.",
+						"levels": [
+							{"bonus_hp": 150, "bonus_damage": 15, "duration": 4, "mana_cost": 100, "cooldown": 10},
+							{"bonus_hp": 250, "bonus_damage": 25, "duration": 5, "mana_cost": 110, "cooldown": 9},
+							{"bonus_hp": 350, "bonus_damage": 35, "duration": 6, "mana_cost": 120, "cooldown": 8}
+						]
 					}
 				],
 				"level_up": {
@@ -500,7 +519,7 @@ var zones: Dictionary = {
 		"music": "avarice",
 		"heroes": [
 			{
-				"id": "аbaddon", 
+				"id": "аbaddon",
 				"name": "Abaddon",
 				"image": "res://assets/heroes/Abaddon.png",
 				"background": "res://assets/zones/Avarice.png",

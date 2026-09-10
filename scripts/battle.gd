@@ -35,12 +35,26 @@ extends Control
 @onready var skill_choice_popup: PanelContainer = $SkillChoicePopup
 @onready var skill_choice_points_label: Label = $SkillChoicePopup/SkillChoiceMargin/SkillChoiceVBox/SkillChoicePointsLabel
 @onready var skill_choice_options: VBoxContainer = $SkillChoicePopup/SkillChoiceMargin/SkillChoiceVBox/SkillChoiceOptions
+@onready var skill_choice_desc_popup: PanelContainer = $SkillChoiceDescPopup
+@onready var skill_choice_desc_name_label: Label = $SkillChoiceDescPopup/SkillChoiceDescMargin/SkillChoiceDescVBox/SkillChoiceDescNameLabel
+@onready var skill_choice_desc_label: Label = $SkillChoiceDescPopup/SkillChoiceDescMargin/SkillChoiceDescVBox/SkillChoiceDescLabel
+@onready var skill_choice_desc_ok_button: Button = $SkillChoiceDescPopup/SkillChoiceDescMargin/SkillChoiceDescVBox/SkillChoiceDescButtons/OkButton
+@onready var skill_choice_desc_cancel_button: Button = $SkillChoiceDescPopup/SkillChoiceDescMargin/SkillChoiceDescVBox/SkillChoiceDescButtons/CancelButton
 @onready var stage_label: Label = $StagePanel/StageMargin/StageLabel
 
 # The battlefield is divided into 10 columns. Movement shifts by one
 # column (1/10 screen width); "same space" for attacks/melee means
 # matching column index.
 const GRID_COLUMNS := 10
+
+# Lone Druid's Spirit Bear (summon_spirit_bear) always uses this art,
+# regardless of skill level.
+const SPIRIT_BEAR_IMAGE_PATH := "res://assets/heroes/Lone Druid Bear.png"
+# True Form's transformed portrait, likewise fixed regardless of level.
+const TRUE_FORM_IMAGE_PATH := "res://assets/heroes/Lone Druid Ultimate.png"
+# How much of the hero's own max HP he loses when the bear dies (see
+# _apply_bear_death_penalty()).
+const BEAR_DEATH_HP_PENALTY_PCT := 0.2
 
 var _hero_static: Dictionary = {}   # full definition from GameManager (stats, skills, image)
 var _recruited: Dictionary = {}     # saved state from PlayerManager (current hp/mana/xp, chosen skill)
@@ -66,6 +80,10 @@ var _skill_cooldowns: Dictionary = {}
 # skill_id -> the Label under that skill's button showing "Ready" or
 # "N turns left".
 var _skill_cooldown_labels: Dictionary = {}
+
+# The skill_id currently shown in the level-up skill-choice
+# description popup, awaiting OK/Cancel - not yet spent on.
+var _pending_level_up_skill_id: String = ""
 
 # ------------------------------------------------------------------
 # Slark's Essence Shift: while active, Slark's next
@@ -111,11 +129,95 @@ var _shadow_dance_turns_remaining: int = 0
 # duration - see _essence_shift_duration_pending_start.
 var _shadow_dance_duration_pending_start: bool = false
 
+# ------------------------------------------------------------------
+# Lone Druid's Spirit Bear (summon_spirit_bear): a persistent ally
+# that fights alongside the hero. {} when no bear is out (see
+# _is_bear_alive()); otherwise {hp, current_hp, damage_min,
+# damage_max, armor, speed, pos_index, node}. It lives outside
+# _enemies/enemies_layer entirely, so stage transitions - which only
+# clear those - leave it untouched (see _load_enemies(),
+# _start_hero_fight()); it's only ever removed by _despawn_bear()
+# (recasting the skill, or the hero fleeing the scene entirely) or by
+# _kill_bear() (an enemy brings its HP to 0 - notably not the same
+# path as _kill_enemy(), so it never grants XP/gold - though it does
+# cost the hero HP of his own, see _apply_bear_death_penalty()).
+# ------------------------------------------------------------------
+var _bear: Dictionary = {}
+
+# ------------------------------------------------------------------
+# Lone Druid's Spirit Link: while active, the hero gets a flat armor
+# bonus (folded into _hero_armor(), same slot Essence Shift's borrowed
+# armor uses) and lifesteal on his Attacks - a % of an Attack's
+# damage, taken AFTER the target's armor has already reduced it, paid
+# back as HP (see _apply_spirit_link_lifesteal(), called only from
+# _apply_hero_attack() - skill damage never triggers it). Same
+# "casting turn doesn't count" duration pattern as Essence Shift/
+# Shadow Dance. Recasting simply overwrites the running values with
+# the new cast's - there's nothing to "give back" the way Essence
+# Shift's borrowed stats are, so no need to end the old one first.
+# ------------------------------------------------------------------
+var _spirit_link_active: bool = false
+var _spirit_link_lifesteal_pct: float = 0.0
+var _spirit_link_bonus_armor: float = 0.0
+var _spirit_link_turns_remaining: int = 0
+var _spirit_link_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Lone Druid's Savage Roar: a passive (no button press, no mana, no
+# cooldown - see _populate_skill_buttons()'s "passive" branch) that
+# turns itself on and off automatically based on the hero's own HP%,
+# recalculated every time the bars refresh (_update_savage_roar_state,
+# called from _refresh_bars()). Uses hysteresis rather than a single
+# threshold - see _update_savage_roar_state() - so it doesn't flicker
+# on/off turn to turn while HP hovers in the 50-80% band. While
+# active, both _hero_move_distance() and incoming damage on the hero
+# (apply_damage()) AND the bear (_deal_damage_to_bear()) read the
+# bonus movement/damage reduction below; while inactive they're 0, so
+# nothing extra needs to be undone when it turns off.
+# ------------------------------------------------------------------
+var _savage_roar_active: bool = false
+var _savage_roar_bonus_movement: int = 0
+var _savage_roar_damage_reduction_pct: float = 0.0
+# The skill button slot's status label ("Passive"/"Active"/
+# "Inactive"), captured when _populate_skill_buttons() builds it, so
+# _update_savage_roar_state() can keep it current live.
+var _savage_roar_status_label: Label = null
+
+# ------------------------------------------------------------------
+# Lone Druid's ultimate, True Form: transforms the hero into a bear
+# for the duration - swaps his portrait to TRUE_FORM_IMAGE_PATH (and
+# back to his normal one on expiry), grants bonus max HP (added to his
+# CURRENT HP too the moment it's granted, then taken back off again on
+# expiry, clamped so it can never do that part below 1 - see
+# _activate_true_form()/_end_true_form()), bonus damage (folded into
+# _roll_hero_damage() the same way Essence Shift's/Shadow Dance's
+# bonus damage is), and forces melee range for the duration regardless
+# of his own range_type stat (see _is_ranged_hero()) - so if he's
+# normally ranged, Attack just resolves as a melee hit on whatever
+# shares his own column instead of opening ranged targeting. Same
+# "casting turn doesn't count" duration pattern as the other buffs.
+# ------------------------------------------------------------------
+var _true_form_active: bool = false
+var _true_form_bonus_hp: float = 0.0
+var _true_form_bonus_damage: float = 0.0
+var _true_form_turns_remaining: int = 0
+var _true_form_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
 # Ranged-hero target selection: when true, the enemies in
 # _valid_targets are highlighted and clickable; clicking one resolves
-# the attack.
+# either a plain attack or a targeted skill, depending on
+# _targeting_purpose ("attack" or a skill id like "entangle") - see
+# _on_enemy_clicked().
 var _targeting_mode: bool = false
 var _valid_targets: Array = []
+var _targeting_purpose: String = "attack"
+
+# Entangle's level data, held from the moment its target-picking
+# starts (_start_entangle_targeting) until a target is actually
+# clicked (_resolve_entangle_cast) - mana/cooldown/turn are only spent
+# once that click resolves, same as a normal ranged Attack.
+var _pending_entangle_level_data: Dictionary = {}
 
 const RANGE_ENEMY_ATTACK_RANGE := 3
 const RANGE_ENEMY_FLEE_DISTANCE := 1
@@ -165,6 +267,8 @@ func _ready() -> void:
 	move_right_button.pressed.connect(_on_move_right_pressed)
 	attack_button.pressed.connect(_on_attack_pressed)
 	level_up_ok_button.pressed.connect(_on_level_up_continue_pressed)
+	skill_choice_desc_ok_button.pressed.connect(_on_skill_choice_desc_ok_pressed)
+	skill_choice_desc_cancel_button.pressed.connect(_on_skill_choice_desc_cancel_pressed)
 
 	_recruited = PlayerManager.get_recruited_hero()
 	if _recruited.is_empty():
@@ -236,13 +340,81 @@ func _apply_armor_reduction(raw_damage: float, armor: float) -> float:
 	return maxf(0.0, raw_damage * (1.0 - reduction))
 
 
+## Hero's total max HP: base stat plus Essence Shift's borrowed hp
+## plus True Form's bonus hp while each is active - the one place
+## that combination is computed, used by the HP bar, Savage Roar's
+## threshold check, and the bear-death HP penalty.
+func _hero_max_hp() -> float:
+	var stats: Dictionary = _recruited.get("stats", {})
+	return float(stats.get("hp", 0)) + _essence_shift_bonus.get("hp", 0.0) + _true_form_bonus_hp
+
+
 ## Hero's total armor: base stat from GameManager plus any permanent
 ## bonus picked up from items (mirrors how damage bonus is combined
 ## in _roll_hero_damage), plus any armor currently borrowed via
-## Essence Shift.
+## Essence Shift, plus Spirit Link's flat bonus while it's active.
 func _hero_armor() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0)
+	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor
+
+
+## Savage Roar's current level data ({} if not learned yet) - looked
+## up fresh each time rather than cached, so a mid-battle level-up
+## (via a banked skill point) is picked up immediately.
+func _get_savage_roar_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("savage_roar")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "savage_roar":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Recomputes Savage Roar's on/off state and its bonus values, and
+## refreshes its status label to match. Called from _refresh_bars()
+## (i.e. after every HP change) and right after _populate_skill_
+## buttons() rebuilds that label, so it's never stale.
+##
+## Uses hysteresis rather than one threshold: it switches ON once HP
+## drops below 50%, then stays on through the whole climb back up
+## until HP actually reaches 80%, rather than flicking on and off
+## every time HP crosses a single line. Between 50% and 80%, whatever
+## state it was already in just holds.
+func _update_savage_roar_state() -> void:
+	var level_data: Dictionary = _get_savage_roar_level_data()
+
+	if level_data.is_empty():
+		_savage_roar_active = false
+	else:
+		var max_hp: float = _hero_max_hp()
+		if max_hp > 0.0:
+			var hp_pct: float = float(_recruited.get("current_hp", 0)) / max_hp
+			if _savage_roar_active:
+				if hp_pct >= 0.8:
+					_savage_roar_active = false
+			elif hp_pct < 0.5:
+				_savage_roar_active = true
+
+	if _savage_roar_active:
+		_savage_roar_bonus_movement = int(level_data.get("bonus_movement", 0))
+		_savage_roar_damage_reduction_pct = float(level_data.get("damage_reduction_pct", 0.0))
+	else:
+		_savage_roar_bonus_movement = 0
+		_savage_roar_damage_reduction_pct = 0.0
+
+	if not is_instance_valid(_savage_roar_status_label):
+		return
+
+	if level_data.is_empty():
+		_savage_roar_status_label.text = "Passive"
+		_savage_roar_status_label.add_theme_color_override("font_color", Color(0.7, 0.8, 1, 1))
+	elif _savage_roar_active:
+		_savage_roar_status_label.text = "Active"
+		_savage_roar_status_label.add_theme_color_override("font_color", Color(1, 0.65, 0.2, 1))
+	else:
+		_savage_roar_status_label.text = "Inactive"
+		_savage_roar_status_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))
 
 
 ## Which direction (+1 or -1) is the shorter path from `from` to `to`,
@@ -258,7 +430,16 @@ func _step_toward(from: int, to: int) -> int:
 
 
 func _load_hero_image() -> void:
-	var image_path: String = _hero_static.get("image", "")
+	_set_hero_image(_hero_static.get("image", ""))
+
+
+## Loads `image_path` into hero_image, scaled to a quarter of the
+## screen's height with its own aspect ratio preserved - shared by the
+## normal hero portrait (_load_hero_image()) and True Form's swap to
+## its bear portrait/back again (see _activate_true_form()/
+## _end_true_form()). No-ops (with a printed warning) if the path is
+## empty or missing, leaving whatever's already showing untouched.
+func _set_hero_image(image_path: String) -> void:
 	if image_path == "" or not ResourceLoader.exists(image_path):
 		print("No hero image found at: ", image_path)
 		return
@@ -550,10 +731,11 @@ func _refresh_bars() -> void:
 	_recruited = PlayerManager.get_recruited_hero()
 	var stats: Dictionary = _recruited.get("stats", {})
 
-	# Essence Shift's borrowed hp/mana show up as extra max here - a
-	# battle-local display bonus only, never written back to
-	# PlayerManager (see _essence_shift_bonus).
-	hp_bar.max_value = float(stats.get("hp", 1)) + _essence_shift_bonus.get("hp", 0.0)
+	# Essence Shift's borrowed hp/mana, and True Form's bonus hp while
+	# it's active, show up as extra max here - a battle-local display
+	# bonus only, never written back to PlayerManager (see
+	# _essence_shift_bonus/_true_form_bonus_hp).
+	hp_bar.max_value = _hero_max_hp()
 	hp_bar.value = _recruited.get("current_hp", 0)
 	hp_value_label.text = str(int(hp_bar.value)) + "/" + str(int(hp_bar.max_value))
 
@@ -573,12 +755,17 @@ func _refresh_bars() -> void:
 		xp_bar.max_value = float(xp_required)
 		xp_bar.value = clamp(_recruited.get("xp", 0), 0.0, float(xp_required))
 
+	# HP just changed (or at least might have) - re-check Savage
+	# Roar's on/off state against the fresh numbers above.
+	_update_savage_roar_state()
+
 
 func _populate_skill_buttons() -> void:
 	for child in skill_buttons_container.get_children():
 		child.queue_free()
 	_skill_buttons.clear()
 	_skill_cooldown_labels.clear()
+	_savage_roar_status_label = null
 
 	var skills: Array = _hero_static.get("skills", [])
 	var learned_skills: Dictionary = _recruited.get("learned_skills", {})
@@ -586,6 +773,7 @@ func _populate_skill_buttons() -> void:
 	for skill in skills:
 		var skill_id: String = skill.get("id", "")
 		var learned_level: int = learned_skills.get(skill_id, 0)
+		var is_passive: bool = skill.get("type", "") == "passive"
 
 		var slot := VBoxContainer.new()
 		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -595,31 +783,46 @@ func _populate_skill_buttons() -> void:
 		btn.text = skill.get("name", "Skill") + (" (Lv%d)" % learned_level if learned_level > 0 else " (Locked)")
 		btn.custom_minimum_size = Vector2(0, 40)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.disabled = learned_level <= 0
-		btn.pressed.connect(_on_skill_pressed.bind(skill))
 
-		var cooldown_label := Label.new()
-		cooldown_label.text = "Ready"
-		cooldown_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		cooldown_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5, 1))
-		cooldown_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
-		cooldown_label.add_theme_constant_override("outline_size", 2)
-		cooldown_label.add_theme_font_size_override("font_size", 12)
+		var status_label := Label.new()
+		status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		status_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+		status_label.add_theme_constant_override("outline_size", 2)
+		status_label.add_theme_font_size_override("font_size", 12)
+
+		if is_passive:
+			# Passives (currently just Savage Roar) apply themselves
+			# automatically rather than being cast - no click, no
+			# mana, no cooldown. The label instead shows whether its
+			# effect is live right now (see _update_savage_roar_state).
+			btn.disabled = true
+			status_label.text = "Passive"
+			status_label.add_theme_color_override("font_color", Color(0.7, 0.8, 1, 1))
+		else:
+			btn.disabled = learned_level <= 0
+			btn.pressed.connect(_on_skill_pressed.bind(skill))
+			status_label.text = "Ready"
+			status_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5, 1))
 
 		slot.add_child(btn)
-		slot.add_child(cooldown_label)
+		slot.add_child(status_label)
 		skill_buttons_container.add_child(slot)
 
-		_skill_cooldown_labels[skill_id] = cooldown_label
-		# Cooldowns persist across battles (see PlayerManager.
-		# get_skill_cooldown/set_skill_cooldown), so a skill used near
-		# the end of one fight stays locked into the next.
-		_skill_cooldowns[skill_id] = PlayerManager.get_skill_cooldown(skill_id)
+		if is_passive:
+			if skill_id == "savage_roar":
+				_savage_roar_status_label = status_label
+		else:
+			_skill_cooldown_labels[skill_id] = status_label
+			# Cooldowns persist across battles (see PlayerManager.
+			# get_skill_cooldown/set_skill_cooldown), so a skill used
+			# near the end of one fight stays locked into the next.
+			_skill_cooldowns[skill_id] = PlayerManager.get_skill_cooldown(skill_id)
 
-		if learned_level > 0:
-			_skill_buttons[skill_id] = btn
+			if learned_level > 0:
+				_skill_buttons[skill_id] = btn
 
 	_refresh_skill_cooldown_labels()
+	_update_savage_roar_state()
 
 
 func _on_skill_pressed(skill: Dictionary) -> void:
@@ -660,6 +863,22 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			_activate_essence_shift(level_data)
 		"shadow_dance":
 			_activate_shadow_dance(level_data)
+		"summon_spirit_bear":
+			_summon_spirit_bear(level_data)
+		"spirit_link":
+			_activate_spirit_link(level_data)
+		"true_form":
+			_activate_true_form(level_data)
+		"entangle":
+			if not _start_entangle_targeting(level_data):
+				# No enemy in range - nothing happened, so don't spend
+				# mana, the turn, or start the cooldown, same as above.
+				return
+			# Entangle needs the player to click a target first - the
+			# mana/cooldown/turn spend below happens once that click
+			# resolves (_resolve_entangle_cast), not here, so bail out
+			# of this function without falling through to it.
+			return
 		_:
 			# No effect implemented yet for other skills - this is the
 			# hook point for when they're added. For now it just
@@ -768,6 +987,85 @@ func _cast_dark_pact(level_data: Dictionary) -> bool:
 		_deal_fixed_damage_to_enemy(enemy, pact_damage)
 
 	return true
+
+
+## Resolves an Entangle cast once the player has clicked a target
+## (see _start_entangle_targeting()/_on_enemy_clicked()): roots and
+## silences `target` for this level's turn counts and arms its
+## damage-over-time (ticked once per turn by _tick_entangle_effects(),
+## alongside skill cooldowns). Then spends mana, starts Entangle's own
+## cooldown, and ends the turn - the same bookkeeping _on_skill_pressed
+## does for every other skill, just deferred to here since Entangle's
+## target isn't known until after that function already returned.
+func _resolve_entangle_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	_apply_root(target, level_data)
+
+	if _is_hero_hidden():
+		_end_shadow_dance()
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["entangle"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("entangle", _skill_cooldowns["entangle"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Puts Entangle's root/silence/damage-over-time state onto `target`:
+##   - "root_turns_left": can't move while > 0 (checked in
+##     _enemy_turn()'s movement fallback and flee logic) - it can
+##     still attack normally if something's already in its range.
+##   - "silence_turns_left": tracked for parity with the root duration
+##     so anything checking it (e.g. hero-fight AI, if/when this
+##     project adds skill-casting for rival heroes) can block skill
+##     casts while it's > 0. Regular creeps here never cast skills
+##     anyway, so this flag is a no-op for them today.
+##   - "entangle_dot_damage"/"entangle_dot_turns_left": ticked once per
+##     turn by _tick_entangle_effects(), dealing that much damage
+##     (through normal armor mitigation) for that many turns.
+## Recasting Entangle on an already-rooted target simply overwrites
+## its counters with this cast's fresh values rather than stacking.
+func _apply_root(target: Dictionary, level_data: Dictionary) -> void:
+	target["root_turns_left"] = int(level_data.get("root_turns", 0))
+	target["silence_turns_left"] = int(level_data.get("silence_turns", 0))
+	target["entangle_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["entangle_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+
+
+## Ticks every enemy's root/silence counters and Entangle damage-over-
+## time down by one turn, applying that turn's DoT tick (still
+## mitigated by the target's own armor, same as any other damage) -
+## called once per End Turn, alongside _tick_skill_cooldowns().
+## Bails out immediately if a tick's damage ends the battle (last
+## enemy dies, stage clears, etc.) so it doesn't keep operating on
+## enemies from a fight that's already moved on.
+func _tick_entangle_effects() -> void:
+	for enemy in _enemies.duplicate():
+		if enemy.get("root_turns_left", 0) > 0:
+			enemy["root_turns_left"] -= 1
+		if enemy.get("silence_turns_left", 0) > 0:
+			enemy["silence_turns_left"] -= 1
+
+		if enemy.get("entangle_dot_turns_left", 0) > 0:
+			enemy["entangle_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("entangle_dot_damage", 0))
+			if dot_damage > 0.0:
+				_deal_fixed_damage_to_enemy(enemy, dot_damage)
+				if _battle_over:
+					return
+
+
+## Whether `enemy` is currently rooted by Entangle and therefore can't
+## move (it can still attack normally if something's already in
+## range) - checked from _enemy_turn()'s flee/movement-fallback logic.
+func _is_enemy_rooted(enemy: Dictionary) -> bool:
+	return enemy.get("root_turns_left", 0) > 0
 
 
 ## Activates Essence Shift: arms the next `level_data.attacks` melee
@@ -952,6 +1250,269 @@ func _update_hero_visibility() -> void:
 	hero_image.modulate = Color(1, 1, 1, 0.4) if _is_hero_hidden() else Color(1, 1, 1, 1)
 
 
+# ------------------------------------------------------------------
+# Lone Druid's Spirit Link.
+# ------------------------------------------------------------------
+
+## Activates (or refreshes) Spirit Link at `level_data`'s values.
+## Nothing needs to be "returned" the way Essence Shift's borrowed
+## stats do on recast, since the bonus armor/lifesteal aren't taken
+## from anything - overwriting the running values is enough.
+func _activate_spirit_link(level_data: Dictionary) -> void:
+	_spirit_link_active = true
+	_spirit_link_lifesteal_pct = float(level_data.get("lifesteal_pct", 0.0))
+	_spirit_link_bonus_armor = float(level_data.get("bonus_armor", 0))
+	_spirit_link_turns_remaining = int(level_data.get("duration", 0))
+	_spirit_link_duration_pending_start = true
+
+
+## Ticks Spirit Link's duration down once per End Turn, same timing
+## and "casting turn doesn't count" rule as Essence Shift/Shadow Dance.
+func _tick_spirit_link() -> void:
+	if not _spirit_link_active:
+		return
+
+	if _spirit_link_duration_pending_start:
+		_spirit_link_duration_pending_start = false
+		return
+
+	_spirit_link_turns_remaining -= 1
+	if _spirit_link_turns_remaining <= 0:
+		_end_spirit_link()
+
+
+## Ends Spirit Link, whether from its duration running out or a fresh
+## cast overwriting it outright (see _activate_spirit_link()).
+func _end_spirit_link() -> void:
+	_spirit_link_active = false
+	_spirit_link_lifesteal_pct = 0.0
+	_spirit_link_bonus_armor = 0.0
+	_spirit_link_turns_remaining = 0
+	_spirit_link_duration_pending_start = false
+
+
+## Spirit Link's lifesteal: converts `_spirit_link_lifesteal_pct` of an
+## Attack's damage - AFTER the target's armor has already reduced it -
+## into HP for the hero. Only called from _apply_hero_attack() (the
+## plain Attack action, melee or ranged) - skill damage (Pounce, Dark
+## Pact, Entangle's DoT, the Spirit Bear's own hits, etc.) never routes
+## through here, matching the skill's own wording. No-op while Spirit
+## Link isn't active or the hit did no damage (e.g. fully absorbed).
+func _apply_spirit_link_lifesteal(mitigated_attack_damage: float) -> void:
+	if not _spirit_link_active or mitigated_attack_damage <= 0.0:
+		return
+	heal(mitigated_attack_damage * _spirit_link_lifesteal_pct)
+
+
+# ------------------------------------------------------------------
+# Lone Druid's ultimate, True Form.
+# ------------------------------------------------------------------
+
+## Activates (or, if already active, restarts) True Form at
+## `level_data`'s values: swaps the hero's portrait to his bear form,
+## and arms the bonus HP/damage plus the forced-melee range for the
+## duration (see _hero_max_hp(), _roll_hero_damage(), _is_ranged_hero()
+## respectively - each reads the state set here directly). The bonus
+## HP raises his max HP the same way Essence Shift's borrowed HP does
+## (see _hero_max_hp()) rather than instantly topping him up - it's
+## extra capacity for the duration, not a free heal.
+func _activate_true_form(level_data: Dictionary) -> void:
+	if _true_form_active:
+		_end_true_form()
+
+	_true_form_active = true
+	_true_form_bonus_hp = float(level_data.get("bonus_hp", 0))
+	_true_form_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_true_form_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_true_form()).
+	_true_form_duration_pending_start = true
+
+	_set_hero_image(TRUE_FORM_IMAGE_PATH)
+	_refresh_bars()
+
+
+## Ticks True Form's duration down once per End Turn, same timing and
+## "casting turn doesn't count" rule as Essence Shift/Shadow Dance/
+## Spirit Link.
+func _tick_true_form() -> void:
+	if not _true_form_active:
+		return
+
+	if _true_form_duration_pending_start:
+		_true_form_duration_pending_start = false
+		return
+
+	_true_form_turns_remaining -= 1
+	if _true_form_turns_remaining <= 0:
+		_end_true_form()
+
+
+## Ends True Form, whether from its duration running out or a fresh
+## cast restarting it outright (see _activate_true_form()): reverts
+## the portrait, drops the bonus HP/damage and the forced melee range
+## back to normal.
+func _end_true_form() -> void:
+	_true_form_active = false
+	_true_form_bonus_hp = 0.0
+	_true_form_bonus_damage = 0.0
+	_true_form_turns_remaining = 0
+	_true_form_duration_pending_start = false
+
+	_set_hero_image(_hero_static.get("image", ""))
+	_refresh_bars()
+	_show_message_over_hero("True Form wears off")
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Spirit Bear.
+# ------------------------------------------------------------------
+
+func _is_bear_alive() -> bool:
+	return not _bear.is_empty()
+
+
+## Summons (or re-summons) the Spirit Bear at `level_data`'s stats,
+## starting on the hero's own column. Any bear already out - even a
+## stronger one from a previous cast at a higher level, since the
+## player might recast at the same level just to top it back up to
+## full HP - is replaced outright, per _despawn_bear().
+func _summon_spirit_bear(level_data: Dictionary) -> void:
+	_despawn_bear()
+
+	if not ResourceLoader.exists(SPIRIT_BEAR_IMAGE_PATH):
+		print("No bear image found at: ", SPIRIT_BEAR_IMAGE_PATH)
+		return
+
+	var target_height: float = get_viewport_rect().size.y / 4.0
+	var texture: Texture2D = load(SPIRIT_BEAR_IMAGE_PATH)
+	var tex_size: Vector2 = texture.get_size()
+	var scale_factor: float = target_height / tex_size.y
+	var target_width: float = tex_size.x * scale_factor
+
+	var tex_rect := TextureRect.new()
+	tex_rect.texture = texture
+	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+	tex_rect.size = Vector2(target_width, target_height)
+	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tex_rect.position = Vector2(_index_to_x(_hero_pos_index), _creature_y())
+	add_child(tex_rect)
+	# add_child() appends as the LAST sibling, which would draw on top
+	# of every UI panel and popup (LevelUpPopup, DefeatPopup, etc.) -
+	# move it right after EnemiesLayer instead, so it renders at the
+	# same visual layer as the hero/enemies and stays behind all UI.
+	move_child(tex_rect, enemies_layer.get_index() + 1)
+
+	var hp: float = float(level_data.get("hp", 1))
+	_bear = {
+		"hp": hp,
+		"current_hp": hp,
+		"damage_min": float(level_data.get("damage_min", 0)),
+		"damage_max": float(level_data.get("damage_max", 0)),
+		"armor": float(level_data.get("armor", 0)),
+		"speed": maxi(1, int(level_data.get("speed", 1))),
+		"pos_index": _hero_pos_index,
+		"node": tex_rect,
+	}
+
+
+## Removes whatever bear is currently out, if any, with no XP/gold and
+## no message - used both when a fresh bear replaces it (see
+## _summon_spirit_bear()) and when the hero leaves the battle for good
+## (the scene tearing down would free the node either way, but this
+## keeps _bear itself consistent for as long as the script is alive).
+func _despawn_bear() -> void:
+	if not _is_bear_alive():
+		return
+	if is_instance_valid(_bear["node"]):
+		_bear["node"].queue_free()
+	_bear = {}
+
+
+## An enemy's hit landed on the bear instead of the hero: mitigated by
+## the bear's own armor, same formula as any other target's, plus
+## Savage Roar's damage reduction on top while it's active - the
+## skill covers the bear as well as the hero (see
+## _update_savage_roar_state()).
+func _deal_damage_to_bear(amount: float) -> void:
+	if not _is_bear_alive():
+		return
+
+	var mitigated: float = _apply_armor_reduction(amount, float(_bear.get("armor", 0)))
+	mitigated *= (1.0 - _savage_roar_damage_reduction_pct)
+	_bear["current_hp"] -= mitigated
+	_show_damage_number(_bear["node"], mitigated)
+
+	if _bear["current_hp"] <= 0:
+		_kill_bear()
+
+
+## The bear falls - unlike _kill_enemy(), this never grants XP or
+## gold, since it's the hero's own summon rather than a foe. Losing it
+## also costs the hero a chunk of his own HP (see
+## _apply_bear_death_penalty()).
+func _kill_bear() -> void:
+	_despawn_bear()
+	_apply_bear_death_penalty()
+
+
+## Losing the bear costs the hero BEAR_DEATH_HP_PENALTY_PCT of his max
+## HP, taken directly off current_hp with no armor mitigation at all
+## (unlike apply_damage(), which always mitigates) - but this specific
+## penalty is capped so it can never bring him below 1 HP; it's a
+## punishment for losing the bear, not a death sentence on its own.
+func _apply_bear_death_penalty() -> void:
+	var max_hp: float = _hero_max_hp()
+	var current_hp: float = float(_recruited.get("current_hp", 0))
+
+	var penalty: float = max_hp * BEAR_DEATH_HP_PENALTY_PCT
+	var actual_damage: float = minf(penalty, maxf(0.0, current_hp - 1.0))
+
+	if actual_damage > 0.0:
+		PlayerManager.damage_hero(actual_damage)
+		_refresh_bars()
+
+	_show_message_over_hero("The Spirit Bear falls - Sylla is weakened!")
+
+
+func _roll_bear_damage() -> float:
+	return randi_range(int(_bear.get("damage_min", 0)), int(_bear.get("damage_max", 0)))
+
+
+## The bear acts automatically once per turn, right alongside the
+## enemies (see _end_turn()): attacks whatever enemy shares its
+## column, or - if none does - closes in on the nearest enemy at its
+## own speed (columns per turn), stopping early if that walk would
+## carry it onto an enemy's column anyway (see _melee_move_target()).
+## No-ops entirely while no bear is summoned, or once every enemy is
+## already dead.
+func _bear_turn() -> void:
+	if not _is_bear_alive() or _enemies.is_empty():
+		return
+
+	var target: Dictionary = _get_enemy_at(_bear["pos_index"])
+	if not target.is_empty():
+		_deal_fixed_damage_to_enemy(target, _roll_bear_damage())
+		return
+
+	var nearest: Dictionary = {}
+	var nearest_distance: int = GRID_COLUMNS + 1
+	for enemy in _enemies:
+		var d: int = _distance(enemy["pos_index"], _bear["pos_index"])
+		if d < nearest_distance:
+			nearest_distance = d
+			nearest = enemy
+
+	var direction: int = _step_toward(_bear["pos_index"], nearest["pos_index"])
+	if direction == 0:
+		return
+
+	var new_pos: int = _melee_move_target(_bear["pos_index"], direction, int(_bear["speed"]))
+	_bear["pos_index"] = new_pos
+	_bear["node"].position = Vector2(_index_to_x(new_pos), _creature_y())
+
+
 ## Updates every skill's cooldown label - "Ready" or "N turns left" -
 ## to match _skill_cooldowns. Called after a skill is used and after
 ## cooldowns tick down at End Turn.
@@ -969,8 +1530,9 @@ func _refresh_skill_cooldown_labels() -> void:
 
 
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
-## and ticks Essence Shift's and Shadow Dance's durations alongside
-## them. Called once per End Turn.
+## and ticks Essence Shift's, Shadow Dance's, Spirit Link's, and True
+## Form's durations, plus every enemy's Entangle root/silence/DoT
+## durations, alongside them. Called once per End Turn.
 func _tick_skill_cooldowns() -> void:
 	for skill_id in _skill_cooldowns.keys():
 		var new_value: int = maxi(0, _skill_cooldowns[skill_id] - 1)
@@ -979,6 +1541,9 @@ func _tick_skill_cooldowns() -> void:
 
 	_tick_essence_shift()
 	_tick_shadow_dance()
+	_tick_spirit_link()
+	_tick_true_form()
+	_tick_entangle_effects()
 
 
 # ------------------------------------------------------------------
@@ -988,6 +1553,9 @@ func _tick_skill_cooldowns() -> void:
 
 func apply_damage(amount: float) -> void:
 	var reduced: float = _apply_armor_reduction(amount, _hero_armor())
+	# Savage Roar's damage reduction stacks on top of armor mitigation
+	# rather than replacing it, and only applies while it's active.
+	reduced *= (1.0 - _savage_roar_damage_reduction_pct)
 	PlayerManager.damage_hero(reduced)
 	_refresh_bars()
 
@@ -1093,15 +1661,51 @@ func _refresh_skill_choice_popup() -> void:
 			btn.text = "Learn " + skill.get("name", skill_id)
 		else:
 			btn.text = "Upgrade " + skill.get("name", skill_id) + " to Lv " + str(current_level + 1)
-		btn.pressed.connect(_on_skill_choice_selected.bind(skill_id))
+		# Clicking an option no longer spends the point right away -
+		# it opens the same explanation popup used elsewhere, so the
+		# player can read the skill before committing (see
+		# _on_skill_choice_option_pressed()).
+		btn.pressed.connect(_on_skill_choice_option_pressed.bind(skill))
 		skill_choice_options.add_child(btn)
 
 
-## Spends the point, refreshes the skill buttons (a newly learned
-## skill needs its button re-enabled), then either loops back to the
-## popup for another point/option, or closes it once there's nothing
-## left to spend.
-func _on_skill_choice_selected(skill_id: String) -> void:
+## Opens the description popup for a skill the player is considering
+## learning/upgrading with a banked point. Nothing is spent yet - that
+## only happens if they confirm with OK (_on_skill_choice_desc_ok_pressed).
+func _on_skill_choice_option_pressed(skill: Dictionary) -> void:
+	var skill_id: String = skill.get("id", "")
+	_pending_level_up_skill_id = skill_id
+
+	var current_level: int = PlayerManager.get_skill_level(skill_id)
+	var action_text: String
+	if current_level <= 0:
+		action_text = "Learning this will put it at level 1."
+	else:
+		action_text = "Upgrading this will bring it to level %d." % (current_level + 1)
+
+	skill_choice_desc_name_label.text = skill.get("name", "")
+	skill_choice_desc_label.text = skill.get("description", "") + "\n\n" + action_text
+
+	# Swap the list popup for the description popup - Cancel brings
+	# the list back rather than closing everything, so the player can
+	# still look at (or pick) a different option.
+	skill_choice_popup.visible = false
+	skill_choice_desc_popup.visible = true
+
+
+## Confirms the pending skill: spends the point, refreshes the skill
+## buttons (a newly learned skill needs its button re-enabled), then
+## either loops back to the choice popup for another point/option, or
+## closes everything once there's nothing left to spend.
+func _on_skill_choice_desc_ok_pressed() -> void:
+	skill_choice_desc_popup.visible = false
+
+	var skill_id: String = _pending_level_up_skill_id
+	_pending_level_up_skill_id = ""
+
+	if skill_id == "":
+		return
+
 	if PlayerManager.spend_skill_point(skill_id, _hero_static):
 		_recruited = PlayerManager.get_recruited_hero()
 		_populate_skill_buttons()
@@ -1109,8 +1713,18 @@ func _on_skill_choice_selected(skill_id: String) -> void:
 
 	if PlayerManager.has_spendable_skill_action(_hero_static):
 		_refresh_skill_choice_popup()
+		skill_choice_popup.visible = true
 	else:
 		skill_choice_popup.visible = false
+
+
+## Backs out of the description popup without spending anything,
+## returning to the list so the player can check other skills or pick
+## the same one again.
+func _on_skill_choice_desc_cancel_pressed() -> void:
+	_pending_level_up_skill_id = ""
+	skill_choice_desc_popup.visible = false
+	skill_choice_popup.visible = true
 
 
 # ------------------------------------------------------------------
@@ -1119,13 +1733,20 @@ func _on_skill_choice_selected(skill_id: String) -> void:
 
 ## Heroes move faster than enemies as part of their stats - a speed
 ## of 1.5-2.7 rounds to 2-3 columns per move, while every enemy
-## always takes exactly one column per turn (see _enemy_turn()).
+## always takes exactly one column per turn (see _enemy_turn()). Adds
+## Savage Roar's bonus columns while it's active (see
+## _update_savage_roar_state()).
 func _hero_move_distance() -> int:
 	var speed: float = float(_recruited.get("stats", {}).get("speed", 1.0))
-	return maxi(1, roundi(speed))
+	return maxi(1, roundi(speed)) + _savage_roar_bonus_movement
 
 
+## Whether the hero currently fights at range - normally just his
+## range_type stat, but True Form forces melee for its duration
+## regardless of that stat (see _activate_true_form()).
 func _is_ranged_hero() -> bool:
+	if _true_form_active:
+		return false
 	return _hero_static.get("range_type", "Mele") == "Range"
 
 
@@ -1212,8 +1833,34 @@ func _start_ranged_targeting() -> void:
 		return
 
 	_targeting_mode = true
+	_targeting_purpose = "attack"
 	for enemy in _valid_targets:
 		enemy["node"].modulate = Color(1, 1, 0.4)
+
+
+## Entangle's target picking: same column-range/highlight mechanism as
+## a ranged Attack (_start_ranged_targeting), but resolves through
+## _resolve_entangle_cast() on click instead of a plain attack.
+## Returns false (and shows a message) if nothing is in range - the
+## caller then knows not to spend mana/cooldown/the turn.
+func _start_entangle_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "entangle"
+	_pending_entangle_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 1, 0.6)
+	return true
 
 
 func _cancel_targeting() -> void:
@@ -1222,6 +1869,8 @@ func _cancel_targeting() -> void:
 			enemy["node"].modulate = Color(1, 1, 1)
 	_valid_targets.clear()
 	_targeting_mode = false
+	_targeting_purpose = "attack"
+	_pending_entangle_level_data = {}
 
 
 func _on_enemy_gui_input(event: InputEvent, enemy: Dictionary) -> void:
@@ -1235,8 +1884,14 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	if not _valid_targets.has(enemy):
 		return
 
+	var purpose: String = _targeting_purpose
+	var level_data: Dictionary = _pending_entangle_level_data
 	_cancel_targeting()
-	_apply_hero_attack(enemy)
+
+	if purpose == "entangle":
+		_resolve_entangle_cast(enemy, level_data)
+	else:
+		_apply_hero_attack(enemy)
 
 
 func _apply_hero_attack(target: Dictionary) -> void:
@@ -1247,8 +1902,13 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# like the rest of the hit - see _roll_hero_damage()) and ends the
 	# invisibility right here, whether or not the hit kills the target.
 	var shadow_dance_bonus: float = _shadow_dance_bonus_damage if _is_hero_hidden() else 0.0
-	_deal_fixed_damage_to_enemy(target, _roll_hero_damage(shadow_dance_bonus))
+	var mitigated_damage: float = _deal_fixed_damage_to_enemy(target, _roll_hero_damage(shadow_dance_bonus))
 	_apply_essence_shift_steal(target)
+	# Lifesteal only ever applies to this plain Attack action - never
+	# to skill damage (Pounce, Dark Pact, Entangle's DoT, etc.) - and
+	# uses the damage actually dealt, i.e. after the target's armor
+	# has already reduced it.
+	_apply_spirit_link_lifesteal(mitigated_damage)
 
 	if shadow_dance_bonus > 0.0:
 		_end_shadow_dance()
@@ -1279,9 +1939,12 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 
 ## Applies an already-determined damage amount to one target (still
 ## mitigated by that target's own armor) and kills it if that brings
-## it to 0. Shared by _deal_damage_to_enemy (single rolled hit) and
-## Dark Pact (one rolled amount split across every enemy in range).
-func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> void:
+## it to 0. Shared by _deal_damage_to_enemy (single rolled hit),
+## Dark Pact (one rolled amount split across every enemy in range),
+## and Entangle's DoT. Returns the mitigated damage actually dealt, so
+## callers that need it (Spirit Link's lifesteal, via
+## _apply_hero_attack()) don't have to re-derive it.
+func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
 	var enemy_armor: float = float(target["static"].get("armor", 0))
 	var mitigated: float = _apply_armor_reduction(amount, enemy_armor)
 	target["current_hp"] -= mitigated
@@ -1289,6 +1952,8 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> void:
 
 	if target["current_hp"] <= 0:
 		_kill_enemy(target)
+
+	return mitigated
 
 
 func _get_enemy_at(pos_index: int) -> Dictionary:
@@ -1308,11 +1973,12 @@ func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	# Essence Shift's borrowed damage applies on top of both ends of
-	# the roll, same as a permanent damage bonus would - Shadow
-	# Dance's bonus (passed in by the caller, only for the specific
-	# hit that triggers it) stacks on top of that the same way.
-	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + extra_bonus
+	# Essence Shift's borrowed damage and True Form's bonus damage
+	# (while each is active) apply on top of both ends of the roll,
+	# same as a permanent damage bonus would - Shadow Dance's bonus
+	# (passed in by the caller, only for the specific hit that
+	# triggers it) stacks on top of that the same way.
+	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + extra_bonus
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
@@ -1554,6 +2220,7 @@ func _end_turn() -> void:
 		return
 
 	_cancel_targeting()
+	_bear_turn()
 	_enemy_turn()
 
 	if _recruited.get("current_hp", 0) <= 0:
@@ -1587,8 +2254,20 @@ func _end_turn() -> void:
 ##          MOVE
 ##
 ## While Slark is hidden by Shadow Dance (_is_hero_hidden()), neither
-## enemy type's attack can land - they still hold their position/
-## approach/flee logic as normal, they just can't find him to swing.
+## enemy type's attack can land on him, AND enemies stop moving/
+## chasing him entirely - they hold their ground instead of stepping
+## toward where he was. If the Spirit Bear is out, it's still fair
+## game: enemies will shoot/swing at it, and will still chase it down,
+## since only Slark himself is untraceable while invisible. The hero
+## is always the priority target when both he and the bear are in
+## range at once (while visible); only "too close" flee logic keys
+## off him specifically, not the bear.
+##
+## A rooted enemy (root_turns_left > 0, from Entangle - see
+## _apply_root()) never moves either, for the same reason as above:
+## every movement branch (flee and the "close in" fallback) is
+## skipped. Its attack is untouched, though - if it's already within
+## range/on the hero's column, a root doesn't stop it from swinging.
 func _enemy_turn() -> void:
 	for enemy in _enemies.duplicate():
 		var stun_turns_left: int = enemy.get("stun_turns_left", 0)
@@ -1601,33 +2280,80 @@ func _enemy_turn() -> void:
 		var enemy_static: Dictionary = enemy["static"]
 		var enemy_type: String = enemy_static.get("type", "")
 		var enemy_damage: float = float(enemy_static.get("damage", 0))
+		var hero_hidden: bool = _is_hero_hidden()
+		var rooted: bool = _is_enemy_rooted(enemy)
 
 		if enemy_type == "range":
-			var distance: int = _distance(enemy["pos_index"], _hero_pos_index)
+			var hero_distance: int = _distance(enemy["pos_index"], _hero_pos_index)
 
-			if distance <= RANGE_ENEMY_FLEE_DISTANCE:
-				# TOO CLOSE: move away. Attacking is next turn's business,
-				# even if the flee step happens to land back in range.
+			if not hero_hidden and not rooted and hero_distance <= RANGE_ENEMY_FLEE_DISTANCE:
+				# TOO CLOSE to the hero: move away. Attacking is next
+				# turn's business, even if the flee step happens to
+				# land back in range. Doesn't apply while he's
+				# invisible (nothing visible to flee from) or while
+				# rooted (can't move at all).
 				_move_enemy(enemy, _get_flee_position(enemy))
+				continue
 
-			elif distance <= RANGE_ENEMY_ATTACK_RANGE:
-				# SAFE RANGE: attack, stay put - unless Slark is hidden,
-				# in which case there's nothing to hit.
-				if not _is_hero_hidden():
-					apply_damage(enemy_damage)
+			var attacked: bool = false
+			if hero_distance <= RANGE_ENEMY_ATTACK_RANGE and not hero_hidden:
+				# SAFE RANGE on the hero, and he's a valid target -
+				# always the priority over the bear.
+				apply_damage(enemy_damage)
+				attacked = true
+			elif _is_bear_alive() and _distance(enemy["pos_index"], _bear["pos_index"]) <= RANGE_ENEMY_ATTACK_RANGE:
+				# Hero's out of range (or hidden), but the bear is
+				# close enough to shoot instead.
+				_deal_damage_to_bear(enemy_damage)
+				attacked = true
 
-			else:
-				# TOO FAR: close the distance.
-				var step: int = _step_toward(enemy["pos_index"], _hero_pos_index)
-				_move_enemy(enemy, enemy["pos_index"] + step)
+			if not attacked and not rooted:
+				# TOO FAR from anything worth shooting: close in on
+				# whichever threat is nearer - but while the hero is
+				# hidden, the bear is the only thing worth chasing at
+				# all, so stand still if it's not around either. A
+				# rooted enemy skips this whole branch and just stays
+				# put regardless.
+				var target_pos: int = _nearest_threat_pos(enemy["pos_index"], hero_hidden)
+				if target_pos != -1:
+					var step: int = _step_toward(enemy["pos_index"], target_pos)
+					_move_enemy(enemy, enemy["pos_index"] + step)
 
 		elif enemy_type == "mele":
-			if enemy["pos_index"] == _hero_pos_index:
-				if not _is_hero_hidden():
-					apply_damage(enemy_damage)
-			else:
-				var step: int = _step_toward(enemy["pos_index"], _hero_pos_index)
-				_move_enemy(enemy, enemy["pos_index"] + step)
+			var attacked: bool = false
+			if enemy["pos_index"] == _hero_pos_index and not hero_hidden:
+				apply_damage(enemy_damage)
+				attacked = true
+			elif _is_bear_alive() and enemy["pos_index"] == _bear["pos_index"]:
+				_deal_damage_to_bear(enemy_damage)
+				attacked = true
+
+			if not attacked and not rooted:
+				var target_pos: int = _nearest_threat_pos(enemy["pos_index"], hero_hidden)
+				if target_pos != -1:
+					var step: int = _step_toward(enemy["pos_index"], target_pos)
+					_move_enemy(enemy, enemy["pos_index"] + step)
+
+
+## Whichever "threat" - the hero, or the Spirit Bear if one is
+## currently summoned - sits closer to `enemy_pos`, ties going to the
+## hero. Only used to choose a movement target when nothing is in
+## attack/flee range this turn (see _enemy_turn()).
+##
+## `hero_is_hidden` excludes the hero from consideration entirely -
+## while Slark is invisible enemies can't track him to move toward
+## him, only the bear (if one is out). Returns -1 when there's
+## nothing left to chase, which the caller reads as "don't move".
+func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
+	if hero_is_hidden:
+		return _bear["pos_index"] if _is_bear_alive() else -1
+
+	if not _is_bear_alive():
+		return _hero_pos_index
+
+	var hero_distance: int = _distance(enemy_pos, _hero_pos_index)
+	var bear_distance: int = _distance(enemy_pos, _bear["pos_index"])
+	return _bear["pos_index"] if bear_distance < hero_distance else _hero_pos_index
 
 
 ## Moves an enemy to `new_pos` (clamped on-board) and syncs its node's
