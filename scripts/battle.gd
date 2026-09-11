@@ -204,6 +204,45 @@ var _true_form_turns_remaining: int = 0
 var _true_form_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
+# Abaddon's Aphotic Shield: a self-cast shield with its own HP pool
+# that absorbs incoming damage in the hero's place (see
+# apply_damage()) until either its duration runs out (fades quietly,
+# see _tick_aphotic_shield()) or enough damage drains it to 0 (see
+# apply_damage()/_end_aphotic_shield()) - in which case it explodes,
+# dealing _aphotic_shield_aoe_damage to every enemy within
+# _aphotic_shield_radius columns of the hero, the same radius-around-
+# a-position AoE concept Dark Pact uses (_cast_dark_pact()). Casting
+# it also dispels every negative effect currently on the player - root,
+# a hostile Entangle's damage-over-time, Pounce's stun, and a hostile
+# Essence Shift's stat drain (see _activate_aphotic_shield()) - except
+# silence, since _on_skill_pressed() already refuses to cast ANY skill
+# while silenced, so that debuff can never still be active by the time
+# this one goes off.
+# ------------------------------------------------------------------
+var _aphotic_shield_active: bool = false
+var _aphotic_shield_hp: float = 0.0
+var _aphotic_shield_aoe_damage: float = 0.0
+var _aphotic_shield_radius: int = 0
+var _aphotic_shield_turns_remaining: int = 0
+var _aphotic_shield_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Abaddon's Borrowed Time: not cast at all - it auto-activates once
+# the hero's own HP falls to or below a level-based threshold (see
+# apply_damage()/_maybe_auto_activate_borrowed_time()), then for its
+# duration every attack that would otherwise damage the hero heals him
+# instead (a full reversal, not just a reduction - see apply_damage()
+# again). Its cooldown reuses the same generic _skill_cooldowns/
+# _skill_cooldown_labels tracking every manually-cast skill uses (see
+# _populate_skill_buttons()'s "auto_activate" branch), started the
+# moment it auto-activates rather than by a button press.
+# ------------------------------------------------------------------
+var _borrowed_time_active: bool = false
+var _borrowed_time_heal_conversion_pct: float = 0.0
+var _borrowed_time_turns_remaining: int = 0
+var _borrowed_time_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
 # A rival hero's own skills, during a hero fight (_in_hero_fight) -
 # see _enemy_hero_turn()/_cast_enemy_skill() and everything below it.
 # This is the enemy-side mirror of the block above: same skills, same
@@ -911,16 +950,39 @@ func _populate_skill_buttons() -> void:
 		var skill_id: String = skill.get("id", "")
 		var learned_level: int = learned_skills.get(skill_id, 0)
 		var is_passive: bool = skill.get("type", "") == "passive"
+		# Borrowed Time is the one skill that's neither: a real
+		# ("ultimate") level track and mana cost, but never clicked -
+		# it auto-activates off the hero's own HP% (see
+		# _maybe_auto_activate_borrowed_time()) same as a passive would.
+		var is_auto_activate: bool = skill.get("auto_activate", false)
 
 		var slot := VBoxContainer.new()
 		slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		slot.add_theme_constant_override("separation", 2)
 
+		# Rows 1-2: the skill's name, split across two lines (see
+		# _skill_name_button_text()) so a multi-word name doesn't get
+		# clipped or force the slot wider than its neighbors.
 		var btn := Button.new()
-		btn.text = skill.get("name", "Skill") + (" (Lv%d)" % learned_level if learned_level > 0 else " (Locked)")
-		btn.custom_minimum_size = Vector2(0, 40)
+		btn.text = _skill_name_button_text(skill.get("name", "Skill"))
+		btn.custom_minimum_size = Vector2(0, 50)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
+		# Row 3: mana cost, just the number - a locked skill (no
+		# learned_level yet, so no level data of its own to read)
+		# previews its level-1 cost instead of showing nothing.
+		var mana_label := Label.new()
+		mana_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		mana_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+		mana_label.add_theme_constant_override("outline_size", 2)
+		mana_label.add_theme_font_size_override("font_size", 12)
+		mana_label.add_theme_color_override("font_color", Color(0.4, 0.7, 1, 1))
+		if not is_passive:
+			var mana_level_data: Dictionary = GameManager.get_skill_level_data(skill, maxi(learned_level, 1))
+			var mana_cost: float = float(mana_level_data.get("mana_cost", skill.get("mana_cost", 0)))
+			mana_label.text = str(int(mana_cost))
+
+		# Row 4: ready/cooldown status.
 		var status_label := Label.new()
 		status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		status_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
@@ -928,13 +990,27 @@ func _populate_skill_buttons() -> void:
 		status_label.add_theme_font_size_override("font_size", 12)
 
 		if is_passive:
-			# Passives (currently just Savage Roar) apply themselves
-			# automatically rather than being cast - no click, no
-			# mana, no cooldown. The label instead shows whether its
-			# effect is live right now (see _update_savage_roar_state).
+			# Passives (currently just Savage Roar and Curse of
+			# Avernus) apply themselves automatically rather than
+			# being cast - no click, no mana, no cooldown. The label
+			# instead shows whether its effect is live right now (see
+			# _update_savage_roar_state) or just "Passive" as a
+			# default for one with no such live state to report.
 			btn.disabled = true
 			status_label.text = "Passive"
 			status_label.add_theme_color_override("font_color", Color(0.7, 0.8, 1, 1))
+		elif is_auto_activate:
+			# Never clickable, same as a passive, but it DOES have a
+			# real cooldown - tracked and ticked exactly like a
+			# manually-cast skill's (see _skill_cooldown_labels/
+			# _skill_cooldowns below), just started by
+			# _maybe_auto_activate_borrowed_time() instead of a button
+			# press. _refresh_skill_cooldown_labels() overlays "Active"
+			# on top of the normal Ready/cooldown text while it's
+			# actually in effect.
+			btn.disabled = true
+			status_label.text = "Ready"
+			status_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5, 1))
 		else:
 			btn.disabled = learned_level <= 0
 			btn.pressed.connect(_on_skill_pressed.bind(skill))
@@ -942,6 +1018,7 @@ func _populate_skill_buttons() -> void:
 			status_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5, 1))
 
 		slot.add_child(btn)
+		slot.add_child(mana_label)
 		slot.add_child(status_label)
 		skill_buttons_container.add_child(slot)
 
@@ -955,11 +1032,27 @@ func _populate_skill_buttons() -> void:
 			# near the end of one fight stays locked into the next.
 			_skill_cooldowns[skill_id] = PlayerManager.get_skill_cooldown(skill_id)
 
-			if learned_level > 0:
+			# Borrowed Time is never added to _skill_buttons - that
+			# dict drives _update_action_buttons()'s per-turn lock,
+			# which would re-enable its button (nothing handles a
+			# click on it) the moment the hero hasn't acted yet.
+			if learned_level > 0 and not is_auto_activate:
 				_skill_buttons[skill_id] = btn
 
 	_refresh_skill_cooldown_labels()
 	_update_savage_roar_state()
+
+
+## Splits a skill's name across two lines for its button - the first
+## word on its own line, every word after it on the second - so a
+## multi-word name (e.g. "Summon Spirit Bear") doesn't get clipped or
+## force its slot wider than its single-word neighbors (e.g. "Pounce").
+## A one-word name is returned as-is, with no second line.
+func _skill_name_button_text(skill_name: String) -> String:
+	var space_index: int = skill_name.find(" ")
+	if space_index == -1:
+		return skill_name
+	return skill_name.substr(0, space_index) + "\n" + skill_name.substr(space_index + 1)
 
 
 func _on_skill_pressed(skill: Dictionary) -> void:
@@ -1020,6 +1113,8 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			_activate_spirit_link(level_data)
 		"true_form":
 			_activate_true_form(level_data)
+		"aphotic_shield":
+			_activate_aphotic_shield(level_data)
 		"entangle":
 			if not _start_entangle_targeting(level_data):
 				# No enemy in range - nothing happened, so don't spend
@@ -1233,11 +1328,12 @@ func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
 ##   - "root_turns_left": can't move while > 0 (checked in
 ##     _enemy_turn()'s movement fallback and flee logic) - it can
 ##     still attack normally if something's already in its range.
-##   - "silence_turns_left": tracked for parity with the root duration
-##     so anything checking it (e.g. hero-fight AI, if/when this
-##     project adds skill-casting for rival heroes) can block skill
-##     casts while it's > 0. Regular creeps here never cast skills
-##     anyway, so this flag is a no-op for them today.
+##   - "silence_turns_left": blocks a hero-fight boss's own skill casts
+##     while it's > 0 (see _is_enemy_silenced()/_enemy_hero_turn()) -
+##     the same field Curse of Avernus's own silence writes onto this
+##     target (_apply_curse_of_avernus_stack()). Regular creeps never
+##     cast skills in the first place, so this only ever matters
+##     against a hero-fight boss.
 ##   - "entangle_dot_damage"/"entangle_dot_turns_left": ticked once per
 ##     turn by _tick_entangle_effects(), dealing that much damage
 ##     (through normal armor mitigation) for that many turns.
@@ -1278,6 +1374,15 @@ func _tick_entangle_effects() -> void:
 ## range) - checked from _enemy_turn()'s flee/movement-fallback logic.
 func _is_enemy_rooted(enemy: Dictionary) -> bool:
 	return enemy.get("root_turns_left", 0) > 0
+
+
+## Whether `enemy` is currently silenced - by Entangle or Curse of
+## Avernus, both of which write the same `silence_turns_left` field
+## (see _apply_root()/_apply_curse_of_avernus_stack()) - and therefore
+## can't cast a skill this turn. Checked from _enemy_hero_turn(), the
+## only enemy AI that ever casts skills in the first place.
+func _is_enemy_silenced(enemy: Dictionary) -> bool:
+	return enemy.get("silence_turns_left", 0) > 0
 
 
 ## Activates Essence Shift: arms the next `level_data.attacks` melee
@@ -1740,11 +1845,23 @@ func _refresh_skill_cooldown_labels() -> void:
 			label.text = "%d %s left" % [remaining, noun]
 			label.add_theme_color_override("font_color", Color(1, 0.6, 0.4, 1))
 
+	# Borrowed Time has no button click to show its own "in effect"
+	# state the way a manually-cast buff's activation message does, so
+	# this overlays "Active" on top of whatever the loop above just
+	# wrote (its cooldown only starts counting down once it ends - see
+	# _maybe_auto_activate_borrowed_time() - so "Ready"/"N turns left"
+	# would otherwise read as if it wasn't doing anything right now).
+	if _borrowed_time_active and _skill_cooldown_labels.has("borrowed_time"):
+		var borrowed_time_label: Label = _skill_cooldown_labels["borrowed_time"]
+		borrowed_time_label.text = "Active"
+		borrowed_time_label.add_theme_color_override("font_color", Color(1, 0.65, 0.2, 1))
+
 
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
-## and ticks Essence Shift's, Shadow Dance's, Spirit Link's, and True
-## Form's durations, plus every enemy's Entangle root/silence/DoT
-## durations, alongside them. Called once per End Turn.
+## and ticks Essence Shift's, Shadow Dance's, Spirit Link's, True
+## Form's, Aphotic Shield's, and Borrowed Time's durations, plus every
+## enemy's Entangle/Curse of Avernus root/silence/DoT/stack durations,
+## alongside them. Called once per End Turn.
 func _tick_skill_cooldowns() -> void:
 	for skill_id in _skill_cooldowns.keys():
 		var new_value: int = maxi(0, _skill_cooldowns[skill_id] - 1)
@@ -1755,7 +1872,10 @@ func _tick_skill_cooldowns() -> void:
 	_tick_shadow_dance()
 	_tick_spirit_link()
 	_tick_true_form()
+	_tick_aphotic_shield()
+	_tick_borrowed_time()
 	_tick_entangle_effects()
+	_tick_curse_of_avernus_effects()
 
 	if _in_hero_fight:
 		for skill_id in _enemy_skill_cooldowns.keys():
@@ -1769,20 +1889,318 @@ func _tick_skill_cooldowns() -> void:
 
 
 # ------------------------------------------------------------------
+# Abaddon's Aphotic Shield.
+# ------------------------------------------------------------------
+
+## Activates (or, if already active, replaces outright - no explosion
+## from the old one, same "silently overwritten" rule True Form uses
+## when recast) Aphotic Shield at `level_data`'s values, and dispels
+## every negative effect currently on the player - see the state-var
+## block's comment above for exactly which ones and why silence isn't
+## among them.
+func _activate_aphotic_shield(level_data: Dictionary) -> void:
+	_aphotic_shield_active = true
+	_aphotic_shield_hp = float(level_data.get("shield_hp", 0))
+	_aphotic_shield_aoe_damage = float(level_data.get("aoe_damage", 0))
+	_aphotic_shield_radius = int(level_data.get("radius", 0))
+	_aphotic_shield_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_aphotic_shield()), same as
+	# every other duration-based buff.
+	_aphotic_shield_duration_pending_start = true
+
+	_player_root_turns_left = 0
+	_player_entangle_dot_damage = 0.0
+	_player_entangle_dot_turns_left = 0
+	_player_stun_turns_left = 0
+	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+	_show_message_over_hero("Shield up!")
+	_refresh_bars()
+
+
+## Ticks the shield's duration down once per End Turn, same "casting
+## turn doesn't count" pattern as Essence Shift/Shadow Dance/Spirit
+## Link/True Form. Only reached while the shield is still standing -
+## see apply_damage() for the other way it can end, mid-turn, from
+## being drained to 0 instead of outlasting its clock.
+func _tick_aphotic_shield() -> void:
+	if not _aphotic_shield_active:
+		return
+
+	if _aphotic_shield_duration_pending_start:
+		_aphotic_shield_duration_pending_start = false
+		return
+
+	_aphotic_shield_turns_remaining -= 1
+	if _aphotic_shield_turns_remaining <= 0:
+		_end_aphotic_shield(false)
+
+
+## Ends Aphotic Shield, whether its duration simply ran out (`exploded`
+## false - it just fades) or enough damage drained it to 0 HP
+## (`exploded` true, from apply_damage()) - in which case it deals the
+## cast's own aoe_damage to every living, targetable enemy within its
+## own radius columns of the hero, mirroring Dark Pact's radius-around-
+## a-position AoE (_cast_dark_pact()). Captures the level's aoe_damage/
+## radius into locals before clearing the state below, since the
+## explosion still needs them afterward.
+func _end_aphotic_shield(exploded: bool) -> void:
+	var aoe_damage: float = _aphotic_shield_aoe_damage
+	var radius: int = _aphotic_shield_radius
+
+	_aphotic_shield_active = false
+	_aphotic_shield_hp = 0.0
+	_aphotic_shield_aoe_damage = 0.0
+	_aphotic_shield_radius = 0
+	_aphotic_shield_turns_remaining = 0
+	_aphotic_shield_duration_pending_start = false
+
+	if not exploded:
+		_show_message_over_hero("Shield fades")
+		return
+
+	var targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+			targets.append(enemy)
+	for enemy in targets:
+		_deal_fixed_damage_to_enemy(enemy, aoe_damage)
+
+	_show_message_over_hero("Shield shattered!")
+
+
+# ------------------------------------------------------------------
+# Abaddon's Curse of Avernus - a passive, so unlike every skill above
+# there's no button/cast/mana/cooldown for it (see _populate_skill_
+# buttons()'s "passive" branch); it just triggers off the hero's own
+# plain Attacks (_apply_hero_attack()). Per-target progress (stacks,
+# the active curse's own DoT, and the turn count feeding stack decay)
+# lives directly on each enemy's own Dictionary in _enemies, the same
+# way Entangle's root/silence/DoT fields do (_apply_root()) - it's
+# per-enemy state, not per-hero, so it can't live in a single instance
+# variable the way the rest of this hero's kit does.
+# ------------------------------------------------------------------
+
+# How many full turns a target can go without being hit by the hero's
+# Attack before its un-activated stacks are lost (see
+# _tick_curse_of_avernus_effects()) - independent of skill level.
+const CURSE_OF_AVERNUS_STACK_DECAY_TURNS := 3
+
+
+## Curse of Avernus's level data for whatever level the player has it
+## at right now - {} if it isn't learned at all (level 0), the same
+## "empty means locked" convention _get_savage_roar_level_data() uses.
+func _get_curse_of_avernus_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("curse_of_avernus")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "curse_of_avernus":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Called on every plain Attack hit (see _apply_hero_attack()): builds
+## one stack of Curse of Avernus on `target`, or - once this level's
+## hits_to_activate is reached - consumes all of them to activate the
+## actual curse instead (silence, via the same `silence_turns_left`
+## field Entangle uses, ticked down by _tick_entangle_effects(); and a
+## damage-over-time, ticked by _tick_curse_of_avernus_effects() below).
+## No-ops entirely if the hero doesn't have this skill learned, if the
+## hit already killed the target, or if it's already cursed - a curse
+## has nothing left to build toward until it wears off on its own.
+func _apply_curse_of_avernus_stack(target: Dictionary) -> void:
+	var level_data: Dictionary = _get_curse_of_avernus_level_data()
+	if level_data.is_empty() or target.get("current_hp", 0) <= 0 or target.get("curse_active", false):
+		return
+
+	# Being hit at all resets the decay clock, whether or not this
+	# particular hit is the one that pushes the stacks over the top.
+	target["curse_last_hit_turn"] = _turn_count
+
+	var stacks: int = target.get("curse_stacks", 0) + 1
+	var hits_to_activate: int = int(level_data.get("hits_to_activate", 1))
+	if stacks < hits_to_activate:
+		target["curse_stacks"] = stacks
+		return
+
+	target["curse_stacks"] = 0
+	target["curse_active"] = true
+	target["silence_turns_left"] = int(level_data.get("silence_turns", 0))
+	target["curse_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["curse_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	_show_message_over_hero("Cursed!")
+
+
+## Ticks Curse of Avernus once per End Turn, alongside
+## _tick_entangle_effects(): applies this turn's damage-over-time to
+## every currently-cursed enemy (still mitigated by its own armor, via
+## _deal_fixed_damage_to_enemy() - same helper Entangle's own DoT
+## uses), ending the curse once its duration runs out, ready to build
+## fresh stacks again. Silence itself isn't ticked here - it shares
+## Entangle's own `silence_turns_left` field and is already ticked by
+## _tick_entangle_effects(), whether or not this curse is still active
+## (the table's silence duration is always the shorter of the two, so
+## it always finishes before the DoT does).
+## For every NOT-yet-cursed enemy that still has stacks on it, decays
+## them to 0 once CURSE_OF_AVERNUS_STACK_DECAY_TURNS full turns have
+## passed since the last hit that touched them.
+func _tick_curse_of_avernus_effects() -> void:
+	for enemy in _enemies.duplicate():
+		if enemy.get("curse_active", false):
+			if enemy.get("curse_dot_turns_left", 0) > 0:
+				enemy["curse_dot_turns_left"] -= 1
+				var dot_damage: float = float(enemy.get("curse_dot_damage", 0))
+				if dot_damage > 0.0:
+					_deal_fixed_damage_to_enemy(enemy, dot_damage)
+					if _battle_over:
+						return
+
+			if enemy.get("curse_dot_turns_left", 0) <= 0:
+				enemy["curse_active"] = false
+				enemy["curse_dot_damage"] = 0.0
+		elif enemy.get("curse_stacks", 0) > 0:
+			var last_hit_turn: int = int(enemy.get("curse_last_hit_turn", _turn_count))
+			if _turn_count - last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
+				enemy["curse_stacks"] = 0
+
+
+# ------------------------------------------------------------------
+# Abaddon's Borrowed Time - see the state-var block's own comment
+# above for the general shape of it. Unlike every other skill here,
+# nothing ever calls _maybe_auto_activate_borrowed_time() from a
+# button; the only entry point is apply_damage() noticing the hero has
+# crossed this level's HP threshold.
+# ------------------------------------------------------------------
+
+## Borrowed Time's level data for whatever level the player has it at
+## right now - {} if it isn't learned at all (level 0), the same
+## "empty means locked" convention _get_savage_roar_level_data()/
+## _get_curse_of_avernus_level_data() use.
+func _get_borrowed_time_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("borrowed_time")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "borrowed_time":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Checked from apply_damage() every time the hero takes real damage
+## (i.e. NOT while Borrowed Time is already active, since it can't
+## retrigger on top of itself): if he's learned it, it isn't already
+## on cooldown, and his HP is now at or below this level's own
+## auto_activate_hp_pct, this is the hit that crosses the threshold -
+## it still deals its damage normally (see apply_damage()), but every
+## hit AFTER this one heals him instead for the rest of the duration.
+## Starts the cooldown immediately, the same way a manually-cast
+## skill's does the moment it's used, so this can't re-trigger again
+## the instant it wears off just because HP is still low.
+func _maybe_auto_activate_borrowed_time() -> void:
+	if _borrowed_time_active or _skill_cooldowns.get("borrowed_time", 0) > 0:
+		return
+
+	var level_data: Dictionary = _get_borrowed_time_level_data()
+	if level_data.is_empty():
+		return
+
+	var max_hp: float = _hero_max_hp()
+	if max_hp <= 0.0:
+		return
+
+	var hp_pct: float = float(_recruited.get("current_hp", 0)) / max_hp
+	if hp_pct > float(level_data.get("auto_activate_hp_pct", 0.3)):
+		return
+
+	_borrowed_time_active = true
+	_borrowed_time_heal_conversion_pct = float(level_data.get("heal_conversion_pct", 1.0))
+	_borrowed_time_turns_remaining = int(level_data.get("duration", 0))
+	# The activating turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_borrowed_time()), same as
+	# every other duration-based buff.
+	_borrowed_time_duration_pending_start = true
+
+	_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("borrowed_time", _skill_cooldowns["borrowed_time"])
+
+	_show_message_over_hero("Borrowed Time!")
+	_refresh_bars()
+	_refresh_skill_cooldown_labels()
+
+
+## Ticks Borrowed Time's duration down once per End Turn, same
+## "activating turn doesn't count" pattern as every other duration-
+## based buff here.
+func _tick_borrowed_time() -> void:
+	if not _borrowed_time_active:
+		return
+
+	if _borrowed_time_duration_pending_start:
+		_borrowed_time_duration_pending_start = false
+		return
+
+	_borrowed_time_turns_remaining -= 1
+	if _borrowed_time_turns_remaining <= 0:
+		_end_borrowed_time()
+
+
+## Ends Borrowed Time once its duration runs out - its cooldown (see
+## _maybe_auto_activate_borrowed_time()) is a separate, already-running
+## counter in _skill_cooldowns, untouched here.
+func _end_borrowed_time() -> void:
+	_borrowed_time_active = false
+	_borrowed_time_heal_conversion_pct = 0.0
+	_borrowed_time_turns_remaining = 0
+	_borrowed_time_duration_pending_start = false
+
+	_show_message_over_hero("Borrowed Time fades")
+	_refresh_bars()
+	_refresh_skill_cooldown_labels()
+
+
+# ------------------------------------------------------------------
 # Public API for future combat/enemy scripts to call into.
 # Each one persists through PlayerManager and refreshes the bars.
 # ------------------------------------------------------------------
 
-## Returns the mitigated damage actually dealt, so callers that need it
-## (a rival hero's own Spirit Link lifesteal, via
+## Returns the mitigated damage actually dealt - the full hit's worth,
+## even when it ends up somewhere other than the hero's own HP: fully
+## converted into a heal while Borrowed Time is active (see below), or
+## absorbed some/all by Aphotic Shield's own HP pool instead - so
+## callers that need it (a rival hero's own Spirit Link lifesteal, via
 ## _resolve_enemy_hero_attack()) don't have to re-derive it.
 func apply_damage(amount: float) -> float:
 	var reduced: float = _apply_armor_reduction(amount, _hero_armor())
 	# Savage Roar's damage reduction stacks on top of armor mitigation
 	# rather than replacing it, and only applies while it's active.
 	reduced *= (1.0 - _savage_roar_damage_reduction_pct)
+
+	# Borrowed Time reverses the hit entirely into a heal - there's no
+	# damage left for Aphotic Shield to absorb, so that check is
+	# skipped for as long as this is active.
+	if _borrowed_time_active:
+		heal(reduced * _borrowed_time_heal_conversion_pct)
+		return reduced
+
+	if _aphotic_shield_active:
+		var absorbed: float = minf(reduced, _aphotic_shield_hp)
+		_aphotic_shield_hp -= absorbed
+		var overflow: float = reduced - absorbed
+		if overflow > 0.0:
+			PlayerManager.damage_hero(overflow)
+		if _aphotic_shield_hp <= 0.0:
+			_end_aphotic_shield(true)
+		_refresh_bars()
+		_maybe_auto_activate_borrowed_time()
+		return reduced
+
 	PlayerManager.damage_hero(reduced)
 	_refresh_bars()
+	_maybe_auto_activate_borrowed_time()
 	return reduced
 
 
@@ -2097,8 +2515,15 @@ func _start_entangle_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
-## Mist Coil's target picking: highlights any enemy in normal attack
-## range (like Entangle) AND the hero's own portrait, since Mist Coil
+## Mist Coil's own targeting range, in columns - fixed regardless of
+## the hero's Range stat (unlike a plain ranged Attack or Entangle,
+## which both scale with it via _hero_attack_column_range()), since
+## it's a bolt of mist rather than a physical attack.
+const MIST_COIL_RANGE := 2
+
+
+## Mist Coil's target picking: highlights any enemy within
+## MIST_COIL_RANGE columns AND the hero's own portrait, since Mist Coil
 ## can be cast on either - a damaging bolt on an enemy, or a costly-
 ## but-net-positive heal on Abaddon himself (see
 ## _resolve_mist_coil_enemy_cast()/_resolve_mist_coil_self_cast()).
@@ -2110,7 +2535,7 @@ func _start_entangle_targeting(level_data: Dictionary) -> bool:
 func _start_mist_coil_targeting(level_data: Dictionary) -> bool:
 	_cancel_targeting()
 
-	var col_range: int = _hero_attack_column_range()
+	var col_range: int = MIST_COIL_RANGE
 	for enemy in _enemies:
 		if _is_target_hidden(enemy):
 			continue
@@ -2203,6 +2628,9 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# uses the damage actually dealt, i.e. after the target's armor
 	# has already reduced it.
 	_apply_spirit_link_lifesteal(mitigated_damage)
+	# Curse of Avernus stacks the same way - only this plain Attack
+	# action builds toward it, never skill damage.
+	_apply_curse_of_avernus_stack(target)
 
 	if shadow_dance_bonus > 0.0:
 		_end_shadow_dance()
@@ -2768,16 +3196,16 @@ func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
 func _enemy_hero_turn(enemy: Dictionary) -> void:
 	_update_enemy_savage_roar_state(enemy)
 
-	if not _is_hero_hidden():
-		var skill_id: String = _pick_enemy_ready_skill(enemy)
-		if skill_id != "":
-			_cast_enemy_skill(enemy, skill_id)
-			return
-
 	var enemy_type: String = enemy["static"].get("type", "")
 	var hero_distance: int = _distance(enemy["pos_index"], _hero_pos_index)
 	var hero_hidden: bool = _is_hero_hidden()
 	var rooted: bool = _is_enemy_rooted(enemy)
+
+	if not hero_hidden and not _is_enemy_silenced(enemy):
+		var skill_id: String = _pick_enemy_ready_skill(enemy_type, hero_distance)
+		if skill_id != "":
+			_cast_enemy_skill(enemy, skill_id)
+			return
 
 	if enemy_type == "range":
 		if not hero_hidden and not rooted and hero_distance <= RANGE_ENEMY_FLEE_DISTANCE:
@@ -2888,9 +3316,13 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 
 
 ## The first known, off-cooldown, currently-worthwhile, currently-
-## affordable active skill the rival hero has, in
+## affordable, in-range active skill the rival hero has, in
 ## ENEMY_KNOWN_SKILL_IDS priority order - "" if none qualify right now.
-func _pick_enemy_ready_skill(enemy: Dictionary) -> String:
+## `enemy_type`/`hero_distance` gate skills that actually need to reach
+## the player - see _enemy_skill_in_range()/EnemySkillRange - so a boss
+## can't land Dark Pact or Entangle from clear across the board; it has
+## to close in first, same as it already must for a plain Attack.
+func _pick_enemy_ready_skill(enemy_type: String, hero_distance: int) -> String:
 	for skill_id in ENEMY_KNOWN_SKILL_IDS:
 		if PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id) <= 0:
 			continue
@@ -2898,9 +3330,26 @@ func _pick_enemy_ready_skill(enemy: Dictionary) -> String:
 			continue
 		if not _enemy_skill_worth_casting(skill_id):
 			continue
-		if _enemy_current_mana >= _enemy_skill_mana_cost(skill_id):
-			return skill_id
+		if _enemy_current_mana < _enemy_skill_mana_cost(skill_id):
+			continue
+		if not _enemy_skill_in_range(skill_id, enemy_type, hero_distance):
+			continue
+		return skill_id
 	return ""
+
+
+## True if a rival hero of `enemy_type`, `hero_distance` columns from
+## the player, can currently reach the player with `skill_id` - see
+## EnemySkillRange for which skills need this check and why.
+func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: int) -> bool:
+	if not EnemySkillRange.requires_range_check(skill_id):
+		return true
+
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
+	var level_data: Dictionary = GameManager.get_skill_level_data(_find_enemy_skill(skill_id), level)
+	var radius: int = int(level_data.get("radius", 0))
+	var attack_range: int = RANGE_ENEMY_ATTACK_RANGE if enemy_type == "range" else 0
+	return EnemySkillRange.is_in_range(skill_id, hero_distance, radius, attack_range)
 
 
 func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
@@ -2939,9 +3388,12 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 
 
 ## Dark Pact only ever has one possible target here (there's no other
-## enemy for the rival to hit besides the player) - no radius check
-## needed the way the player's own _cast_dark_pact() has to scan
-## multiple enemies.
+## enemy for the rival to hit besides the player), unlike the player's
+## own _cast_dark_pact() which has to scan multiple enemies - so this
+## just hits. The radius check against the player's distance already
+## happened before this skill was even picked (see
+## _enemy_skill_in_range()/EnemySkillRange), so by the time this runs
+## the player is guaranteed to be in range.
 func _cast_enemy_dark_pact(enemy: Dictionary, level_data: Dictionary) -> void:
 	var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
 	apply_damage(_roll_enemy_hero_damage(enemy) * multiplier)

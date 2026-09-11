@@ -554,25 +554,37 @@ var zones: Dictionary = {
 						"id": "aphotic_shield",
 						"name": "Aphotic Shield",
 						"type": "standard",
-						"description": "Creates a shield that absorbs damage and then explodes. The shield dispels negative effects.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Creates a shield that absorbs damage in Abaddon's place until it either wears off or is broken, dispelling every negative effect on him. If it's broken by damage, it explodes, damaging nearby enemies.",
+						"levels": [
+							{"shield_hp": 100, "aoe_damage": 50, "radius": 0, "duration": 3, "mana_cost": 50, "cooldown": 5},
+							{"shield_hp": 150, "aoe_damage": 75, "radius": 0, "duration": 3, "mana_cost": 55, "cooldown": 5},
+							{"shield_hp": 200, "aoe_damage": 100, "radius": 1, "duration": 4, "mana_cost": 60, "cooldown": 4},
+							{"shield_hp": 250, "aoe_damage": 125, "radius": 1, "duration": 4, "mana_cost": 65, "cooldown": 4}
+						]
 					},
 					{
-						"id": "Curse of Avernus",
+						"id": "curse_of_avernus",
 						"name": "Curse of Avernus",
-						"type": "standard",
-						"description": "Passive: the attacks of Abaddon reduce enemy speed and deal damage over time.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: Abaddon's attacks stack a curse onto their target. Once enough stacks land, the target is cursed - silenced and taking damage over time. Stacks are lost if the target goes 3 turns without being hit.",
+						"levels": [
+							{"hits_to_activate": 3, "silence_turns": 1, "dot_damage": 5, "dot_duration": 2},
+							{"hits_to_activate": 3, "silence_turns": 1, "dot_damage": 10, "dot_duration": 2},
+							{"hits_to_activate": 2, "silence_turns": 2, "dot_damage": 10, "dot_duration": 3},
+							{"hits_to_activate": 2, "silence_turns": 2, "dot_damage": 15, "dot_duration": 3}
+						]
 					},
 					{
 						"id": "borrowed_time",
 						"name": "Borrowed Time",
 						"type": "ultimate",
-						"description": "Ultimate: Automaticaly activates when HP drop when Abaddon receive damage while his HP is bellow 400: all attacks heal him.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"auto_activate": true,
+						"description": "Ultimate: Not cast - automatically activates once Abaddon's HP falls to this level's threshold. While active, every attack that would damage him heals him instead.",
+						"levels": [
+							{"auto_activate_hp_pct": 0.3, "duration": 3, "heal_conversion_pct": 1.0, "mana_cost": 0, "cooldown": 10},
+							{"auto_activate_hp_pct": 0.3, "duration": 4, "heal_conversion_pct": 1.0, "mana_cost": 0, "cooldown": 9},
+							{"auto_activate_hp_pct": 0.3, "duration": 5, "heal_conversion_pct": 1.0, "mana_cost": 0, "cooldown": 8}
+						]
 					},
 				],
 				"level_up": {

@@ -844,6 +844,31 @@ func set_npc_current_stage(hero_id: String, stage: int) -> void:
 	set_npc_field(hero_id, "current_stage", str(stage))
 
 
+## The HP/mana this NPC's creep-stage grind left it at - persisted
+## across simulation attempts (see EnemyHeroManager.
+## simulate_npc_stage_attempt) so a fresh stage-1 attempt only
+## partially recovers rather than always starting at full, and a later
+## stage within the same attempt carries over as-is. Seeded to full by
+## initialize_npc_hero() below. Not used by hero-vs-hero fights
+## (zone-mate/invasion duels), which always start both sides at full
+## HP/mana regardless of this value - see EnemyHeroManager.
+## _try_npc_zone_mate_fight/_try_npc_invasion_duel.
+func get_npc_current_hp(hero_id: String) -> float:
+	return float(get_npc_field(hero_id, "current_hp", "0"))
+
+
+func set_npc_current_hp(hero_id: String, hp: float) -> void:
+	set_npc_field(hero_id, "current_hp", str(hp))
+
+
+func get_npc_current_mana(hero_id: String) -> float:
+	return float(get_npc_field(hero_id, "current_mana", "0"))
+
+
+func set_npc_current_mana(hero_id: String, mana: float) -> void:
+	set_npc_field(hero_id, "current_mana", str(mana))
+
+
 ## True once this NPC has fully cleared their own home zone (final
 ## stage, plus any zone-mate hero fight) and is free to invade another
 ## hero's zone instead.
@@ -886,6 +911,19 @@ func initialize_npc_hero(hero_static: Dictionary, home_zone_id: String) -> void:
 	set_npc_stat(hero_id, "strength", float(base_stats.get("strength", 0)))
 	set_npc_stat(hero_id, "agility", float(base_stats.get("agility", 0)))
 	set_npc_stat(hero_id, "intelligence", float(base_stats.get("intelligence", 0)))
+
+	# Full HP/mana for this hero's very first-ever simulated fight -
+	# after that, get/set_npc_current_hp/mana above take over and carry
+	# whatever's left between attempts instead of resetting every time.
+	var starting_stats: Dictionary = GameManager.compute_derived_stats(
+		hero_static,
+		float(base_stats.get("strength", 0)),
+		float(base_stats.get("agility", 0)),
+		float(base_stats.get("intelligence", 0))
+	)
+	set_npc_current_hp(hero_id, float(starting_stats.get("hp", 0)))
+	set_npc_current_mana(hero_id, float(starting_stats.get("mana", 0)))
+
 	set_npc_potion_count(hero_id, "health", 1)
 	set_npc_potion_count(hero_id, "mana", 1)
 	set_npc_current_zone(hero_id, home_zone_id)

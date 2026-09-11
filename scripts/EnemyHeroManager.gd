@@ -220,8 +220,37 @@ func _restock_npc_potion(hero_id: String, potion_id: String) -> void:
 # but XP/gold/potions already spent this attempt are kept).
 const MAX_SIMULATED_TURNS: int = 30
 
-# Drink a Health Potion once HP falls to (or below) this fraction of max.
-const LOW_HP_POTION_THRESHOLD: float = 0.2
+# Drink a Health Potion once HP falls to (or below) this fraction of
+# max. Should stay ABOVE FLEE_HP_THRESHOLD so a hero gets a real chance
+# to heal through a fight before it ever gives up on it - previously
+# this was 0.2 against a 0.35 flee threshold, so the flee check in
+# _run_stage_fight (below LOW_HP_POTION_THRESHOLD's own check in the
+# turn loop) always fired first and the potion branch never actually
+# triggered during a stage fight. That silently wasted every rival
+# hero's 3 banked Health Potions and cut its stage clears - and the
+# XP/gold/levels that come with them - far short of what it should
+# have earned.
+const LOW_HP_POTION_THRESHOLD: float = 0.35
+
+# Flee a stage fight (creeps only - never a hero-vs-hero fight, see
+# _try_npc_zone_mate_fight/_try_npc_invasion_duel) once HP falls to (or
+# below) this fraction of max - but only once the hero is also out of
+# Health Potions (see the explicit potion-count check alongside this
+# threshold in _run_stage_fight), so it exhausts its own healing before
+# giving up. Kept low and below LOW_HP_POTION_THRESHOLD so a hero only
+# disengages once it's both nearly dead and out of options, not the
+# moment it dips below a comfortable cushion.
+const FLEE_HP_THRESHOLD: float = 0.15
+
+# How much HP/mana a hero recovers when starting a brand new stage-1
+# simulation attempt (see simulate_npc_stage_attempt) - a partial
+# recovery on top of whatever HP/mana it ended its last attempt with,
+# not a full heal. Continuing to a later stage within the SAME attempt
+# does not apply this - see simulate_npc_stage_attempt's stage <= 1
+# check, mirroring battle.gd's own _advance_to_next_stage() comment
+# that stages within one encounter carry HP/mana over as-is.
+const NEW_SIM_HP_RESTORE_PCT: float = 0.30
+const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
 # Every ACTIVE skill across Slark and Lone Druid, the only two heroes
 # with any simulated skill logic today - anything else a hero knows
@@ -243,10 +272,18 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 ## Runs one simulated attempt for `hero_id` against whichever zone/
 ## stage they're currently tracked at (PlayerManager.
 ## get_npc_current_zone/get_npc_current_stage), applies any XP/gold
-## gained, and advances or resets their stage progress based on the
-## result. Returns {"result": "win"/"loss"/"stalemate", "xp_gained":
-## float, "gold_gained": int} for the caller (e.g. Step 6's kill/
-## progress messaging) to react to.
+## gained, persists the hero's ending HP/mana, and advances or resets
+## their stage progress based on the result. Returns {"result":
+## "win"/"loss"/"stalemate"/"flee", "xp_gained": float, "gold_gained":
+## int} for the caller (e.g. Step 6's kill/progress messaging) to
+## react to.
+## Stage 1 is treated as the start of a brand new simulation attempt -
+## HP/mana partially recover from wherever the hero ended its last
+## attempt (NEW_SIM_HP_RESTORE_PCT/NEW_SIM_MANA_RESTORE_PCT), same as a
+## real player starting a fresh Battle-scene visit. Any later stage
+## (2, 3, ...) is treated as continuing that same attempt - no
+## restore, HP/mana just carry over as-is, mirroring battle.gd's own
+## _advance_to_next_stage().
 ## This does not yet know about zone-mate hero fights or becoming
 ## "freed" to invade (Step 5) - clearing the final stage here just
 ## caps at the final stage rather than advancing past it.
@@ -254,8 +291,24 @@ func simulate_npc_stage_attempt(hero_id: String, hero_static: Dictionary) -> Dic
 	var zone_id: String = PlayerManager.get_npc_current_zone(hero_id)
 	var stage: int = PlayerManager.get_npc_current_stage(hero_id)
 
+	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
+	var max_hp: float = float(combat_stats.get("hp", 1))
+	var max_mana: float = float(combat_stats.get("mana", 0))
+
+	var starting_hp: float
+	var starting_mana: float
+	if stage <= 1:
+		starting_hp = minf(PlayerManager.get_npc_current_hp(hero_id) + max_hp * NEW_SIM_HP_RESTORE_PCT, max_hp)
+		starting_mana = minf(PlayerManager.get_npc_current_mana(hero_id) + max_mana * NEW_SIM_MANA_RESTORE_PCT, max_mana)
+	else:
+		starting_hp = PlayerManager.get_npc_current_hp(hero_id)
+		starting_mana = PlayerManager.get_npc_current_mana(hero_id)
+
 	var enemies: Array = _build_simulated_stage_enemies(zone_id, stage)
-	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies)
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, starting_hp, starting_mana, true)
+
+	PlayerManager.set_npc_current_hp(hero_id, fight["ending_hp"])
+	PlayerManager.set_npc_current_mana(hero_id, fight["ending_mana"])
 
 	if fight["xp_gained"] > 0.0:
 		award_npc_xp(hero_id, hero_static, fight["xp_gained"])
@@ -265,8 +318,11 @@ func simulate_npc_stage_attempt(hero_id: String, hero_static: Dictionary) -> Dic
 	if fight["result"] == "win":
 		PlayerManager.set_npc_current_stage(hero_id, mini(stage + 1, GameManager.MAX_ZONE_STAGE))
 	else:
-		# Loss, stalemate, or anything less than a full clear - reset to
-		# stage 1, mirroring the player's own reset-on-failure rule.
+		# Loss, stalemate, or a flee - reset to stage 1, mirroring the
+		# player's own reset-on-failure rule. HP/mana were already
+		# persisted just above, so the next fresh attempt's restore
+		# picks up from wherever this one left off (a flee keeps far
+		# more of that pool than dying to 0 HP does).
 		PlayerManager.set_npc_current_stage(hero_id, 1)
 
 	restock_npc_potions(hero_id)
@@ -326,7 +382,18 @@ func _try_npc_zone_mate_fight(hero_id: String, hero_static: Dictionary) -> void:
 
 	var enemy_def: Dictionary = GameManager.build_hero_fight_enemy_def(opponent_static)
 	var enemies: Array = [{"static": enemy_def, "current_hp": float(enemy_def.get("hp", 1))}]
-	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies)
+
+	# Hero-vs-hero fights always start both sides at full HP/mana with
+	# whatever items they have - no partial-recovery carryover from the
+	# creep grind, and no flee option (allow_flee = false): it's a
+	# fight to the death, or a stalemate if 30 turns pass with neither
+	# hero dead. This deliberately doesn't touch the hero's persisted
+	# grind HP/mana (PlayerManager.get/set_npc_current_hp/mana) - those
+	# pick back up exactly where the creep grind left them next time.
+	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
+	var max_hp: float = float(combat_stats.get("hp", 1))
+	var max_mana: float = float(combat_stats.get("mana", 0))
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, max_hp, max_mana, false)
 
 	if fight["gold_gained"] > 0:
 		PlayerManager.add_npc_gold(hero_id, fight["gold_gained"])
@@ -417,7 +484,14 @@ func _try_npc_invasion_duel(hero_id: String, hero_static: Dictionary, target_id:
 	var target_static: Dictionary = GameManager.get_hero_by_id(target_id)
 	var enemy_def: Dictionary = GameManager.build_hero_fight_enemy_def(target_static)
 	var enemies: Array = [{"static": enemy_def, "current_hp": float(enemy_def.get("hp", 1))}]
-	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies)
+
+	# Same rules as _try_npc_zone_mate_fight: full HP/mana for both
+	# sides, no flee, fight to the death or a 30-turn stalemate - and
+	# this doesn't touch the hero's persisted grind HP/mana either.
+	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
+	var max_hp: float = float(combat_stats.get("hp", 1))
+	var max_mana: float = float(combat_stats.get("mana", 0))
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, max_hp, max_mana, false)
 
 	if fight["gold_gained"] > 0:
 		PlayerManager.add_npc_gold(hero_id, fight["gold_gained"])
@@ -550,15 +624,22 @@ func _get_npc_combat_stats(hero_id: String, hero_static: Dictionary) -> Dictiona
 ## (as built by _build_simulated_stage_enemies). Mutates `enemies` in
 ## place (current_hp, stun_turns_left) but doesn't touch stage
 ## progress itself - see simulate_npc_stage_attempt() for that.
-func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array) -> Dictionary:
+## `starting_hp`/`starting_mana` are whatever the hero has going into
+## this fight (see call sites for how that's worked out) rather than
+## always a full heal, and the fight's ending HP/mana come back out in
+## the result so the caller can persist them. `allow_flee` gates
+## FLEE_HP_THRESHOLD - only ever true for stage fights against creeps;
+## hero-vs-hero fights (_try_npc_zone_mate_fight/
+## _try_npc_invasion_duel) pass false, since those have no flee option.
+func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, starting_hp: float, starting_mana: float, allow_flee: bool) -> Dictionary:
 	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
 	var max_hp: float = float(combat_stats.get("hp", 1))
 	var max_mana: float = float(combat_stats.get("mana", 0))
 	var base_armor: float = float(combat_stats.get("armor", 0))
 	var damage_range: String = str(combat_stats.get("damage", "0-0"))
 
-	var current_hp: float = max_hp
-	var current_mana: float = max_mana
+	var current_hp: float = clampf(starting_hp, 0.0, max_hp)
+	var current_mana: float = clampf(starting_mana, 0.0, max_mana)
 	var cooldowns: Dictionary = {}
 	var xp_gained: float = 0.0
 	var gold_gained: int = 0
@@ -591,6 +672,10 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array) 
 		var living: Array = _living_enemies(enemies)
 		if living.is_empty():
 			result = "win"
+			break
+
+		if allow_flee and current_hp <= effective_max_hp * FLEE_HP_THRESHOLD and PlayerManager.get_npc_potion_count(hero_id, "health") <= 0:
+			result = "flee"
 			break
 
 		# --- Hero's turn: potion, skill, or basic attack - in that
@@ -675,7 +760,13 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array) 
 			result = "loss"
 			break
 
-	return {"result": result, "xp_gained": xp_gained, "gold_gained": gold_gained}
+	return {
+		"result": result,
+		"xp_gained": xp_gained,
+		"gold_gained": gold_gained,
+		"ending_hp": maxf(current_hp, 0.0),
+		"ending_mana": current_mana,
+	}
 
 
 ## Fresh per-attempt state for every buff/debuff-carrying skill -
