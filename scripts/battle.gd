@@ -204,11 +204,127 @@ var _true_form_turns_remaining: int = 0
 var _true_form_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
+# A rival hero's own skills, during a hero fight (_in_hero_fight) -
+# see _enemy_hero_turn()/_cast_enemy_skill() and everything below it.
+# This is the enemy-side mirror of the block above: same skills, same
+# mechanics, just cast by the boss at the player instead of by the
+# player at his enemies. Reset fresh for each new hero fight by
+# _reset_enemy_hero_state() (called from _start_hero_fight()), since
+# nothing here should carry over from a previously-fought rival.
+# ------------------------------------------------------------------
+
+# The full hero definition (stats, skills) of whichever rival is
+# currently being fought - "" is a full hero_static.get("id","") away
+# for _enemy_hero_id, the more commonly needed value. Both are {}/""
+# outside a hero fight.
+var _enemy_hero_static: Dictionary = {}
+var _enemy_hero_id: String = ""
+
+var _enemy_max_mana: float = 0.0
+var _enemy_current_mana: float = 0.0
+# skill_id -> turns remaining before the rival hero can cast it again -
+# the enemy-side mirror of the player's own _skill_cooldowns. Unlike
+# the player's, these never persist between fights (see
+# _reset_enemy_hero_state()) - a freshly re-challenged rival always
+# starts every skill ready.
+var _enemy_skill_cooldowns: Dictionary = {}
+
+# Slark's Essence Shift, cast by the rival at the PLAYER: unlike the
+# player's own copy (which drains a battle-local counter on the
+# enemy), there's nothing equivalent to permanently drain on the
+# player, so this steals from - and gives back to - a battle-local
+# penalty instead (_player_essence_shift_penalty below), never written
+# to PlayerManager. The stolen stat is always the player's own
+# main_stat (there's only one target, so no need to track "stolen"
+# per-donor the way the player's own _essence_shift_stolen does).
+var _enemy_essence_shift_active: bool = false
+var _enemy_essence_shift_attacks_remaining: int = 0
+var _enemy_essence_shift_turns_remaining: int = 0
+var _enemy_essence_shift_duration_pending_start: bool = false
+var _enemy_essence_shift_bonus: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+# Slark's Shadow Dance, cast by the rival: while active the boss can't
+# be targeted by any of the player's attacks or targeted skills (see
+# _is_target_hidden(), checked from _get_enemy_at()/
+# _start_ranged_targeting()/_start_entangle_targeting()/
+# _cast_dark_pact()) and skips the player's own retaliation-avoidance
+# entirely - rather, HIS retaliation against the player still happens
+# normally (see _enemy_hero_turn()); only being attacked back is
+# blocked.
+var _enemy_shadow_dance_active: bool = false
+var _enemy_shadow_dance_bonus_damage: float = 0.0
+var _enemy_shadow_dance_turns_remaining: int = 0
+var _enemy_shadow_dance_duration_pending_start: bool = false
+
+# Lone Druid's Spirit Link, cast by the rival on himself.
+var _enemy_spirit_link_active: bool = false
+var _enemy_spirit_link_lifesteal_pct: float = 0.0
+var _enemy_spirit_link_bonus_armor: float = 0.0
+var _enemy_spirit_link_turns_remaining: int = 0
+var _enemy_spirit_link_duration_pending_start: bool = false
+
+# Lone Druid's True Form, cast by the rival on himself. No forced-
+# melee-range or portrait-swap-on-a-dedicated-node concept is needed
+# here the way the player's own copy has one - True Form just swaps
+# the boss's existing enemy node's texture (see
+# _activate_enemy_true_form()/_end_enemy_true_form()) and adds bonus
+# hp/damage.
+var _enemy_true_form_active: bool = false
+var _enemy_true_form_bonus_hp: float = 0.0
+var _enemy_true_form_bonus_damage: float = 0.0
+var _enemy_true_form_turns_remaining: int = 0
+var _enemy_true_form_duration_pending_start: bool = false
+
+# Lone Druid's Savage Roar, on the rival - same automatic hysteresis
+# as the player's own copy, just re-evaluated once per rival turn (see
+# _update_enemy_savage_roar_state()) rather than after every HP change,
+# since there's no bars UI to keep live for an enemy.
+var _enemy_savage_roar_active: bool = false
+var _enemy_savage_roar_damage_reduction_pct: float = 0.0
+
+# ------------------------------------------------------------------
+# What the rival's skills above do TO THE PLAYER. All of this only
+# ever gets set during a hero fight and is reset by
+# _reset_enemy_hero_state() before each new one.
+# ------------------------------------------------------------------
+
+# Essence Shift's running toll on the player - subtracted everywhere
+# the matching _essence_shift_bonus is normally ADDED (see
+# _hero_max_hp(), _hero_armor(), _roll_hero_damage(), _refresh_bars())
+# so a hostile Essence Shift is exactly as strong in reverse as the
+# player's own copy is in his favor. Reset to all-zero, in one shot,
+# once the cast that caused it ends (_end_enemy_essence_shift()) -
+# there's only one victim (the player), so there's no per-donor
+# bookkeeping to do the way the player's own _essence_shift_stolen
+# needs for potentially many enemies.
+var _player_essence_shift_penalty: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+# Entangle's root/silence/damage-over-time, cast by the rival on the
+# player - the mirror of _apply_root()/_tick_entangle_effects(), just
+# aimed at the player instead of an enemy. Root blocks _hero_move();
+# silence blocks _on_skill_pressed(); the DoT ticks alongside
+# everything else in _tick_skill_cooldowns() (via
+# _tick_player_entangle_effects()).
+var _player_root_turns_left: int = 0
+var _player_silence_turns_left: int = 0
+var _player_entangle_dot_damage: float = 0.0
+var _player_entangle_dot_turns_left: int = 0
+
+# Pounce's stun on the player - counts down once per _end_turn() call
+# while > 0, each time skipping the player's own action entirely and
+# immediately re-triggering _end_turn() again (see its tail) so the
+# rival keeps acting until it wears off, the same way a stunned enemy
+# just loses its turn to the player's own Pounce.
+var _player_stun_turns_left: int = 0
+
+# ------------------------------------------------------------------
 # Ranged-hero target selection: when true, the enemies in
 # _valid_targets are highlighted and clickable; clicking one resolves
 # either a plain attack or a targeted skill, depending on
-# _targeting_purpose ("attack" or a skill id like "entangle") - see
-# _on_enemy_clicked().
+# _targeting_purpose ("attack" or a skill id like "entangle" or
+# "mist_coil") - see _on_enemy_clicked(). Mist Coil additionally lets
+# the player click the hero's own portrait instead (self-cast) - see
+# _on_hero_image_gui_input()/_resolve_mist_coil_self_cast().
 var _targeting_mode: bool = false
 var _valid_targets: Array = []
 var _targeting_purpose: String = "attack"
@@ -219,8 +335,28 @@ var _targeting_purpose: String = "attack"
 # once that click resolves, same as a normal ranged Attack.
 var _pending_entangle_level_data: Dictionary = {}
 
+# Mist Coil's level data, held the same way as Entangle's above, from
+# the moment _start_mist_coil_targeting() opens targeting until either
+# an enemy or the hero's own portrait is clicked
+# (_resolve_mist_coil_enemy_cast()/_resolve_mist_coil_self_cast()).
+var _pending_mist_coil_level_data: Dictionary = {}
+
 const RANGE_ENEMY_ATTACK_RANGE := 3
 const RANGE_ENEMY_FLEE_DISTANCE := 1
+
+# Every ACTIVE skill a rival hero might cast during a hero fight, in
+# priority order - checked in _pick_enemy_ready_skill() the same way
+# EnemyHeroManager.KNOWN_ACTIVE_SKILL_IDS drives its own background
+# simulation: direct damage/control first, self-buffs after (so the
+# rival always prefers hitting the player over refreshing a buff it
+# doesn't need yet - see _enemy_skill_worth_casting()). Savage Roar
+# isn't here - like the player's own copy, it's never "cast", just
+# turned on/off automatically off the rival's own HP% (see
+# _update_enemy_savage_roar_state()).
+const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
+	"dark_pact", "pounce", "essence_shift", "shadow_dance",
+	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
+]
 
 # Reinforcements: if the hero hasn't cleared every enemy within this
 # many turns, one melee and one ranged enemy (picked from the zone's
@@ -266,6 +402,7 @@ func _ready() -> void:
 	move_left_button.pressed.connect(_on_move_left_pressed)
 	move_right_button.pressed.connect(_on_move_right_pressed)
 	attack_button.pressed.connect(_on_attack_pressed)
+	hero_image.gui_input.connect(_on_hero_image_gui_input)
 	level_up_ok_button.pressed.connect(_on_level_up_continue_pressed)
 	skill_choice_desc_ok_button.pressed.connect(_on_skill_choice_desc_ok_pressed)
 	skill_choice_desc_cancel_button.pressed.connect(_on_skill_choice_desc_cancel_pressed)
@@ -346,7 +483,7 @@ func _apply_armor_reduction(raw_damage: float, armor: float) -> float:
 ## threshold check, and the bear-death HP penalty.
 func _hero_max_hp() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("hp", 0)) + _essence_shift_bonus.get("hp", 0.0) + _true_form_bonus_hp
+	return float(stats.get("hp", 0)) + _essence_shift_bonus.get("hp", 0.0) + _true_form_bonus_hp - _player_essence_shift_penalty.get("hp", 0.0)
 
 
 ## Hero's total armor: base stat from GameManager plus any permanent
@@ -355,7 +492,7 @@ func _hero_max_hp() -> float:
 ## Essence Shift, plus Spirit Link's flat bonus while it's active.
 func _hero_armor() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor
+	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor - _player_essence_shift_penalty.get("armor", 0.0)
 
 
 ## Savage Roar's current level data ({} if not learned yet) - looked
@@ -739,7 +876,7 @@ func _refresh_bars() -> void:
 	hp_bar.value = _recruited.get("current_hp", 0)
 	hp_value_label.text = str(int(hp_bar.value)) + "/" + str(int(hp_bar.max_value))
 
-	mana_bar.max_value = float(stats.get("mana", 1)) + _essence_shift_bonus.get("mana", 0.0)
+	mana_bar.max_value = float(stats.get("mana", 1)) + _essence_shift_bonus.get("mana", 0.0) - _player_essence_shift_penalty.get("mana", 0.0)
 	mana_bar.value = _recruited.get("current_mana", 0)
 	mana_value_label.text = str(int(mana_bar.value)) + "/" + str(int(mana_bar.max_value))
 
@@ -829,6 +966,10 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 	if _battle_over or _has_acted_this_turn:
 		return
 
+	if _player_silence_turns_left > 0:
+		_show_message_over_hero("Silenced!")
+		return
+
 	var skill_id: String = skill.get("id", "")
 	if _skill_cooldowns.get(skill_id, 0) > 0:
 		return
@@ -859,6 +1000,16 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			if not _cast_dark_pact(level_data):
 				# No enemies in range - same as above, no-op.
 				return
+		"mist_coil":
+			_start_mist_coil_targeting(level_data)
+			# Mist Coil needs the player to click a target first - an
+			# enemy to damage, or the hero's own portrait to heal
+			# himself - so the mana/cooldown/turn spend happens once
+			# that click resolves (_resolve_mist_coil_enemy_cast()/
+			# _resolve_mist_coil_self_cast()), not here. Bail out of
+			# this function without falling through to the shared
+			# spend logic below, same as Entangle.
+			return
 		"essence_shift":
 			_activate_essence_shift(level_data)
 		"shadow_dance":
@@ -974,6 +1125,8 @@ func _cast_dark_pact(level_data: Dictionary) -> bool:
 	var radius: int = int(level_data.get("radius", 0))
 	var targets: Array = []
 	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
 		if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
 			targets.append(enemy)
 
@@ -1009,6 +1162,65 @@ func _resolve_entangle_cast(target: Dictionary, level_data: Dictionary) -> void:
 	spend_mana(mana_cost)
 	_skill_cooldowns["entangle"] = int(level_data.get("cooldown", 0))
 	PlayerManager.set_skill_cooldown("entangle", _skill_cooldowns["entangle"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Resolves a Mist Coil cast on an enemy: deals `level_data.damage`
+## straight damage (still mitigated by the target's own armor, via
+## _deal_fixed_damage_to_enemy() - same helper Dark Pact and the bear
+## use), then spends mana, starts Mist Coil's cooldown, and ends the
+## turn - the same bookkeeping _resolve_entangle_cast() does for
+## Entangle, since Mist Coil's target isn't known until after
+## _on_skill_pressed() already returned.
+func _resolve_mist_coil_enemy_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["mist_coil"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("mist_coil", _skill_cooldowns["mist_coil"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Resolves a Mist Coil cast on Abaddon himself: pays `level_data.
+## hp_cost` straight off current_hp - no armor mitigation, same as the
+## Spirit Bear's death penalty (_apply_bear_death_penalty()) - then
+## heals for `level_data.heal`, which is always more than the HP cost,
+## for a net gain. If the hero doesn't have enough HP to cover the
+## cost, nothing happens at all: no HP lost, no heal, and - like a
+## failed Pounce/Dark Pact/Entangle target search - no mana, cooldown,
+## or turn spent either, so the player can simply try something else.
+func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
+	var hp_cost: float = float(level_data.get("hp_cost", 0))
+	var current_hp: float = float(_recruited.get("current_hp", 0))
+	if current_hp < hp_cost:
+		_cancel_targeting()
+		_show_message_over_hero("Not enough HP")
+		return
+
+	_cancel_targeting()
+	var generation_before: int = _stage_generation
+
+	PlayerManager.damage_hero(hp_cost)
+	heal(float(level_data.get("heal", 0)))
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["mist_coil"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("mist_coil", _skill_cooldowns["mist_coil"])
 	_refresh_skill_cooldown_labels()
 
 	if _battle_over or _stage_generation != generation_before:
@@ -1545,19 +1757,33 @@ func _tick_skill_cooldowns() -> void:
 	_tick_true_form()
 	_tick_entangle_effects()
 
+	if _in_hero_fight:
+		for skill_id in _enemy_skill_cooldowns.keys():
+			_enemy_skill_cooldowns[skill_id] = maxi(0, _enemy_skill_cooldowns[skill_id] - 1)
+
+		_tick_enemy_essence_shift()
+		_tick_enemy_shadow_dance()
+		_tick_enemy_spirit_link()
+		_tick_enemy_true_form()
+		_tick_player_entangle_effects()
+
 
 # ------------------------------------------------------------------
 # Public API for future combat/enemy scripts to call into.
 # Each one persists through PlayerManager and refreshes the bars.
 # ------------------------------------------------------------------
 
-func apply_damage(amount: float) -> void:
+## Returns the mitigated damage actually dealt, so callers that need it
+## (a rival hero's own Spirit Link lifesteal, via
+## _resolve_enemy_hero_attack()) don't have to re-derive it.
+func apply_damage(amount: float) -> float:
 	var reduced: float = _apply_armor_reduction(amount, _hero_armor())
 	# Savage Roar's damage reduction stacks on top of armor mitigation
 	# rather than replacing it, and only applies while it's active.
 	reduced *= (1.0 - _savage_roar_damage_reduction_pct)
 	PlayerManager.damage_hero(reduced)
 	_refresh_bars()
+	return reduced
 
 
 func spend_mana(amount: float) -> void:
@@ -1773,6 +1999,10 @@ func _hero_move(direction: int) -> void:
 	if _battle_over or _has_acted_this_turn:
 		return
 
+	if _player_root_turns_left > 0:
+		_show_message_over_hero("Rooted!")
+		return
+
 	_cancel_targeting()
 
 	var distance: int = _hero_move_distance()
@@ -1825,6 +2055,8 @@ func _start_ranged_targeting() -> void:
 
 	var col_range: int = _hero_attack_column_range()
 	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
 		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
 			_valid_targets.append(enemy)
 
@@ -1848,6 +2080,8 @@ func _start_entangle_targeting(level_data: Dictionary) -> bool:
 
 	var col_range: int = _hero_attack_column_range()
 	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
 		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
 			_valid_targets.append(enemy)
 
@@ -1863,14 +2097,53 @@ func _start_entangle_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
+## Mist Coil's target picking: highlights any enemy in normal attack
+## range (like Entangle) AND the hero's own portrait, since Mist Coil
+## can be cast on either - a damaging bolt on an enemy, or a costly-
+## but-net-positive heal on Abaddon himself (see
+## _resolve_mist_coil_enemy_cast()/_resolve_mist_coil_self_cast()).
+## Self-casting is always available regardless of range, so - unlike
+## Entangle/ranged Attack - this never fails for lack of a target;
+## it only bails out (returning false) if the player is already stuck
+## with no enemies AND can't afford the HP cost, in which case there's
+## nothing legal to click at all.
+func _start_mist_coil_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	var hp_cost: float = float(level_data.get("hp_cost", 0))
+	var can_self_cast: bool = float(_recruited.get("current_hp", 0)) >= hp_cost
+
+	if _valid_targets.is_empty() and not can_self_cast:
+		_show_message_over_hero("No enemy in range and not enough HP")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "mist_coil"
+	_pending_mist_coil_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.7, 0.85, 1)
+	if can_self_cast:
+		hero_image.modulate = Color(0.6, 1, 0.6)
+	return true
+
+
 func _cancel_targeting() -> void:
 	for enemy in _valid_targets:
 		if is_instance_valid(enemy["node"]):
 			enemy["node"].modulate = Color(1, 1, 1)
+	hero_image.modulate = Color(1, 1, 1)
 	_valid_targets.clear()
 	_targeting_mode = false
 	_targeting_purpose = "attack"
 	_pending_entangle_level_data = {}
+	_pending_mist_coil_level_data = {}
 
 
 func _on_enemy_gui_input(event: InputEvent, enemy: Dictionary) -> void:
@@ -1885,13 +2158,34 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		return
 
 	var purpose: String = _targeting_purpose
-	var level_data: Dictionary = _pending_entangle_level_data
+	var entangle_level_data: Dictionary = _pending_entangle_level_data
+	var mist_coil_level_data: Dictionary = _pending_mist_coil_level_data
 	_cancel_targeting()
 
 	if purpose == "entangle":
-		_resolve_entangle_cast(enemy, level_data)
+		_resolve_entangle_cast(enemy, entangle_level_data)
+	elif purpose == "mist_coil":
+		_resolve_mist_coil_enemy_cast(enemy, mist_coil_level_data)
 	else:
 		_apply_hero_attack(enemy)
+
+
+func _on_hero_image_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_on_hero_image_clicked()
+
+
+## Only meaningful while Mist Coil's targeting is open - clicking the
+## hero's own portrait at any other time (or for any other skill) is a
+## no-op, same as clicking a non-highlighted enemy while targeting.
+func _on_hero_image_clicked() -> void:
+	if not _targeting_mode or _battle_over or _has_acted_this_turn:
+		return
+	if _targeting_purpose != "mist_coil":
+		return
+
+	var level_data: Dictionary = _pending_mist_coil_level_data
+	_resolve_mist_coil_self_cast(level_data)
 
 
 func _apply_hero_attack(target: Dictionary) -> void:
@@ -1945,8 +2239,10 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## callers that need it (Spirit Link's lifesteal, via
 ## _apply_hero_attack()) don't have to re-derive it.
 func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
-	var enemy_armor: float = float(target["static"].get("armor", 0))
+	var enemy_armor: float = float(target["static"].get("armor", 0)) + _enemy_hero_bonus_armor(target)
 	var mitigated: float = _apply_armor_reduction(amount, enemy_armor)
+	if target["static"].get("is_hero_fight_boss", false):
+		mitigated *= (1.0 - _enemy_savage_roar_damage_reduction_pct)
 	target["current_hp"] -= mitigated
 	_show_damage_number(target["node"], mitigated)
 
@@ -1956,11 +2252,31 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
 	return mitigated
 
 
+## A rival hero's own Essence Shift/Spirit Link armor bonuses, folded
+## into the armor the player's damage has to punch through - the enemy-
+## side mirror of _hero_armor()'s own borrowed-armor terms. 0 for
+## anything that isn't the actual boss (a regular creep, or the boss's
+## own summoned Spirit Bear ally).
+func _enemy_hero_bonus_armor(target: Dictionary) -> float:
+	if not target["static"].get("is_hero_fight_boss", false):
+		return 0.0
+	return _enemy_essence_shift_bonus.get("armor", 0.0) + _enemy_spirit_link_bonus_armor
+
+
 func _get_enemy_at(pos_index: int) -> Dictionary:
 	for enemy in _enemies:
-		if enemy["pos_index"] == pos_index:
+		if enemy["pos_index"] == pos_index and not _is_target_hidden(enemy):
 			return enemy
 	return {}
+
+
+## True for the rival hero currently hidden by their own Shadow Dance -
+## the player can't select, attack, or target them with a skill while
+## this holds (see _get_enemy_at(), _start_ranged_targeting(),
+## _start_entangle_targeting(), _cast_dark_pact()), exactly mirroring
+## what the player's own Shadow Dance does to him in _enemy_turn().
+func _is_target_hidden(target: Dictionary) -> bool:
+	return target["static"].get("is_hero_fight_boss", false) and _enemy_shadow_dance_active
 
 
 ## Rolls a hero attack's damage, adding Essence Shift's ongoing
@@ -1978,7 +2294,7 @@ func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	# same as a permanent damage bonus would - Shadow Dance's bonus
 	# (passed in by the caller, only for the specific hit that
 	# triggers it) stacks on top of that the same way.
-	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + extra_bonus
+	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + extra_bonus - _player_essence_shift_penalty.get("damage", 0.0)
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
@@ -2185,9 +2501,60 @@ func _start_hero_fight(hero_static: Dictionary) -> void:
 	for child in enemies_layer.get_children():
 		child.queue_free()
 	_enemies.clear()
+
+	_reset_enemy_hero_state(hero_static)
 	_spawn_enemy(GameManager.build_hero_fight_enemy_def(hero_static))
 
 	_update_action_buttons()
+
+
+## Fresh state for a newly-challenged rival hero's own skills, and for
+## whatever they might have inflicted on the player in a PREVIOUS hero
+## fight this scene - none of it should leak from one rival to the
+## next (or from a hero fight into the zone's regular stages, though
+## _current_stage staying at MAX_ZONE_STAGE throughout a hero fight
+## means this is only ever called right before one starts anyway).
+func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
+	_enemy_hero_static = hero_static
+	_enemy_hero_id = hero_static.get("id", "")
+	_enemy_skill_cooldowns.clear()
+
+	_enemy_essence_shift_active = false
+	_enemy_essence_shift_attacks_remaining = 0
+	_enemy_essence_shift_turns_remaining = 0
+	_enemy_essence_shift_duration_pending_start = false
+	_enemy_essence_shift_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+	_enemy_shadow_dance_active = false
+	_enemy_shadow_dance_bonus_damage = 0.0
+	_enemy_shadow_dance_turns_remaining = 0
+	_enemy_shadow_dance_duration_pending_start = false
+
+	_enemy_spirit_link_active = false
+	_enemy_spirit_link_lifesteal_pct = 0.0
+	_enemy_spirit_link_bonus_armor = 0.0
+	_enemy_spirit_link_turns_remaining = 0
+	_enemy_spirit_link_duration_pending_start = false
+
+	_enemy_true_form_active = false
+	_enemy_true_form_bonus_hp = 0.0
+	_enemy_true_form_bonus_damage = 0.0
+	_enemy_true_form_turns_remaining = 0
+	_enemy_true_form_duration_pending_start = false
+
+	_enemy_savage_roar_active = false
+	_enemy_savage_roar_damage_reduction_pct = 0.0
+
+	var stats: Dictionary = hero_static.get("stats", {})
+	_enemy_max_mana = float(stats.get("mana", 0))
+	_enemy_current_mana = _enemy_max_mana
+
+	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_player_root_turns_left = 0
+	_player_silence_turns_left = 0
+	_player_entangle_dot_damage = 0.0
+	_player_entangle_dot_turns_left = 0
+	_player_stun_turns_left = 0
 
 
 func _update_stage_label() -> void:
@@ -2232,9 +2599,30 @@ func _end_turn() -> void:
 		_spawn_reinforcements()
 
 	_tick_skill_cooldowns()
+
+	# Entangle's damage-over-time ticks inside _tick_skill_cooldowns()
+	# above and can finish the player off outside of the normal
+	# attack/skill/enemy-turn paths already checked earlier in this
+	# function, so it needs its own defeat check.
+	if _recruited.get("current_hp", 0) <= 0:
+		_handle_defeat()
+		return
+
+	if _player_stun_turns_left > 0:
+		_player_stun_turns_left -= 1
+
 	_has_acted_this_turn = false
 	_update_action_buttons()
 	_refresh_skill_cooldown_labels()
+
+	# Still stunned after that decrement: the player gets no action at
+	# all this "turn" - skip straight back to another _end_turn() call
+	# (Spirit Bear + enemy turn again) after a short pause, the same
+	# way a stunned enemy just loses its own turn to the player's own
+	# Pounce, rather than opening the action buttons only to lock them
+	# again next turn.
+	if _player_stun_turns_left > 0:
+		get_tree().create_timer(0.9).timeout.connect(_end_turn)
 
 
 ## Ranged enemies get exactly one action per turn too - flee, attack,
@@ -2278,6 +2666,11 @@ func _enemy_turn() -> void:
 			continue
 
 		var enemy_static: Dictionary = enemy["static"]
+
+		if enemy_static.get("is_hero_fight_boss", false):
+			_enemy_hero_turn(enemy)
+			continue
+
 		var enemy_type: String = enemy_static.get("type", "")
 		var enemy_damage: float = float(enemy_static.get("damage", 0))
 		var hero_hidden: bool = _is_hero_hidden()
@@ -2356,6 +2749,586 @@ func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
 	return _bear["pos_index"] if bear_distance < hero_distance else _hero_pos_index
 
 
+# ------------------------------------------------------------------
+# A rival hero's own turn, during a hero fight - tries a skill first
+# (see _pick_enemy_ready_skill()/_cast_enemy_skill()), falling back to
+# the same flee/attack/approach behavior a regular creep uses in
+# _enemy_turn() if nothing is ready/affordable/worthwhile right now, or
+# if the player is currently untargetable (his own Shadow Dance).
+#
+# Two simplifications versus a regular creep's own targeting: a rival
+# hero always focuses the player's hero directly rather than ever
+# being drawn to the player's Spirit Bear the way a creep can be, and
+# (like a creep) always moves exactly one column per turn regardless
+# of the hero's own speed stat - matching how a hero fight boss has
+# always been treated as a single flattened enemy rather than a full
+# player-equivalent hero.
+# ------------------------------------------------------------------
+
+func _enemy_hero_turn(enemy: Dictionary) -> void:
+	_update_enemy_savage_roar_state(enemy)
+
+	if not _is_hero_hidden():
+		var skill_id: String = _pick_enemy_ready_skill(enemy)
+		if skill_id != "":
+			_cast_enemy_skill(enemy, skill_id)
+			return
+
+	var enemy_type: String = enemy["static"].get("type", "")
+	var hero_distance: int = _distance(enemy["pos_index"], _hero_pos_index)
+	var hero_hidden: bool = _is_hero_hidden()
+	var rooted: bool = _is_enemy_rooted(enemy)
+
+	if enemy_type == "range":
+		if not hero_hidden and not rooted and hero_distance <= RANGE_ENEMY_FLEE_DISTANCE:
+			_move_enemy(enemy, _get_flee_position(enemy))
+			return
+
+		if hero_distance <= RANGE_ENEMY_ATTACK_RANGE and not hero_hidden:
+			_resolve_enemy_hero_attack(enemy)
+			return
+	else:  # "mele"
+		if hero_distance <= 0 and not hero_hidden:
+			_resolve_enemy_hero_attack(enemy)
+			return
+
+	if not hero_hidden and not rooted:
+		var step: int = _step_toward(enemy["pos_index"], _hero_pos_index)
+		if step != 0:
+			_move_enemy(enemy, enemy["pos_index"] + step)
+
+
+## The rival hero's plain Attack against the player: rolls their
+## effective damage (folding in their own Essence Shift/True Form
+## bonuses and, once per activation, Shadow Dance's one-shot bonus if
+## they're currently hidden), applies it to the player, then runs
+## Essence Shift's steal and Spirit Link's lifesteal - both of which,
+## exactly like the player's own copies, only ever trigger off this
+## plain Attack, never off a skill.
+func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
+	var shadow_bonus: float = _enemy_shadow_dance_bonus_damage if _enemy_shadow_dance_active else 0.0
+	var mitigated: float = apply_damage(_roll_enemy_hero_damage(enemy, shadow_bonus))
+
+	_apply_enemy_essence_shift_steal()
+	_apply_enemy_spirit_link_lifesteal(enemy, mitigated)
+
+	if _enemy_shadow_dance_active and shadow_bonus > 0.0:
+		_end_enemy_shadow_dance()
+
+
+## The rival hero's flat "damage" stat (see GameManager.build_hero_
+## fight_enemy_def(), which averages their real min-max damage into
+## one number the same way every other enemy in this scene works)
+## plus whatever their own active buffs currently add - the enemy-side
+## mirror of _roll_hero_damage(). No randomness, matching how every
+## other enemy in this scene deals a flat amount rather than rolling a
+## range.
+func _roll_enemy_hero_damage(enemy: Dictionary, extra_bonus: float = 0.0) -> float:
+	var base_damage: float = float(enemy["static"].get("damage", 0))
+	var bonus: float = _enemy_essence_shift_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + extra_bonus
+	return maxf(0.0, base_damage + bonus)
+
+
+## The rival's current max hp: base + Essence Shift's borrowed hp +
+## True Form's bonus hp while each is active - the enemy-side mirror
+## of _hero_max_hp(). Used to clamp Spirit Link's lifesteal.
+func _enemy_hero_effective_max_hp(enemy: Dictionary) -> float:
+	return float(enemy["static"].get("hp", 1)) + _enemy_essence_shift_bonus.get("hp", 0.0) + _enemy_true_form_bonus_hp
+
+
+func _get_hero_fight_boss() -> Dictionary:
+	if not _in_hero_fight:
+		return {}
+	for enemy in _enemies:
+		if enemy["static"].get("is_hero_fight_boss", false):
+			return enemy
+	return {}
+
+
+func _get_enemy_spirit_bear() -> Dictionary:
+	for enemy in _enemies:
+		if enemy["static"].get("is_enemy_spirit_bear", false):
+			return enemy
+	return {}
+
+
+func _find_enemy_skill(skill_id: String) -> Dictionary:
+	for skill in _enemy_hero_static.get("skills", []):
+		if skill.get("id", "") == skill_id:
+			return skill
+	return {}
+
+
+func _enemy_skill_mana_cost(skill_id: String) -> float:
+	var skill: Dictionary = _find_enemy_skill(skill_id)
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
+	return float(GameManager.get_skill_level_data(skill, level).get("mana_cost", 0))
+
+
+## False for a buff/summon skill that's already active and wouldn't do
+## anything new right now (recasting Essence Shift/Shadow Dance/Spirit
+## Link/True Form just restarts their duration from the same values,
+## and a Spirit Bear that's already out doesn't need replacing) - so
+## the rival doesn't burn mana refreshing something with no benefit
+## instead of attacking. Dark Pact/Pounce/Entangle always report true.
+func _enemy_skill_worth_casting(skill_id: String) -> bool:
+	match skill_id:
+		"essence_shift":
+			return not _enemy_essence_shift_active
+		"shadow_dance":
+			return not _enemy_shadow_dance_active
+		"spirit_link":
+			return not _enemy_spirit_link_active
+		"true_form":
+			return not _enemy_true_form_active
+		"summon_spirit_bear":
+			return _get_enemy_spirit_bear().is_empty()
+		_:
+			return true
+
+
+## The first known, off-cooldown, currently-worthwhile, currently-
+## affordable active skill the rival hero has, in
+## ENEMY_KNOWN_SKILL_IDS priority order - "" if none qualify right now.
+func _pick_enemy_ready_skill(enemy: Dictionary) -> String:
+	for skill_id in ENEMY_KNOWN_SKILL_IDS:
+		if PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id) <= 0:
+			continue
+		if _enemy_skill_cooldowns.get(skill_id, 0) > 0:
+			continue
+		if not _enemy_skill_worth_casting(skill_id):
+			continue
+		if _enemy_current_mana >= _enemy_skill_mana_cost(skill_id):
+			return skill_id
+	return ""
+
+
+func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
+	var skill: Dictionary = _find_enemy_skill(skill_id)
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
+	var level_data: Dictionary = GameManager.get_skill_level_data(skill, level)
+	_enemy_skill_cooldowns[skill_id] = int(level_data.get("cooldown", 0))
+	_enemy_current_mana -= float(level_data.get("mana_cost", 0))
+
+	match skill_id:
+		"dark_pact":
+			_cast_enemy_dark_pact(enemy, level_data)
+		"pounce":
+			_cast_enemy_pounce(enemy, level_data)
+		"essence_shift":
+			_activate_enemy_essence_shift(level_data)
+		"shadow_dance":
+			_activate_enemy_shadow_dance(level_data)
+		"entangle":
+			_cast_enemy_entangle(level_data)
+		"summon_spirit_bear":
+			_summon_enemy_spirit_bear(level_data)
+		"spirit_link":
+			_activate_enemy_spirit_link(level_data)
+		"true_form":
+			_activate_enemy_true_form(enemy, level_data)
+
+	# Shadow Dance only breaks from casting ANOTHER skill (or
+	# attacking, handled separately in _resolve_enemy_hero_attack()),
+	# never from a cast/recast of Shadow Dance itself - mirrors the
+	# player's own _on_skill_pressed().
+	if _enemy_shadow_dance_active and skill_id != "shadow_dance":
+		_end_enemy_shadow_dance()
+
+	_refresh_bars()
+
+
+## Dark Pact only ever has one possible target here (there's no other
+## enemy for the rival to hit besides the player) - no radius check
+## needed the way the player's own _cast_dark_pact() has to scan
+## multiple enemies.
+func _cast_enemy_dark_pact(enemy: Dictionary, level_data: Dictionary) -> void:
+	var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
+	apply_damage(_roll_enemy_hero_damage(enemy) * multiplier)
+
+
+func _cast_enemy_pounce(enemy: Dictionary, level_data: Dictionary) -> void:
+	var direction: int = _step_toward(enemy["pos_index"], _hero_pos_index)
+	if direction == 0:
+		direction = 1
+
+	var move_distance: int = int(level_data.get("distance", 2))
+	var pos: int = enemy["pos_index"]
+	var hit_hero: bool = false
+
+	for i in range(move_distance):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		pos = next_pos
+		if pos == _hero_pos_index:
+			hit_hero = true
+			break
+
+	_move_enemy(enemy, pos)
+
+	if hit_hero:
+		apply_damage(_roll_enemy_hero_damage(enemy))
+		_player_stun_turns_left = int(level_data.get("stun_turns", 1))
+		_show_message_over_hero("Stunned!")
+
+
+# ------------------------------------------------------------------
+# Slark's Essence Shift, cast by the rival at the player - mirrors the
+# player's own _activate_essence_shift()/_tick_essence_shift()/
+# _end_essence_shift(), just draining a battle-local penalty on the
+# player (_player_essence_shift_penalty) instead of a battle-local
+# counter on an enemy, since the player has no such counter to drain.
+# ------------------------------------------------------------------
+
+func _activate_enemy_essence_shift(level_data: Dictionary) -> void:
+	if _enemy_essence_shift_active:
+		_end_enemy_essence_shift()
+	_enemy_essence_shift_active = true
+	_enemy_essence_shift_attacks_remaining = int(level_data.get("attacks", 0))
+	_enemy_essence_shift_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_essence_shift_duration_pending_start = true
+
+
+## Steals one point of the player's own main stat, converting it into
+## the same hp/armor/mana contribution (plus damage, since the stolen
+## stat is always the player's own main stat by definition) that the
+## same point would be worth on the player's side of the fight -
+## mirrors _essence_shift_contribution_for(), just applied as a
+## penalty to the player instead of a bonus to whoever cast it.
+##
+## Simplification versus the player's own copy: there's no floor on
+## how much can be drained from the player the way enemies' battle-
+## local main-stat counters bottom out at
+## GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT, since the player has
+## no such counter - a hero fight is expected to resolve in far fewer
+## turns than it'd take for this to matter in practice.
+func _apply_enemy_essence_shift_steal() -> void:
+	if not _enemy_essence_shift_active or _enemy_essence_shift_attacks_remaining <= 0:
+		return
+
+	var stat_name: String = str(_hero_static.get("main_stat", "")).to_lower()
+	if stat_name == "":
+		return
+
+	_enemy_essence_shift_attacks_remaining -= 1
+
+	match stat_name:
+		"strength":
+			_player_essence_shift_penalty["hp"] = _player_essence_shift_penalty.get("hp", 0.0) + GameManager.HP_PER_STRENGTH
+		"agility":
+			_player_essence_shift_penalty["armor"] = _player_essence_shift_penalty.get("armor", 0.0) + GameManager.ARMOR_PER_AGILITY
+		"intelligence":
+			_player_essence_shift_penalty["mana"] = _player_essence_shift_penalty.get("mana", 0.0) + GameManager.MANA_PER_INTELLIGENCE
+	_player_essence_shift_penalty["damage"] = _player_essence_shift_penalty.get("damage", 0.0) + GameManager.DAMAGE_PER_MAIN_STAT
+
+	var enemy_contribution: Dictionary = _enemy_essence_shift_contribution_for(stat_name)
+	for stat_key in enemy_contribution.keys():
+		_enemy_essence_shift_bonus[stat_key] = _enemy_essence_shift_bonus.get(stat_key, 0.0) + enemy_contribution[stat_key]
+
+	_refresh_bars()
+
+
+## What the RIVAL gains from stealing one point of `stat_name` - the
+## same conversion table as _essence_shift_contribution_for(), just
+## checked against the rival's own main stat (rather than the
+## player's) for the extra-damage condition.
+func _enemy_essence_shift_contribution_for(stat_name: String) -> Dictionary:
+	var contribution: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+	match stat_name:
+		"strength":
+			contribution["hp"] = GameManager.HP_PER_STRENGTH
+		"agility":
+			contribution["armor"] = GameManager.ARMOR_PER_AGILITY
+		"intelligence":
+			contribution["mana"] = GameManager.MANA_PER_INTELLIGENCE
+
+	if stat_name == str(_enemy_hero_static.get("main_stat", "")).to_lower():
+		contribution["damage"] = GameManager.DAMAGE_PER_MAIN_STAT
+
+	return contribution
+
+
+func _tick_enemy_essence_shift() -> void:
+	if not _enemy_essence_shift_active:
+		return
+	if _enemy_essence_shift_duration_pending_start:
+		_enemy_essence_shift_duration_pending_start = false
+		return
+	_enemy_essence_shift_turns_remaining -= 1
+	if _enemy_essence_shift_turns_remaining <= 0:
+		_end_enemy_essence_shift()
+
+
+func _end_enemy_essence_shift() -> void:
+	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_enemy_essence_shift_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_enemy_essence_shift_active = false
+	_enemy_essence_shift_attacks_remaining = 0
+	_enemy_essence_shift_turns_remaining = 0
+	_enemy_essence_shift_duration_pending_start = false
+	_refresh_bars()
+
+
+# ------------------------------------------------------------------
+# Slark's Shadow Dance, cast by the rival on themselves - mirrors the
+# player's own _activate_shadow_dance()/_tick_shadow_dance()/
+# _end_shadow_dance(). "Hidden" here means the player's attacks and
+# targeted skills can't select them at all (_is_target_hidden(),
+# checked from _get_enemy_at()/_start_ranged_targeting()/
+# _start_entangle_targeting()/_cast_dark_pact()) - their own turn
+# proceeds completely normally while hidden.
+# ------------------------------------------------------------------
+
+func _activate_enemy_shadow_dance(level_data: Dictionary) -> void:
+	_enemy_shadow_dance_active = true
+	_enemy_shadow_dance_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_enemy_shadow_dance_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_shadow_dance_duration_pending_start = true
+	_update_enemy_hero_visibility()
+
+
+func _tick_enemy_shadow_dance() -> void:
+	if not _enemy_shadow_dance_active:
+		return
+	if _enemy_shadow_dance_duration_pending_start:
+		_enemy_shadow_dance_duration_pending_start = false
+		return
+	_enemy_shadow_dance_turns_remaining -= 1
+	if _enemy_shadow_dance_turns_remaining <= 0:
+		_end_enemy_shadow_dance()
+
+
+func _end_enemy_shadow_dance() -> void:
+	_enemy_shadow_dance_active = false
+	_enemy_shadow_dance_bonus_damage = 0.0
+	_enemy_shadow_dance_turns_remaining = 0
+	_enemy_shadow_dance_duration_pending_start = false
+	_update_enemy_hero_visibility()
+
+
+## Fades the boss's own enemy node while hidden, the same visual cue
+## the player's own Shadow Dance gives his portrait - just as a direct
+## modulate on the enemy TextureRect rather than a dedicated node,
+## since a hero-fight boss is otherwise a completely ordinary entry in
+## _enemies.
+func _update_enemy_hero_visibility() -> void:
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty() or not is_instance_valid(boss["node"]):
+		return
+	boss["node"].modulate = Color(1, 1, 1, 0.4) if _enemy_shadow_dance_active else Color(1, 1, 1, 1)
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Entangle, cast by the rival on the player - mirrors
+# _apply_root()/_tick_entangle_effects(), just aimed at the player
+# instead of an enemy. There's only one possible target (the player),
+# so no targeting step is needed the way the player's own Entangle
+# needs _start_entangle_targeting()/_resolve_entangle_cast().
+# ------------------------------------------------------------------
+
+func _cast_enemy_entangle(level_data: Dictionary) -> void:
+	_player_root_turns_left = int(level_data.get("root_turns", 0))
+	_player_silence_turns_left = int(level_data.get("silence_turns", 0))
+	_player_entangle_dot_damage = float(level_data.get("dot_damage", 0))
+	_player_entangle_dot_turns_left = int(level_data.get("dot_duration", 0))
+	_show_message_over_hero("Entangled!")
+
+
+func _tick_player_entangle_effects() -> void:
+	if _player_root_turns_left > 0:
+		_player_root_turns_left -= 1
+	if _player_silence_turns_left > 0:
+		_player_silence_turns_left -= 1
+
+	if _player_entangle_dot_turns_left > 0:
+		_player_entangle_dot_turns_left -= 1
+		if _player_entangle_dot_damage > 0.0:
+			apply_damage(_player_entangle_dot_damage)
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Summon Spirit Bear, cast by the rival - spawned as a
+# genuine extra entry in _enemies via the normal _spawn_enemy() path,
+# so it automatically gets real movement/attack behavior, a real
+# position on the board, and can be fought and killed by the player
+# like anything else, all for free. XP/gold are zeroed out so killing
+# it doesn't reward anything beyond clearing it out of the way - only
+# the rival hero itself is worth a bounty.
+#
+# Simplification versus the player's own Spirit Bear: defeating the
+# boss requires _enemies to be empty (see _handle_victory()), so as
+# long as this bear is alive the fight isn't over even after the
+# rival hero itself has been reduced to 0 HP and removed - the same
+# way any other enemy sharing the field would keep a fight going.
+# ------------------------------------------------------------------
+
+func _summon_enemy_spirit_bear(level_data: Dictionary) -> void:
+	_despawn_enemy_spirit_bear()
+
+	var damage_min: float = float(level_data.get("damage_min", 0))
+	var damage_max: float = float(level_data.get("damage_max", 0))
+
+	_spawn_enemy({
+		"id": "enemy_spirit_bear",
+		"name": "Spirit Bear",
+		"image": SPIRIT_BEAR_IMAGE_PATH,
+		"type": "mele",
+		"hp": float(level_data.get("hp", 1)),
+		"damage": roundi((damage_min + damage_max) / 2.0),
+		"armor": float(level_data.get("armor", 0)),
+		"XP": 0,
+		"gold": "0-0",
+		# Same art the player's own Spirit Bear uses is drawn facing
+		# right (toward wherever it's an ally of); placed on the enemy
+		# side here, it needs the same left-facing flip hero portraits
+		# get - see _spawn_enemy()'s use of this flag.
+		"is_hero_fight": true,
+		"is_enemy_spirit_bear": true,
+	})
+
+
+func _despawn_enemy_spirit_bear() -> void:
+	for existing in _enemies.duplicate():
+		if existing["static"].get("is_enemy_spirit_bear", false):
+			if is_instance_valid(existing["node"]):
+				existing["node"].queue_free()
+			_enemies.erase(existing)
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Spirit Link, cast by the rival on themselves - mirrors
+# _activate_spirit_link()/_tick_spirit_link()/_end_spirit_link()/
+# _apply_spirit_link_lifesteal().
+# ------------------------------------------------------------------
+
+func _activate_enemy_spirit_link(level_data: Dictionary) -> void:
+	_enemy_spirit_link_active = true
+	_enemy_spirit_link_lifesteal_pct = float(level_data.get("lifesteal_pct", 0.0))
+	_enemy_spirit_link_bonus_armor = float(level_data.get("bonus_armor", 0))
+	_enemy_spirit_link_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_spirit_link_duration_pending_start = true
+
+
+func _tick_enemy_spirit_link() -> void:
+	if not _enemy_spirit_link_active:
+		return
+	if _enemy_spirit_link_duration_pending_start:
+		_enemy_spirit_link_duration_pending_start = false
+		return
+	_enemy_spirit_link_turns_remaining -= 1
+	if _enemy_spirit_link_turns_remaining <= 0:
+		_end_enemy_spirit_link()
+
+
+func _end_enemy_spirit_link() -> void:
+	_enemy_spirit_link_active = false
+	_enemy_spirit_link_lifesteal_pct = 0.0
+	_enemy_spirit_link_bonus_armor = 0.0
+	_enemy_spirit_link_turns_remaining = 0
+	_enemy_spirit_link_duration_pending_start = false
+
+
+## Only ever called for the plain basic-attack branch of the rival's
+## turn - like the player's own copy, skill damage (Dark Pact, Pounce,
+## Entangle's DoT) never triggers this. Heals the boss directly,
+## clamped to their current effective max hp.
+func _apply_enemy_spirit_link_lifesteal(enemy: Dictionary, mitigated_attack_damage: float) -> void:
+	if not _enemy_spirit_link_active or mitigated_attack_damage <= 0.0:
+		return
+	var heal_amount: float = mitigated_attack_damage * _enemy_spirit_link_lifesteal_pct
+	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
+	enemy["current_hp"] = minf(max_hp, enemy["current_hp"] + heal_amount)
+
+
+# ------------------------------------------------------------------
+# Lone Druid's True Form (ultimate), cast by the rival on themselves -
+# mirrors _activate_true_form()/_tick_true_form()/_end_true_form().
+# No forced-melee-range concept here (a hero-fight boss is already
+# always attacking in melee or at range per its own "type", same as
+# any other enemy) - just the bonus hp/damage, plus swapping the
+# boss's own node texture the same way the player's portrait swaps.
+# ------------------------------------------------------------------
+
+func _activate_enemy_true_form(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_true_form_active:
+		_end_enemy_true_form()
+	_enemy_true_form_active = true
+	_enemy_true_form_bonus_hp = float(level_data.get("bonus_hp", 0))
+	_enemy_true_form_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_enemy_true_form_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_true_form_duration_pending_start = true
+
+	if ResourceLoader.exists(TRUE_FORM_IMAGE_PATH) and is_instance_valid(enemy["node"]):
+		enemy["node"].texture = load(TRUE_FORM_IMAGE_PATH)
+
+
+func _tick_enemy_true_form() -> void:
+	if not _enemy_true_form_active:
+		return
+	if _enemy_true_form_duration_pending_start:
+		_enemy_true_form_duration_pending_start = false
+		return
+	_enemy_true_form_turns_remaining -= 1
+	if _enemy_true_form_turns_remaining <= 0:
+		_end_enemy_true_form()
+
+
+func _end_enemy_true_form() -> void:
+	_enemy_true_form_active = false
+	_enemy_true_form_bonus_hp = 0.0
+	_enemy_true_form_bonus_damage = 0.0
+	_enemy_true_form_turns_remaining = 0
+	_enemy_true_form_duration_pending_start = false
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty() or not is_instance_valid(boss["node"]):
+		return
+	var original_image: String = str(boss["static"].get("image", ""))
+	if original_image != "" and ResourceLoader.exists(original_image):
+		boss["node"].texture = load(original_image)
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Savage Roar (passive), on the rival - mirrors
+# _get_savage_roar_level_data()/_update_savage_roar_state(), same
+# hysteresis: switches on once HP drops below 50%, stays on through
+# the climb back up until HP reaches 80%. Re-evaluated once at the
+# start of the rival's own turn (see _enemy_hero_turn()) rather than
+# after every HP change, since there's no bars UI to keep live for an
+# enemy the way _refresh_bars() does for the player.
+# ------------------------------------------------------------------
+
+func _get_enemy_savage_roar_level_data() -> Dictionary:
+	if _enemy_hero_id == "":
+		return {}
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "savage_roar")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_enemy_skill("savage_roar")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _update_enemy_savage_roar_state(enemy: Dictionary) -> void:
+	var level_data: Dictionary = _get_enemy_savage_roar_level_data()
+
+	if level_data.is_empty():
+		_enemy_savage_roar_active = false
+	else:
+		var max_hp: float = _enemy_hero_effective_max_hp(enemy)
+		var hp_pct: float = float(enemy.get("current_hp", 0)) / max_hp if max_hp > 0.0 else 0.0
+		if _enemy_savage_roar_active:
+			if hp_pct >= 0.8:
+				_enemy_savage_roar_active = false
+		elif hp_pct < 0.5:
+			_enemy_savage_roar_active = true
+
+	_enemy_savage_roar_damage_reduction_pct = float(level_data.get("damage_reduction_pct", 0.0)) if _enemy_savage_roar_active else 0.0
+
+
 ## Moves an enemy to `new_pos` (clamped on-board) and syncs its node's
 ## screen position to match.
 func _move_enemy(enemy: Dictionary, new_pos: int) -> void:
@@ -2390,7 +3363,7 @@ func _get_flee_position(enemy: Dictionary) -> int:
 ## The hero gets exactly one action per turn - move, attack, skill, or
 ## item. Once any of them is used, all four lock until End Turn.
 func _update_action_buttons() -> void:
-	var locked: bool = _battle_over or _has_acted_this_turn
+	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0
 	move_left_button.disabled = locked
 	move_right_button.disabled = locked
 	attack_button.disabled = locked

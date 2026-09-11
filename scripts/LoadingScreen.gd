@@ -9,7 +9,7 @@ extends Control
 ## ready almost instantly - this is purely a deliberate, fixed-length
 ## loading experience (branding/polish) rather than a reflection of
 ## real load time.
-@export var loading_duration: float = 3.0
+@export var loading_duration: float = 2.5
 
 @onready var progress_bar: ProgressBar = $ProgressBar
 @onready var status_label: Label = $StatusLabel

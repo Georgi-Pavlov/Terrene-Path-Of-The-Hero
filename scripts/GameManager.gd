@@ -542,9 +542,13 @@ var zones: Dictionary = {
 						"id": "mist_coil",
 						"name": "Mist Coil",
 						"type": "standard",
-						"description": "Abaddon releases a coil of deathly mist that damage an enemy.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Abaddon releases a coil of deathly mist - cast on an enemy it deals damage, cast on Abaddon himself it costs HP but heals him for more.",
+						"levels": [
+							{"heal": 80, "damage": 80, "hp_cost": 30, "mana_cost": 35, "cooldown": 3},
+							{"heal": 120, "damage": 120, "hp_cost": 40, "mana_cost": 40, "cooldown": 3},
+							{"heal": 160, "damage": 160, "hp_cost": 50, "mana_cost": 45, "cooldown": 2},
+							{"heal": 200, "damage": 200, "hp_cost": 60, "mana_cost": 50, "cooldown": 2}
+						]
 					},
 					{
 						"id": "aphotic_shield",
@@ -2084,6 +2088,11 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 		# _spawn_enemy() uses this to mirror the art when it's placed
 		# on the enemy side, so it faces the player's hero instead.
 		"is_hero_fight": true,
+		# Distinguishes the actual rival hero from a regular creep (and
+		# from its own summoned Spirit Bear ally, which also sets
+		# "is_hero_fight" for the same art-flipping reason but isn't
+		# the boss) - see battle.gd's _enemy_turn()/_get_hero_fight_boss().
+		"is_hero_fight_boss": true,
 	}
 
 

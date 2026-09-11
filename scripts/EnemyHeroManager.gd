@@ -223,10 +223,21 @@ const MAX_SIMULATED_TURNS: int = 30
 # Drink a Health Potion once HP falls to (or below) this fraction of max.
 const LOW_HP_POTION_THRESHOLD: float = 0.2
 
-# The only skills with real mechanical effects to simulate - anything
-# else a hero knows just never gets cast here. Checked in this order
-# when more than one is ready and affordable in the same turn.
-const KNOWN_ACTIVE_SKILL_IDS: Array[String] = ["dark_pact", "pounce"]
+# Every ACTIVE skill across Slark and Lone Druid, the only two heroes
+# with any simulated skill logic today - anything else a hero knows
+# just never gets cast here. Checked in this order when more than one
+# is ready, worth casting (see _npc_skill_worth_casting), and
+# affordable in the same turn: direct damage/control first, buffs
+# after (so an NPC always prefers hitting something over refreshing a
+# buff it doesn't strictly need yet).
+# Savage Roar (Lone Druid's passive) isn't in this list - it's never
+# "cast", it just turns itself on/off automatically off the hero's own
+# HP%, same as the player's own copy - see
+# _update_npc_savage_roar_state().
+const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
+	"dark_pact", "pounce", "essence_shift", "shadow_dance",
+	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
+]
 
 
 ## Runs one simulated attempt for `hero_id` against whichever zone/
@@ -491,7 +502,14 @@ func _build_stage_enemy_batch(templates: Array, count: int, stage: int) -> Array
 	for i in range(count):
 		var template: Dictionary = templates[i % templates.size()]
 		var staged: Dictionary = _apply_stage_bonus(template, stage)
-		result.append({"static": staged, "current_hp": float(staged.get("hp", 1))})
+		result.append({
+			"static": staged,
+			"current_hp": float(staged.get("hp", 1)),
+			# Needed for Slark's Essence Shift (see
+			# _apply_npc_essence_shift_steal()) - mirrors the field
+			# battle.gd's own _spawn_enemy() seeds every enemy with.
+			"current_main_stat_value": float(staged.get("main_stat_value", 0)),
+		})
 	return result
 
 
@@ -536,7 +554,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array) 
 	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
 	var max_hp: float = float(combat_stats.get("hp", 1))
 	var max_mana: float = float(combat_stats.get("mana", 0))
-	var armor: float = float(combat_stats.get("armor", 0))
+	var base_armor: float = float(combat_stats.get("armor", 0))
 	var damage_range: String = str(combat_stats.get("damage", "0-0"))
 
 	var current_hp: float = max_hp
@@ -547,9 +565,28 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array) 
 	var counted_dead: Dictionary = {}
 	var result: String = "stalemate"
 
+	# Every buff/debuff-carrying skill's running state, fresh for this
+	# one attempt only - see _new_npc_combat_state(). Nothing here
+	# persists between attempts, mirroring how the player's own copies
+	# of this state (in battle.gd) reset every time the Battle scene is
+	# left and re-entered.
+	var state: Dictionary = _new_npc_combat_state()
+
 	for turn_index in range(MAX_SIMULATED_TURNS):
 		for skill_id in cooldowns.keys():
 			cooldowns[skill_id] = maxi(0, cooldowns[skill_id] - 1)
+
+		_tick_npc_essence_shift(state["essence_shift"])
+		_tick_npc_shadow_dance(state["shadow_dance"])
+		_tick_npc_spirit_link(state["spirit_link"])
+		_tick_npc_true_form(state["true_form"])
+		_tick_npc_entangle_effects(enemies)
+		var kills: Dictionary = _collect_npc_kills(enemies, counted_dead)
+		xp_gained += kills["xp"]
+		gold_gained += kills["gold"]
+
+		var effective_max_hp: float = _npc_effective_max_hp(max_hp, state)
+		_update_npc_savage_roar_state(hero_id, hero_static, state["savage_roar"], current_hp, effective_max_hp)
 
 		var living: Array = _living_enemies(enemies)
 		if living.is_empty():
@@ -558,42 +595,81 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array) 
 
 		# --- Hero's turn: potion, skill, or basic attack - in that
 		# priority, one action per turn, same as the player. ---
-		if current_hp <= max_hp * LOW_HP_POTION_THRESHOLD and PlayerManager.get_npc_potion_count(hero_id, "health") > 0:
+		var acted_with: String = ""
+		if current_hp <= effective_max_hp * LOW_HP_POTION_THRESHOLD and PlayerManager.get_npc_potion_count(hero_id, "health") > 0:
 			PlayerManager.set_npc_potion_count(hero_id, "health", PlayerManager.get_npc_potion_count(hero_id, "health") - 1)
-			current_hp = minf(max_hp, current_hp + float(GameManager.get_item("health").get("value", 0)))
+			current_hp = minf(effective_max_hp, current_hp + float(GameManager.get_item("health").get("value", 0)))
 		else:
-			var ready_skill_id: String = _pick_ready_skill(hero_id, hero_static, cooldowns, current_mana)
+			var ready_skill_id: String = _pick_ready_skill(hero_id, hero_static, cooldowns, current_mana, state)
 			if ready_skill_id != "":
-				_cast_skill(hero_id, hero_static, ready_skill_id, cooldowns, damage_range, living)
-				current_mana -= float(_find_skill(hero_static, ready_skill_id).get("mana_cost", 0))
-			elif _has_unaffordable_ready_skill(hero_id, hero_static, cooldowns, current_mana) and PlayerManager.get_npc_potion_count(hero_id, "mana") > 0:
+				_cast_skill(hero_id, hero_static, ready_skill_id, cooldowns, damage_range, living, state)
+				current_mana -= _npc_skill_mana_cost(hero_id, hero_static, ready_skill_id)
+				acted_with = ready_skill_id
+			elif _has_unaffordable_ready_skill(hero_id, hero_static, cooldowns, current_mana, state) and PlayerManager.get_npc_potion_count(hero_id, "mana") > 0:
 				PlayerManager.set_npc_potion_count(hero_id, "mana", PlayerManager.get_npc_potion_count(hero_id, "mana") - 1)
-				current_mana = minf(max_mana, current_mana + float(GameManager.get_item("mana").get("value", 0)))
+				current_mana = minf(max_mana + state["essence_shift"]["bonus"].get("mana", 0.0), current_mana + float(GameManager.get_item("mana").get("value", 0)))
 			else:
-				_apply_damage_to_enemy(_lowest_hp_enemy(living), _roll_damage(damage_range))
+				var target: Dictionary = _lowest_hp_enemy(living)
+				var shadow_bonus: float = state["shadow_dance"]["bonus_damage"] if state["shadow_dance"]["active"] else 0.0
+				var dmg: float = _npc_roll_damage(damage_range, state, shadow_bonus)
+				var mitigated: float = _apply_damage_to_enemy(target, dmg)
+				_apply_npc_essence_shift_steal(target, state["essence_shift"], hero_static)
+				current_hp = minf(effective_max_hp, current_hp + _npc_spirit_link_lifesteal(state["spirit_link"], mitigated))
+				acted_with = "attack"
 
-		# --- Award XP/gold for anything that just died, exactly once. ---
-		for i in range(enemies.size()):
-			if enemies[i]["current_hp"] <= 0 and not counted_dead.get(i, false):
-				counted_dead[i] = true
-				xp_gained += float(enemies[i]["static"].get("XP", 0))
-				gold_gained += _roll_gold(str(enemies[i]["static"].get("gold", "0-0")))
+		# Shadow Dance only breaks from attacking or casting ANOTHER
+		# skill, never from a cast/recast of Shadow Dance itself and
+		# never from drinking a potion - exactly mirroring
+		# battle.gd's _on_skill_pressed()/_apply_hero_attack().
+		if state["shadow_dance"]["active"] and acted_with != "" and acted_with != "shadow_dance":
+			_end_npc_shadow_dance(state["shadow_dance"])
+
+		kills = _collect_npc_kills(enemies, counted_dead)
+		xp_gained += kills["xp"]
+		gold_gained += kills["gold"]
 
 		living = _living_enemies(enemies)
 		if living.is_empty():
 			result = "win"
 			break
 
-		# --- Enemies retaliate, skipping anyone Pounce just stunned. ---
-		for enemy in living:
-			var stun_left: int = enemy.get("stun_turns_left", 0)
-			if stun_left > 0:
-				enemy["stun_turns_left"] = stun_left - 1
-				continue
-			var enemy_damage: float = float(enemy["static"].get("damage", 0))
-			current_hp -= _apply_armor_reduction(enemy_damage, armor)
-			if current_hp <= 0:
+		# --- The Spirit Bear (if summoned) acts automatically, same as
+		# for the player - see battle.gd's _bear_turn(). Simplified vs.
+		# the real fight: with no columns/positions here the bear
+		# always swings at the lowest-HP living enemy, and - since
+		# nothing in this abstract sim ever targets the bear
+		# specifically - it never takes damage or dies from it; only
+		# losing the real fight (a loss/stalemate) can end its tenure,
+		# same as any other equipment-free NPC advantage in this sim. ---
+		if not state["bear"].is_empty():
+			var bear_target: Dictionary = _lowest_hp_enemy(living)
+			_apply_damage_to_enemy(bear_target, _npc_roll_bear_damage(state["bear"]))
+
+			kills = _collect_npc_kills(enemies, counted_dead)
+			xp_gained += kills["xp"]
+			gold_gained += kills["gold"]
+
+			living = _living_enemies(enemies)
+			if living.is_empty():
+				result = "win"
 				break
+
+		# --- Enemies retaliate, skipping anyone Pounce just stunned or
+		# while Shadow Dance is hiding the hero entirely (mirrors
+		# battle.gd's _is_hero_hidden() check in _enemy_turn()). ---
+		if not state["shadow_dance"]["active"]:
+			var effective_armor: float = _npc_effective_armor(base_armor, state)
+			for enemy in living:
+				var stun_left: int = enemy.get("stun_turns_left", 0)
+				if stun_left > 0:
+					enemy["stun_turns_left"] = stun_left - 1
+					continue
+				var enemy_damage: float = float(enemy["static"].get("damage", 0))
+				var reduced: float = _apply_armor_reduction(enemy_damage, effective_armor)
+				reduced *= (1.0 - float(state["savage_roar"].get("damage_reduction_pct", 0.0)))
+				current_hp -= reduced
+				if current_hp <= 0:
+					break
 
 		if current_hp <= 0:
 			result = "loss"
@@ -602,50 +678,440 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array) 
 	return {"result": result, "xp_gained": xp_gained, "gold_gained": gold_gained}
 
 
-func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, cooldowns: Dictionary, damage_range: String, living: Array) -> void:
+## Fresh per-attempt state for every buff/debuff-carrying skill -
+## mirrors the shape (and defaults) of battle.gd's own
+## _essence_shift_*/_shadow_dance_*/_spirit_link_*/_true_form_*/_bear
+## instance variables, just bundled into one Dictionary here since this
+## state only needs to live for the duration of one _run_stage_fight()
+## call rather than the whole scene's lifetime.
+func _new_npc_combat_state() -> Dictionary:
+	return {
+		"essence_shift": {
+			"active": false, "attacks_remaining": 0, "turns_remaining": 0,
+			"duration_pending_start": false, "stolen": [],
+			"bonus": {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0},
+		},
+		"shadow_dance": {"active": false, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"spirit_link": {"active": false, "lifesteal_pct": 0.0, "bonus_armor": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"true_form": {"active": false, "bonus_hp": 0.0, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"bear": {},
+		"savage_roar": {"active": false, "damage_reduction_pct": 0.0},
+	}
+
+
+func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, cooldowns: Dictionary, damage_range: String, living: Array, state: Dictionary) -> void:
 	var skill: Dictionary = _find_skill(hero_static, skill_id)
 	var level: int = PlayerManager.get_npc_skill_level(hero_id, skill_id)
 	var level_data: Dictionary = GameManager.get_skill_level_data(skill, level)
 	cooldowns[skill_id] = int(level_data.get("cooldown", 0))
 
-	if skill_id == "dark_pact":
-		var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
-		var dmg: float = _roll_damage(damage_range) * multiplier
-		for enemy in living:
-			_apply_damage_to_enemy(enemy, dmg)
-	else:  # pounce
-		var target: Dictionary = _lowest_hp_enemy(living)
-		_apply_damage_to_enemy(target, _roll_damage(damage_range))
-		if target["current_hp"] > 0:
-			target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+	match skill_id:
+		"dark_pact":
+			var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
+			var dmg: float = _npc_roll_damage(damage_range, state) * multiplier
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, dmg)
+		"pounce":
+			var target: Dictionary = _lowest_hp_enemy(living)
+			_apply_damage_to_enemy(target, _npc_roll_damage(damage_range, state))
+			if target["current_hp"] > 0:
+				target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+		"essence_shift":
+			_activate_npc_essence_shift(state["essence_shift"], level_data)
+		"shadow_dance":
+			_activate_npc_shadow_dance(state["shadow_dance"], level_data)
+		"entangle":
+			# No separate "pick a target" step here (there's no player
+			# to click one) - roots/silences/DoTs whichever enemy the
+			# hero would otherwise have attacked this turn.
+			_apply_npc_root(_lowest_hp_enemy(living), level_data)
+		"summon_spirit_bear":
+			state["bear"] = {
+				"damage_min": float(level_data.get("damage_min", 0)),
+				"damage_max": float(level_data.get("damage_max", 0)),
+			}
+		"spirit_link":
+			_activate_npc_spirit_link(state["spirit_link"], level_data)
+		"true_form":
+			_activate_npc_true_form(state["true_form"], level_data)
 
 
-## The first known, off-cooldown, currently-affordable active skill,
-## in KNOWN_ACTIVE_SKILL_IDS priority order - "" if none qualify right now.
-func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_mana: float) -> String:
+## The mana cost of `skill_id` at this NPC's current level - unlike a
+## flat top-level "mana_cost" field (which none of these skills
+## actually have), this reads the correct per-level value the same way
+## GameManager.get_skill_level_data()/battle.gd's own cast paths do.
+func _npc_skill_mana_cost(hero_id: String, hero_static: Dictionary, skill_id: String) -> float:
+	var skill: Dictionary = _find_skill(hero_static, skill_id)
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, skill_id)
+	return float(GameManager.get_skill_level_data(skill, level).get("mana_cost", 0))
+
+
+## False for a buff/summon skill that's already active and wouldn't do
+## anything new right now (recasting Essence Shift/Shadow Dance/Spirit
+## Link/True Form just restarts their duration from the same values,
+## and a Spirit Bear that's already out doesn't need replacing) - so
+## the NPC doesn't burn mana refreshing something with no benefit
+## instead of attacking. Dark Pact/Pounce/Entangle always report true;
+## they only ever get checked once a living target is already
+## confirmed to exist by the caller.
+func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
+	match skill_id:
+		"essence_shift":
+			return not state["essence_shift"]["active"]
+		"shadow_dance":
+			return not state["shadow_dance"]["active"]
+		"spirit_link":
+			return not state["spirit_link"]["active"]
+		"true_form":
+			return not state["true_form"]["active"]
+		"summon_spirit_bear":
+			return state["bear"].is_empty()
+		_:
+			return true
+
+
+## The first known, off-cooldown, currently-worthwhile, currently-
+## affordable active skill, in KNOWN_ACTIVE_SKILL_IDS priority order -
+## "" if none qualify right now.
+func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_mana: float, state: Dictionary) -> String:
 	for skill_id in KNOWN_ACTIVE_SKILL_IDS:
 		if PlayerManager.get_npc_skill_level(hero_id, skill_id) <= 0:
 			continue
 		if cooldowns.get(skill_id, 0) > 0:
 			continue
-		var mana_cost: float = float(_find_skill(hero_static, skill_id).get("mana_cost", 0))
-		if current_mana >= mana_cost:
+		if not _npc_skill_worth_casting(skill_id, state):
+			continue
+		if current_mana >= _npc_skill_mana_cost(hero_id, hero_static, skill_id):
 			return skill_id
 	return ""
 
 
-## True if there's a known, off-cooldown active skill that's just
-## short on mana right now - the trigger for drinking a Mana Potion
-## instead of attacking this turn.
-func _has_unaffordable_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_mana: float) -> bool:
+## True if there's a known, off-cooldown, currently-worthwhile active
+## skill that's just short on mana right now - the trigger for
+## drinking a Mana Potion instead of attacking this turn.
+func _has_unaffordable_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_mana: float, state: Dictionary) -> bool:
 	for skill_id in KNOWN_ACTIVE_SKILL_IDS:
 		if PlayerManager.get_npc_skill_level(hero_id, skill_id) <= 0:
 			continue
 		if cooldowns.get(skill_id, 0) > 0:
 			continue
-		if current_mana < float(_find_skill(hero_static, skill_id).get("mana_cost", 0)):
+		if not _npc_skill_worth_casting(skill_id, state):
+			continue
+		if current_mana < _npc_skill_mana_cost(hero_id, hero_static, skill_id):
 			return true
 	return false
+
+
+# ------------------------------------------------------------------
+# Slark's Essence Shift - mirrors battle.gd's own
+# _activate_essence_shift/_apply_essence_shift_steal/_tick_essence_
+# shift/_end_essence_shift, just against this sim's flat enemy list
+# and NPC-local state Dictionary instead of instance variables.
+# ------------------------------------------------------------------
+
+func _activate_npc_essence_shift(es: Dictionary, level_data: Dictionary) -> void:
+	if es["active"]:
+		_end_npc_essence_shift(es)
+	es["active"] = true
+	es["attacks_remaining"] = int(level_data.get("attacks", 0))
+	es["turns_remaining"] = int(level_data.get("duration", 0))
+	es["duration_pending_start"] = true
+
+
+func _apply_npc_essence_shift_steal(target: Dictionary, es: Dictionary, hero_static: Dictionary) -> void:
+	if not es["active"] or es["attacks_remaining"] <= 0:
+		return
+
+	var stat_name: String = str(target["static"].get("main_stat", "")).to_lower()
+	if stat_name == "":
+		return
+
+	var current_value: float = float(target.get("current_main_stat_value", 0.0))
+	if current_value <= GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT:
+		return
+
+	target["current_main_stat_value"] = current_value - 1.0
+	es["attacks_remaining"] -= 1
+	es["stolen"].append({"enemy": target, "amount": 1.0})
+
+	var contribution: Dictionary = _essence_shift_contribution_for(stat_name, hero_static)
+	for stat_key in contribution.keys():
+		es["bonus"][stat_key] = es["bonus"].get(stat_key, 0.0) + contribution[stat_key]
+
+
+## Same conversion table as battle.gd's own
+## _essence_shift_contribution_for(): strength -> hp, agility -> armor,
+## intelligence -> mana, at GameManager's per-point rates, plus damage
+## on top if the stolen stat happens to be this hero's own main stat.
+func _essence_shift_contribution_for(stat_name: String, hero_static: Dictionary) -> Dictionary:
+	var contribution: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+
+	match stat_name:
+		"strength":
+			contribution["hp"] = GameManager.HP_PER_STRENGTH
+		"agility":
+			contribution["armor"] = GameManager.ARMOR_PER_AGILITY
+		"intelligence":
+			contribution["mana"] = GameManager.MANA_PER_INTELLIGENCE
+
+	if stat_name == str(hero_static.get("main_stat", "")).to_lower():
+		contribution["damage"] = GameManager.DAMAGE_PER_MAIN_STAT
+
+	return contribution
+
+
+func _tick_npc_essence_shift(es: Dictionary) -> void:
+	if not es["active"]:
+		return
+	if es["duration_pending_start"]:
+		es["duration_pending_start"] = false
+		return
+	es["turns_remaining"] -= 1
+	if es["turns_remaining"] <= 0:
+		_end_npc_essence_shift(es)
+
+
+## Hands back every currently-borrowed point to whichever donor enemies
+## are still alive (dead ones just forfeit theirs, same as
+## battle.gd's own _is_enemy_still_active() check accomplishes there).
+func _end_npc_essence_shift(es: Dictionary) -> void:
+	for entry in es["stolen"]:
+		var donor: Dictionary = entry["enemy"]
+		if donor.get("current_hp", 0) > 0:
+			donor["current_main_stat_value"] = float(donor.get("current_main_stat_value", 0.0)) + float(entry["amount"])
+
+	es["stolen"].clear()
+	es["bonus"] = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	es["active"] = false
+	es["attacks_remaining"] = 0
+	es["turns_remaining"] = 0
+	es["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Slark's Shadow Dance - mirrors battle.gd's _activate_shadow_dance/
+# _tick_shadow_dance/_end_shadow_dance. There's no visibility/targeting
+# system in this sim, so "hidden" just means enemies skip their
+# retaliation entirely for the turn (see _run_stage_fight()).
+# ------------------------------------------------------------------
+
+func _activate_npc_shadow_dance(sd: Dictionary, level_data: Dictionary) -> void:
+	sd["active"] = true
+	sd["bonus_damage"] = float(level_data.get("bonus_damage", 0))
+	sd["turns_remaining"] = int(level_data.get("duration", 0))
+	sd["duration_pending_start"] = true
+
+
+func _tick_npc_shadow_dance(sd: Dictionary) -> void:
+	if not sd["active"]:
+		return
+	if sd["duration_pending_start"]:
+		sd["duration_pending_start"] = false
+		return
+	sd["turns_remaining"] -= 1
+	if sd["turns_remaining"] <= 0:
+		_end_npc_shadow_dance(sd)
+
+
+func _end_npc_shadow_dance(sd: Dictionary) -> void:
+	sd["active"] = false
+	sd["bonus_damage"] = 0.0
+	sd["turns_remaining"] = 0
+	sd["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Entangle - mirrors battle.gd's _apply_root/
+# _tick_entangle_effects. Root/silence have no real effect in this
+# columnless, creeps-never-cast-skills sim (tracked anyway for parity
+# with the real fight) - only the damage-over-time actually matters.
+# ------------------------------------------------------------------
+
+func _apply_npc_root(target: Dictionary, level_data: Dictionary) -> void:
+	target["root_turns_left"] = int(level_data.get("root_turns", 0))
+	target["silence_turns_left"] = int(level_data.get("silence_turns", 0))
+	target["entangle_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["entangle_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+
+
+func _tick_npc_entangle_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("root_turns_left", 0) > 0:
+			enemy["root_turns_left"] -= 1
+		if enemy.get("silence_turns_left", 0) > 0:
+			enemy["silence_turns_left"] -= 1
+
+		if enemy.get("entangle_dot_turns_left", 0) > 0:
+			enemy["entangle_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("entangle_dot_damage", 0))
+			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, dot_damage)
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Spirit Link - mirrors battle.gd's _activate_spirit_link/
+# _tick_spirit_link/_end_spirit_link/_apply_spirit_link_lifesteal.
+# ------------------------------------------------------------------
+
+func _activate_npc_spirit_link(sl: Dictionary, level_data: Dictionary) -> void:
+	sl["active"] = true
+	sl["lifesteal_pct"] = float(level_data.get("lifesteal_pct", 0.0))
+	sl["bonus_armor"] = float(level_data.get("bonus_armor", 0))
+	sl["turns_remaining"] = int(level_data.get("duration", 0))
+	sl["duration_pending_start"] = true
+
+
+func _tick_npc_spirit_link(sl: Dictionary) -> void:
+	if not sl["active"]:
+		return
+	if sl["duration_pending_start"]:
+		sl["duration_pending_start"] = false
+		return
+	sl["turns_remaining"] -= 1
+	if sl["turns_remaining"] <= 0:
+		_end_npc_spirit_link(sl)
+
+
+func _end_npc_spirit_link(sl: Dictionary) -> void:
+	sl["active"] = false
+	sl["lifesteal_pct"] = 0.0
+	sl["bonus_armor"] = 0.0
+	sl["turns_remaining"] = 0
+	sl["duration_pending_start"] = false
+
+
+## Only ever called for the plain basic-attack branch of the hero's
+## turn - like the real fight, skill damage (Dark Pact, Pounce,
+## Entangle's DoT, the bear's own hits) never triggers lifesteal.
+## Returns the HP to heal (already scaled by the damage actually
+## dealt), 0.0 while inactive.
+func _npc_spirit_link_lifesteal(sl: Dictionary, mitigated_attack_damage: float) -> float:
+	if not sl["active"] or mitigated_attack_damage <= 0.0:
+		return 0.0
+	return mitigated_attack_damage * sl["lifesteal_pct"]
+
+
+# ------------------------------------------------------------------
+# Lone Druid's ultimate, True Form - mirrors battle.gd's
+# _activate_true_form/_tick_true_form/_end_true_form. There's no
+# portrait or forced-melee-range concept in this sim (no columns to
+# force anything onto), so only the bonus hp/damage carry over.
+# ------------------------------------------------------------------
+
+func _activate_npc_true_form(tf: Dictionary, level_data: Dictionary) -> void:
+	if tf["active"]:
+		_end_npc_true_form(tf)
+	tf["active"] = true
+	tf["bonus_hp"] = float(level_data.get("bonus_hp", 0))
+	tf["bonus_damage"] = float(level_data.get("bonus_damage", 0))
+	tf["turns_remaining"] = int(level_data.get("duration", 0))
+	tf["duration_pending_start"] = true
+
+
+func _tick_npc_true_form(tf: Dictionary) -> void:
+	if not tf["active"]:
+		return
+	if tf["duration_pending_start"]:
+		tf["duration_pending_start"] = false
+		return
+	tf["turns_remaining"] -= 1
+	if tf["turns_remaining"] <= 0:
+		_end_npc_true_form(tf)
+
+
+func _end_npc_true_form(tf: Dictionary) -> void:
+	tf["active"] = false
+	tf["bonus_hp"] = 0.0
+	tf["bonus_damage"] = 0.0
+	tf["turns_remaining"] = 0
+	tf["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Lone Druid's Savage Roar (passive) - mirrors battle.gd's
+# _get_savage_roar_level_data/_update_savage_roar_state, hysteresis
+# and all: switches on once HP drops below 50%, stays on through the
+# climb back up until HP reaches 80%, same as the player's own copy.
+# ------------------------------------------------------------------
+
+func _get_npc_savage_roar_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "savage_roar")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "savage_roar")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _update_npc_savage_roar_state(hero_id: String, hero_static: Dictionary, sr: Dictionary, current_hp: float, effective_max_hp: float) -> void:
+	var level_data: Dictionary = _get_npc_savage_roar_level_data(hero_id, hero_static)
+
+	if level_data.is_empty():
+		sr["active"] = false
+	else:
+		var hp_pct: float = current_hp / effective_max_hp if effective_max_hp > 0.0 else 0.0
+		if sr["active"]:
+			if hp_pct >= 0.8:
+				sr["active"] = false
+		elif hp_pct < 0.5:
+			sr["active"] = true
+
+	sr["damage_reduction_pct"] = float(level_data.get("damage_reduction_pct", 0.0)) if sr["active"] else 0.0
+
+
+# ------------------------------------------------------------------
+# Shared combat-math helpers that fold every active buff's bonus in.
+# ------------------------------------------------------------------
+
+## Base max HP plus Essence Shift's borrowed hp plus True Form's bonus
+## hp while each is active - mirrors battle.gd's _hero_max_hp().
+func _npc_effective_max_hp(max_hp: float, state: Dictionary) -> float:
+	return max_hp + state["essence_shift"]["bonus"].get("hp", 0.0) + state["true_form"]["bonus_hp"]
+
+
+## Base armor plus Essence Shift's borrowed armor plus Spirit Link's
+## flat bonus while each is active - mirrors battle.gd's _hero_armor().
+func _npc_effective_armor(base_armor: float, state: Dictionary) -> float:
+	return base_armor + state["essence_shift"]["bonus"].get("armor", 0.0) + state["spirit_link"]["bonus_armor"]
+
+
+## Rolls damage from `damage_range`, adding Essence Shift's ongoing
+## borrowed damage, True Form's bonus damage while active, and (for the
+## single hit that triggers it) Shadow Dance's one-shot `extra_bonus` -
+## mirrors battle.gd's _roll_hero_damage().
+func _npc_roll_damage(damage_range: String, state: Dictionary, extra_bonus: float = 0.0) -> float:
+	var parts: PackedStringArray = damage_range.split("-")
+	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
+	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
+
+	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + extra_bonus
+	min_dmg += bonus_damage
+	max_dmg += bonus_damage
+
+	return randi_range(int(min_dmg), int(max_dmg))
+
+
+func _npc_roll_bear_damage(bear: Dictionary) -> float:
+	return randi_range(int(bear.get("damage_min", 0)), int(bear.get("damage_max", 0)))
+
+
+## Scans every enemy for anything that died since the last check
+## (tracked by index in `counted_dead`, since dead enemies stay in the
+## array here rather than being removed like battle.gd's _enemies)
+## and returns the XP/gold it's worth, exactly once per enemy. Called
+## after every damage-dealing step in a turn (the hero's action, the
+## bear's action, Entangle's DoT tick) so a kill from any of them is
+## credited immediately.
+func _collect_npc_kills(enemies: Array, counted_dead: Dictionary) -> Dictionary:
+	var xp: float = 0.0
+	var gold: int = 0
+	for i in range(enemies.size()):
+		if enemies[i]["current_hp"] <= 0 and not counted_dead.get(i, false):
+			counted_dead[i] = true
+			xp += float(enemies[i]["static"].get("XP", 0))
+			gold += _roll_gold(str(enemies[i]["static"].get("gold", "0-0")))
+	return {"xp": xp, "gold": gold}
 
 
 func _find_skill(hero_static: Dictionary, skill_id: String) -> Dictionary:
@@ -671,9 +1137,13 @@ func _lowest_hp_enemy(living_enemies: Array) -> Dictionary:
 	return lowest
 
 
-func _apply_damage_to_enemy(enemy: Dictionary, amount: float) -> void:
+## Returns the mitigated damage actually dealt, so callers that need it
+## (Spirit Link's lifesteal, via the hero's basic-attack branch) don't
+## have to re-derive it - mirrors battle.gd's _deal_fixed_damage_to_enemy().
+func _apply_damage_to_enemy(enemy: Dictionary, amount: float) -> float:
 	var mitigated: float = _apply_armor_reduction(amount, float(enemy["static"].get("armor", 0)))
 	enemy["current_hp"] -= mitigated
+	return mitigated
 
 
 func _roll_damage(damage_range: String) -> float:
