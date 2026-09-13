@@ -677,33 +677,48 @@ var zones: Dictionary = {
 						"id": "torrent",
 						"name": "Torrent",
 						"type": "standard",
-						"description": "Summons rising water that deals damage, slows movement, and stuns enemies after a delay.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Summons a column of rising water at range, damaging and stunning the target. At its max level, the torrent also splashes nearby enemies for damage.",
+						"levels": [
+							{"damage": 60, "stun_turns": 1, "range": 3, "radius": 0, "mana_cost": 50, "cooldown": 5},
+							{"damage": 90, "stun_turns": 1, "range": 3, "radius": 0, "mana_cost": 55, "cooldown": 5},
+							{"damage": 120, "stun_turns": 2, "range": 3, "radius": 0, "mana_cost": 65, "cooldown": 4},
+							{"damage": 150, "stun_turns": 2, "range": 3, "radius": 1, "mana_cost": 75, "cooldown": 4}
+						]
 					},
 					{
 						"id": "tidebringer",
 						"name": "Tidebringer",
-						"type": "standard",
-						"description": "Passive: sword strike that grants bonus damage and a massive cleave attack.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: every few Attacks, Kunkka's sword strike hits harder and cleaves nearby enemies for a percentage of that attack's total damage.",
+						"levels": [
+							{"hits_to_activate": 3, "bonus_damage": 15, "cleave_columns": 1, "cleave_damage_pct": 0.5},
+							{"hits_to_activate": 3, "bonus_damage": 25, "cleave_columns": 1, "cleave_damage_pct": 0.6},
+							{"hits_to_activate": 2, "bonus_damage": 35, "cleave_columns": 1, "cleave_damage_pct": 0.7},
+							{"hits_to_activate": 2, "bonus_damage": 45, "cleave_columns": 2, "cleave_damage_pct": 0.75}
+						]
 					},
 					{
 						"id": "x_marks_the_spot",
 						"name": "X Marks the Spot",
 						"type": "standard",
-						"description": "Marks a target hero, returning them to the marked location after a delay.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Marks an enemy at range. On Kunkka's next turn he teleports onto wherever that enemy is by then, for free - it doesn't cost him his turn, and the teleport itself deals no damage.",
+						"levels": [
+							{"range": 2, "mana_cost": 40, "cooldown": 5},
+							{"range": 3, "mana_cost": 45, "cooldown": 5},
+							{"range": 4, "mana_cost": 50, "cooldown": 4},
+							{"range": 5, "mana_cost": 55, "cooldown": 4}
+						]
 					},
 					{
 						"id": "ghostship",
 						"name": "Ghostship",
 						"type": "ultimate",
-						"description": "Ultimate: Summons a phantom ship that crashes, dealing damage and stunning.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: marks a target at range, then sails a phantom ship from Kunkka straight to it, damaging every enemy caught in its path.",
+						"levels": [
+							{"damage": 200, "range": 4, "mana_cost": 100, "cooldown": 10},
+							{"damage": 300, "range": 5, "mana_cost": 110, "cooldown": 9},
+							{"damage": 400, "range": 6, "mana_cost": 120, "cooldown": 8}
+						]
 					},
 				],
 				"level_up": {
@@ -794,17 +809,25 @@ var zones: Dictionary = {
 						"id": "cold_feet",
 						"name": "Cold Feet",
 						"type": "standard",
-						"description": "Freezes an enemy in place",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Casts a freezing curse on an enemy at range, dealing damage over time for the duration.",
+						"levels": [
+							{"damage": 15, "duration": 3, "range": 2, "mana_cost": 40, "cooldown": 4},
+							{"damage": 25, "duration": 3, "range": 3, "mana_cost": 45, "cooldown": 4},
+							{"damage": 35, "duration": 4, "range": 3, "mana_cost": 50, "cooldown": 3},
+							{"damage": 45, "duration": 4, "range": 4, "mana_cost": 55, "cooldown": 3}
+						]
 					},
 					{
 						"id": "ice_vortex",
 						"name": "Ice Vortex",
 						"type": "standard",
-						"description": "Damage all enemies around for a period of time",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Casts a freezing vortex at a fixed range, dealing damage over time to every enemy caught within its radius.",
+						"levels": [
+							{"damage": 10, "radius": 1, "duration": 3, "mana_cost": 40, "cooldown": 5},
+							{"damage": 20, "radius": 1, "duration": 3, "mana_cost": 45, "cooldown": 5},
+							{"damage": 30, "radius": 1, "duration": 4, "mana_cost": 50, "cooldown": 4},
+							{"damage": 40, "radius": 2, "duration": 4, "mana_cost": 55, "cooldown": 4}
+						]
 					},
 					{
 						"id": "chilling_touch",

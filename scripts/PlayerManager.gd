@@ -894,10 +894,12 @@ func set_npc_invasion_target(hero_id: String, target_hero_id: String) -> void:
 ## Sets up a rival hero's simulated progress the first time they're
 ## ever ticked (see EnemyHeroManager) - level 1, one random starting
 ## STANDARD skill at level 1 (an ultimate would be far above what a
-## level-1 hero could actually unlock), 1 Health + 1 Mana potion, and
-## grinding starts in their own home zone at stage 1. Mirrors what a
-## player gets from recruit_hero(), just auto-chosen instead of
-## picked. Does nothing if this hero already has simulated state.
+## level-1 hero could actually unlock), 2 Health + 3 Mana potions, and
+## grinding starts in their own home zone at stage 1. Deliberately
+## richer than what a player gets from recruit_hero() (1 Health + 1
+## Mana) - rival heroes need the extra cushion to survive their own
+## simulated grinding without a player around to help them. Does
+## nothing if this hero already has simulated state.
 func initialize_npc_hero(hero_static: Dictionary, home_zone_id: String) -> void:
 	var hero_id: String = hero_static.get("id", "")
 	if current_player == "" or hero_id == "" or npc_is_initialized(hero_id):
@@ -924,8 +926,8 @@ func initialize_npc_hero(hero_static: Dictionary, home_zone_id: String) -> void:
 	set_npc_current_hp(hero_id, float(starting_stats.get("hp", 0)))
 	set_npc_current_mana(hero_id, float(starting_stats.get("mana", 0)))
 
-	set_npc_potion_count(hero_id, "health", 1)
-	set_npc_potion_count(hero_id, "mana", 1)
+	set_npc_potion_count(hero_id, "health", 2)
+	set_npc_potion_count(hero_id, "mana", 3)
 	set_npc_current_zone(hero_id, home_zone_id)
 	set_npc_current_stage(hero_id, 1)
 

@@ -16,16 +16,33 @@ class_name EnemySkillRange
 #   - Dark Pact: an AoE centered on the caster - in range whenever the
 #     player is within the skill's own `radius` field (0 at low
 #     levels, meaning the same column; 1 only at max level).
-#   - Entangle: has no radius field of its own, so it uses the rival's
-#     own basic-attack range for its type instead, mirroring how the
-#     player's own Entangle uses the player's attack-column range.
-# Every other known skill (Pounce, Essence Shift, Shadow Dance, Spirit
-# Link, True Form, Summon Spirit Bear) is either a gap-closer that
-# already handles its own positioning or a self-buff/summon with no
-# target to range-check, so this always reports those as in range.
+#   - Torrent/X Marks the Spot/Ghostship: targeted casts with their own
+#     `range` field (a constant 3 for Torrent, 2-5 growing with level
+#     for X Marks the Spot, 4-6 for Ghostship) - in range whenever the
+#     player is within it, the same "distance <= radius" comparison as
+#     Dark Pact, just against a targeting range instead of a self-
+#     centered AoE radius (see battle.gd's _enemy_skill_in_range(),
+#     which reads whichever of the two fields a given skill actually
+#     has).
+#   - Entangle/Mist Coil: neither has a radius field of its own, so
+#     both use the rival's own basic-attack range for its type instead,
+#     mirroring how the player's own Entangle uses the player's
+#     attack-column range.
+#   - Pounce: a gap-closer, but only up to its own `distance` field of
+#     columns - it stops the moment it lands on the player's column
+#     (see battle.gd's _cast_enemy_pounce()), so a player standing
+#     farther away than that just watches the rival leap partway and
+#     whiff instead of taking the hit. In range whenever the player is
+#     within `distance`, the same "distance <= radius" comparison as
+#     Dark Pact/Torrent/X Marks the Spot/Ghostship, just against the
+#     leap's own reach instead of a targeting range or AoE radius.
+# Every other known skill (Essence Shift, Shadow Dance, Spirit Link,
+# True Form, Summon Spirit Bear, Aphotic Shield) is a self-buff/summon
+# with no target to range-check, so this always reports those as in
+# range.
 # ============================================================
 
-const RANGE_CHECKED_SKILL_IDS: Array[String] = ["dark_pact", "entangle"]
+const RANGE_CHECKED_SKILL_IDS: Array[String] = ["dark_pact", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "pounce"]
 
 
 ## True if `skill_id` needs a range check at all before being cast -
@@ -36,16 +53,19 @@ static func requires_range_check(skill_id: String) -> bool:
 
 ## True if a rival hero standing `distance` columns from the player can
 ## reach them with `skill_id` right now. `radius` is Dark Pact's own
-## level-data field; `attack_range` is the rival's basic-attack range
-## for its type (0 for "mele", battle.gd's RANGE_ENEMY_ATTACK_RANGE for
-## "range") - Entangle piggybacks on that since it has no radius field
-## of its own. Any skill not in RANGE_CHECKED_SKILL_IDS always reports
-## true here, matching requires_range_check().
+## `radius` field, Torrent's/X Marks the Spot's/Ghostship's own `range`
+## field, or Pounce's own `distance` field, depending on the skill (all
+## compared the same way as "distance <= radius"); `attack_range` is the
+## rival's basic-attack range for its type (0 for "mele", battle.gd's
+## RANGE_ENEMY_ATTACK_RANGE for "range") - Entangle/Mist Coil piggyback
+## on that since neither has a range field of its own. Any skill not in
+## RANGE_CHECKED_SKILL_IDS always reports true here, matching
+## requires_range_check().
 static func is_in_range(skill_id: String, distance: int, radius: int, attack_range: int) -> bool:
 	match skill_id:
-		"dark_pact":
+		"dark_pact", "torrent", "x_marks_the_spot", "ghostship", "pounce":
 			return distance <= radius
-		"entangle":
+		"entangle", "mist_coil":
 			return distance <= attack_range
 		_:
 			return true

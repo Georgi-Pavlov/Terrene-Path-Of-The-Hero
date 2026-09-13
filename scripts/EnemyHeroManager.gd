@@ -252,21 +252,48 @@ const FLEE_HP_THRESHOLD: float = 0.15
 const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
-# Every ACTIVE skill across Slark and Lone Druid, the only two heroes
-# with any simulated skill logic today - anything else a hero knows
-# just never gets cast here. Checked in this order when more than one
-# is ready, worth casting (see _npc_skill_worth_casting), and
-# affordable in the same turn: direct damage/control first, buffs
-# after (so an NPC always prefers hitting something over refreshing a
-# buff it doesn't strictly need yet).
-# Savage Roar (Lone Druid's passive) isn't in this list - it's never
-# "cast", it just turns itself on/off automatically off the hero's own
-# HP%, same as the player's own copy - see
-# _update_npc_savage_roar_state().
+# Every ACTIVE skill across Slark, Lone Druid, Abaddon, and Kunkka, the
+# only four heroes with any simulated skill logic today - anything else
+# a hero knows just never gets cast here. This is the full candidate pool
+# _pick_ready_skill() checks for cooldown/worth-casting/mana before
+# handing survivors to EnemySkillAI to score and pick from - no longer
+# a priority order (see EnemySkillAI.HERO_TIE_BREAK for each hero's own
+# tie-break fallback order, only consulted when two skills' scores are
+# too close to call outright).
+# Savage Roar (Lone Druid's passive), Curse of Avernus and Borrowed
+# Time (both Abaddon's), and Tidebringer (Kunkka's) aren't in this list
+# - none of them are ever "cast" or scored: Savage Roar and Borrowed
+# Time turn themselves on/off automatically off the hero's own HP%,
+# same as the player's own copies - see _update_npc_savage_roar_state()/
+# _maybe_auto_activate_npc_borrowed_time() - and Curse of Avernus/
+# Tidebringer only ever build off the hero's own plain Attacks - see
+# _apply_npc_curse_of_avernus_stack()/_maybe_consume_npc_tidebringer_
+# stack().
+# X Marks the Spot (Kunkka's own other skill) isn't here for a
+# different reason: it's purely a positioning tool (mark now, teleport
+# onto the target next turn, no damage) with nothing else to it, and
+# this sim has no positions at all - every attack already reaches
+# "the lowest HP enemy" with no travel cost to begin with, so a
+# guaranteed teleport would have literally nothing to accomplish here.
+# It's simulated in the real fight (battle.gd's own _enemy_hero_turn())
+# since that one has real columns for it to matter on.
+# Ghostship (Kunkka's ultimate) IS in this list, unlike X Marks the
+# Spot - its whole "everyone the ship's path crosses" concept has no
+# columns to work out a path along here, so it falls back to the same
+# "no columns, hit everyone" simplification Dark Pact's own sim copy
+# already uses (see this file's "dark_pact" case in _cast_skill()
+# below).
 const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"dark_pact", "pounce", "essence_shift", "shadow_dance",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
+	"mist_coil", "aphotic_shield", "torrent", "ghostship",
 ]
+
+# How many full turns a target can go without being hit by the hero's
+# Attack before its un-activated Curse of Avernus stacks are lost (see
+# _tick_npc_curse_of_avernus_effects()) - mirrors battle.gd's own
+# CURSE_OF_AVERNUS_STACK_DECAY_TURNS.
+const CURSE_OF_AVERNUS_STACK_DECAY_TURNS := 3
 
 
 ## Runs one simulated attempt for `hero_id` against whichever zone/
@@ -661,7 +688,10 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_shadow_dance(state["shadow_dance"])
 		_tick_npc_spirit_link(state["spirit_link"])
 		_tick_npc_true_form(state["true_form"])
+		_tick_npc_aphotic_shield(state["aphotic_shield"])
+		_tick_npc_borrowed_time(state["borrowed_time"])
 		_tick_npc_entangle_effects(enemies)
+		_tick_npc_curse_of_avernus_effects(enemies, turn_index)
 		var kills: Dictionary = _collect_npc_kills(enemies, counted_dead)
 		xp_gained += kills["xp"]
 		gold_gained += kills["gold"]
@@ -685,7 +715,8 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 			PlayerManager.set_npc_potion_count(hero_id, "health", PlayerManager.get_npc_potion_count(hero_id, "health") - 1)
 			current_hp = minf(effective_max_hp, current_hp + float(GameManager.get_item("health").get("value", 0)))
 		else:
-			var ready_skill_id: String = _pick_ready_skill(hero_id, hero_static, cooldowns, current_mana, state)
+			var ai_context: Dictionary = _build_npc_ai_context(hero_id, hero_static, current_hp, effective_max_hp, current_mana, max_mana, damage_range, state, living)
+			var ready_skill_id: String = _pick_ready_skill(hero_id, hero_static, cooldowns, current_mana, state, ai_context)
 			if ready_skill_id != "":
 				_cast_skill(hero_id, hero_static, ready_skill_id, cooldowns, damage_range, living, state)
 				current_mana -= _npc_skill_mana_cost(hero_id, hero_static, ready_skill_id)
@@ -696,9 +727,14 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 			else:
 				var target: Dictionary = _lowest_hp_enemy(living)
 				var shadow_bonus: float = state["shadow_dance"]["bonus_damage"] if state["shadow_dance"]["active"] else 0.0
-				var dmg: float = _npc_roll_damage(damage_range, state, shadow_bonus)
+				var tidebringer_level_data: Dictionary = _maybe_consume_npc_tidebringer_stack(hero_id, hero_static, state)
+				var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
+				var dmg: float = _npc_roll_damage(damage_range, state, shadow_bonus + tidebringer_bonus)
 				var mitigated: float = _apply_damage_to_enemy(target, dmg)
 				_apply_npc_essence_shift_steal(target, state["essence_shift"], hero_static)
+				_apply_npc_curse_of_avernus_stack(hero_id, hero_static, target, turn_index)
+				if not tidebringer_level_data.is_empty():
+					_apply_npc_tidebringer_cleave(target, dmg, tidebringer_level_data, living)
 				current_hp = minf(effective_max_hp, current_hp + _npc_spirit_link_lifesteal(state["spirit_link"], mitigated))
 				acted_with = "attack"
 
@@ -752,7 +788,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				var enemy_damage: float = float(enemy["static"].get("damage", 0))
 				var reduced: float = _apply_armor_reduction(enemy_damage, effective_armor)
 				reduced *= (1.0 - float(state["savage_roar"].get("damage_reduction_pct", 0.0)))
-				current_hp -= reduced
+				current_hp = _apply_reduced_damage_to_npc(hero_id, hero_static, state, cooldowns, current_hp, effective_max_hp, reduced, living)
 				if current_hp <= 0:
 					break
 
@@ -771,10 +807,11 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 
 ## Fresh per-attempt state for every buff/debuff-carrying skill -
 ## mirrors the shape (and defaults) of battle.gd's own
-## _essence_shift_*/_shadow_dance_*/_spirit_link_*/_true_form_*/_bear
-## instance variables, just bundled into one Dictionary here since this
-## state only needs to live for the duration of one _run_stage_fight()
-## call rather than the whole scene's lifetime.
+## _essence_shift_*/_shadow_dance_*/_spirit_link_*/_true_form_*/
+## _aphotic_shield_*/_borrowed_time_*/_bear instance variables, just
+## bundled into one Dictionary here since this state only needs to live
+## for the duration of one _run_stage_fight() call rather than the
+## whole scene's lifetime.
 func _new_npc_combat_state() -> Dictionary:
 	return {
 		"essence_shift": {
@@ -785,8 +822,11 @@ func _new_npc_combat_state() -> Dictionary:
 		"shadow_dance": {"active": false, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"spirit_link": {"active": false, "lifesteal_pct": 0.0, "bonus_armor": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"true_form": {"active": false, "bonus_hp": 0.0, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"aphotic_shield": {"active": false, "hp": 0.0, "aoe_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"borrowed_time": {"active": false, "heal_conversion_pct": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"bear": {},
 		"savage_roar": {"active": false, "damage_reduction_pct": 0.0},
+		"tidebringer_attack_count": 0,
 	}
 
 
@@ -825,6 +865,42 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			_activate_npc_spirit_link(state["spirit_link"], level_data)
 		"true_form":
 			_activate_npc_true_form(state["true_form"], level_data)
+		"mist_coil":
+			_apply_damage_to_enemy(_lowest_hp_enemy(living), float(level_data.get("damage", 0)))
+		"aphotic_shield":
+			_activate_npc_aphotic_shield(state["aphotic_shield"], level_data)
+		"torrent":
+			var target: Dictionary = _lowest_hp_enemy(living)
+			var damage: float = float(level_data.get("damage", 0))
+			_apply_damage_to_enemy(target, damage)
+			if target["current_hp"] > 0:
+				target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+			# Level 4's small splash radius has no columns to be
+			# "around the target" in this positionless sim, so it
+			# falls back to the same "no columns, hit everyone else"
+			# simplification Dark Pact/Aphotic Shield's own explosion
+			# already use here (see this match's "dark_pact" case
+			# above and _end_npc_aphotic_shield()).
+			if int(level_data.get("radius", 0)) > 0:
+				for enemy in living:
+					if is_same(enemy, target):
+						continue
+					_apply_damage_to_enemy(enemy, damage)
+		"ghostship":
+			# The real ship travels a straight line from the hero to
+			# one marked target, damaging everyone caught in between -
+			# no columns here to work that path out along, so (see
+			# KNOWN_ACTIVE_SKILL_IDS's own comment above) it falls back
+			# to hitting every living enemy, same as Dark Pact.
+			var ghostship_damage: float = float(level_data.get("damage", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, ghostship_damage)
+
+
+func _get_npc_skill_level_data(hero_id: String, hero_static: Dictionary, skill_id: String) -> Dictionary:
+	var skill: Dictionary = _find_skill(hero_static, skill_id)
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, skill_id)
+	return GameManager.get_skill_level_data(skill, level)
 
 
 ## The mana cost of `skill_id` at this NPC's current level - unlike a
@@ -832,9 +908,7 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 ## actually have), this reads the correct per-level value the same way
 ## GameManager.get_skill_level_data()/battle.gd's own cast paths do.
 func _npc_skill_mana_cost(hero_id: String, hero_static: Dictionary, skill_id: String) -> float:
-	var skill: Dictionary = _find_skill(hero_static, skill_id)
-	var level: int = PlayerManager.get_npc_skill_level(hero_id, skill_id)
-	return float(GameManager.get_skill_level_data(skill, level).get("mana_cost", 0))
+	return float(_get_npc_skill_level_data(hero_id, hero_static, skill_id).get("mana_cost", 0))
 
 
 ## False for a buff/summon skill that's already active and wouldn't do
@@ -857,14 +931,30 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 			return not state["true_form"]["active"]
 		"summon_spirit_bear":
 			return state["bear"].is_empty()
+		"aphotic_shield":
+			return not state["aphotic_shield"]["active"]
 		_:
 			return true
 
 
-## The first known, off-cooldown, currently-worthwhile, currently-
-## affordable active skill, in KNOWN_ACTIVE_SKILL_IDS priority order -
-## "" if none qualify right now.
-func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_mana: float, state: Dictionary) -> String:
+## Every known, off-cooldown, currently-worthwhile, currently-
+## affordable skill in KNOWN_ACTIVE_SKILL_IDS, PLUS a plain Attack for
+## whichever heroes EnemySkillAI.basic_attack_participates() opts in
+## (today: only Kunkka, whose Tidebringer can make a plain Attack the
+## better play), is scored by EnemySkillAI.evaluate_skill()/
+## evaluate_basic_attack() against `ai_context`, and the highest-scoring
+## one wins (ties resolved by EnemySkillAI - see pick_best_skill()) -
+## "" if none qualify right now, or if the plain-Attack candidate won
+## (either way the caller's own existing basic-attack fallback takes
+## over unchanged). This replaces the old "first match in
+## KNOWN_ACTIVE_SKILL_IDS wins" rule; the array is still every skill
+## this AI ever considers, it's just no longer the order they're
+## preferred in - see battle.gd's own _pick_enemy_ready_skill() for the
+## real-fight mirror of this same scoring, shared through EnemySkillAI
+## rather than duplicated.
+func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_mana: float, state: Dictionary, ai_context: Dictionary) -> String:
+	var candidates: Array = []
+
 	for skill_id in KNOWN_ACTIVE_SKILL_IDS:
 		if PlayerManager.get_npc_skill_level(hero_id, skill_id) <= 0:
 			continue
@@ -872,9 +962,71 @@ func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dict
 			continue
 		if not _npc_skill_worth_casting(skill_id, state):
 			continue
-		if current_mana >= _npc_skill_mana_cost(hero_id, hero_static, skill_id):
-			return skill_id
-	return ""
+		var level_data: Dictionary = _get_npc_skill_level_data(hero_id, hero_static, skill_id)
+		if current_mana < float(level_data.get("mana_cost", 0)):
+			continue
+		candidates.append({"id": skill_id, "score": EnemySkillAI.evaluate_skill(skill_id, level_data, ai_context)})
+
+	var archetype: String = str(ai_context.get("archetype", ""))
+	if EnemySkillAI.basic_attack_participates(archetype):
+		candidates.append({"id": EnemySkillAI.BASIC_ATTACK_ID, "score": EnemySkillAI.evaluate_basic_attack(ai_context)})
+
+	var chosen_id: String = EnemySkillAI.pick_best_skill(archetype, candidates, str(hero_static.get("name", hero_id)))
+	return "" if chosen_id == EnemySkillAI.BASIC_ATTACK_ID else chosen_id
+
+
+## Builds the AI context EnemySkillAI scores every candidate skill
+## against for this NPC's turn - the simulation counterpart of
+## battle.gd's own _build_enemy_ai_context(). Simplified versus the
+## real fight the same way the rest of this sim already is: no
+## positions, so no target_distance (and no "kunkka_torrent_combo_
+## ready"/"kunkka_ghostship_combo_ready" - X Marks the Spot isn't even a
+## candidate here, see KNOWN_ACTIVE_SKILL_IDS's own comment, so nothing
+## ever reads those two), and `target` is always whichever living enemy
+## the hero would attack anyway (_lowest_hp_enemy()), since that's the
+## only target this sim's basic attack (and most of its skills) ever
+## considers. `living_target_hps` is every living enemy's own current
+## HP, for EnemySkillAI's shared multi-kill scoring (see Ghostship's/
+## Torrent's own modifiers, which need to know how many OTHER targets a
+## hit would also kill, not just the primary one `target_hp` covers).
+func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp: float, effective_max_hp: float, current_mana: float, max_mana: float, damage_range: String, state: Dictionary, living: Array) -> Dictionary:
+	var target: Dictionary = {} if living.is_empty() else _lowest_hp_enemy(living)
+
+	var tidebringer_level_data: Dictionary = _get_npc_tidebringer_level_data(hero_id, hero_static)
+	var tidebringer_ready: bool = not tidebringer_level_data.is_empty() \
+		and (int(state.get("tidebringer_attack_count", 0)) + 1) >= int(tidebringer_level_data.get("hits_to_activate", 1))
+
+	return {
+		"game_mode": "simulation",
+		"archetype": EnemySkillAI.resolve_hero_archetype(hero_static),
+		"hero_hp": current_hp,
+		"hero_max_hp": effective_max_hp,
+		"hero_hp_ratio": (current_hp / effective_max_hp) if effective_max_hp > 0.0 else 0.0,
+		"hero_mana": current_mana,
+		"hero_max_mana": max_mana,
+		"hero_damage": _npc_estimate_damage(damage_range, state),
+		"enemy_count": living.size(),
+		"target_hp": float(target.get("current_hp", 0.0)) if not target.is_empty() else 0.0,
+		"target_max_hp": float(target.get("static", {}).get("hp", 0.0)) if not target.is_empty() else 0.0,
+		"bear_active": not state["bear"].is_empty(),
+		"living_target_hps": living.map(func(e): return float(e.get("current_hp", 0.0))),
+		"tidebringer_ready": tidebringer_ready,
+		"tidebringer_bonus_damage": float(tidebringer_level_data.get("bonus_damage", 0.0)),
+		"tidebringer_cleave_targets": maxi(living.size() - 1, 0) if tidebringer_ready else 0,
+	}
+
+
+## A deterministic (no randi_range) midpoint damage estimate for AI
+## scoring only - actual damage still rolls randomly via
+## _npc_roll_damage() when a skill/attack actually lands. Keeps skill
+## scoring reproducible instead of jittering on every single evaluation
+## on top of EnemySkillAI's own controlled randomness.
+func _npc_estimate_damage(damage_range: String, state: Dictionary) -> float:
+	var parts: PackedStringArray = damage_range.split("-")
+	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
+	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
+	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"]
+	return (min_dmg + max_dmg) / 2.0 + bonus_damage
 
 
 ## True if there's a known, off-cooldown, currently-worthwhile active
@@ -1149,6 +1301,263 @@ func _update_npc_savage_roar_state(hero_id: String, hero_static: Dictionary, sr:
 			sr["active"] = true
 
 	sr["damage_reduction_pct"] = float(level_data.get("damage_reduction_pct", 0.0)) if sr["active"] else 0.0
+
+
+# ------------------------------------------------------------------
+# Abaddon's Aphotic Shield - mirrors battle.gd's _activate_aphotic_
+# shield/_tick_aphotic_shield/_end_aphotic_shield. Simplification
+# versus the real fight: there's no "dispel every negative effect on
+# the hero" step here the way the player's own copy has one - a
+# simulated hero has no per-self debuff fields to dispel in the first
+# place (only the ENEMY side of a fight tracks root/silence/curse
+# fields, via _apply_npc_root()/_apply_npc_curse_of_avernus_stack()),
+# so there's nothing for a self-cast shield to clear.
+# ------------------------------------------------------------------
+
+func _activate_npc_aphotic_shield(shield: Dictionary, level_data: Dictionary) -> void:
+	shield["active"] = true
+	shield["hp"] = float(level_data.get("shield_hp", 0))
+	shield["aoe_damage"] = float(level_data.get("aoe_damage", 0))
+	shield["turns_remaining"] = int(level_data.get("duration", 0))
+	shield["duration_pending_start"] = true
+
+
+func _tick_npc_aphotic_shield(shield: Dictionary) -> void:
+	if not shield["active"]:
+		return
+	if shield["duration_pending_start"]:
+		shield["duration_pending_start"] = false
+		return
+	shield["turns_remaining"] -= 1
+	if shield["turns_remaining"] <= 0:
+		_end_npc_aphotic_shield(shield, false, [])
+
+
+## Ends the shield, whether its duration simply ran out (`exploded`
+## false) or enough damage drained it to 0 HP (`exploded` true, from
+## _apply_reduced_damage_to_npc()) - in which case it deals the cast's
+## own aoe_damage to every living enemy, mirroring Dark Pact's own
+## "no columns, hit everyone" simplification in this sim (see
+## _cast_skill()'s "dark_pact" case).
+func _end_npc_aphotic_shield(shield: Dictionary, exploded: bool, living: Array) -> void:
+	var aoe_damage: float = shield["aoe_damage"]
+
+	shield["active"] = false
+	shield["hp"] = 0.0
+	shield["aoe_damage"] = 0.0
+	shield["turns_remaining"] = 0
+	shield["duration_pending_start"] = false
+
+	if exploded and aoe_damage > 0.0:
+		for enemy in living:
+			_apply_damage_to_enemy(enemy, aoe_damage)
+
+
+# ------------------------------------------------------------------
+# Abaddon's Curse of Avernus - a passive, so unlike every skill above
+# there's no cooldown/mana cost check for it; it just triggers off the
+# hero's own plain Attacks (see _run_stage_fight()'s basic-attack
+# branch). Per-target progress lives directly on each enemy's own
+# Dictionary, the same way Entangle's root/silence/DoT fields do
+# (_apply_npc_root()) - mirrors battle.gd's own
+# _apply_curse_of_avernus_stack()/_tick_curse_of_avernus_effects().
+# ------------------------------------------------------------------
+
+func _get_npc_curse_of_avernus_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "curse_of_avernus")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "curse_of_avernus")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _apply_npc_curse_of_avernus_stack(hero_id: String, hero_static: Dictionary, target: Dictionary, turn_index: int) -> void:
+	var level_data: Dictionary = _get_npc_curse_of_avernus_level_data(hero_id, hero_static)
+	if level_data.is_empty() or target.get("current_hp", 0) <= 0 or target.get("curse_active", false):
+		return
+
+	target["curse_last_hit_turn"] = turn_index
+
+	var stacks: int = target.get("curse_stacks", 0) + 1
+	var hits_to_activate: int = int(level_data.get("hits_to_activate", 1))
+	if stacks < hits_to_activate:
+		target["curse_stacks"] = stacks
+		return
+
+	target["curse_stacks"] = 0
+	target["curse_active"] = true
+	target["silence_turns_left"] = int(level_data.get("silence_turns", 0))
+	target["curse_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["curse_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+
+
+func _tick_npc_curse_of_avernus_effects(enemies: Array, turn_index: int) -> void:
+	for enemy in enemies:
+		if enemy.get("curse_active", false):
+			if enemy.get("curse_dot_turns_left", 0) > 0:
+				enemy["curse_dot_turns_left"] -= 1
+				var dot_damage: float = float(enemy.get("curse_dot_damage", 0))
+				if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+					_apply_damage_to_enemy(enemy, dot_damage)
+
+			if enemy.get("curse_dot_turns_left", 0) <= 0:
+				enemy["curse_active"] = false
+				enemy["curse_dot_damage"] = 0.0
+		elif enemy.get("curse_stacks", 0) > 0:
+			var last_hit_turn: int = int(enemy.get("curse_last_hit_turn", turn_index))
+			if turn_index - last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
+				enemy["curse_stacks"] = 0
+
+
+# ------------------------------------------------------------------
+# Kunkka's Tidebringer - a passive, so like Curse of Avernus above (and
+# unlike every skill in KNOWN_ACTIVE_SKILL_IDS) it's never "cast"; it
+# just builds off the hero's own plain Attacks - see this file's own
+# basic-attack branch in _run_stage_fight(). Mirrors battle.gd's
+# _maybe_consume_tidebringer_stack()/_apply_tidebringer_cleave().
+# ------------------------------------------------------------------
+
+func _get_npc_tidebringer_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "tidebringer")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "tidebringer")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+## Called from _run_stage_fight()'s basic-attack branch, right before
+## rolling that Attack's damage: counts one more plain Attack toward
+## this level's own hits_to_activate - never reset by a turn going by
+## without attacking, only by another empowered hit consuming it - and,
+## once that threshold is reached, consumes the count and returns this
+## level's data for the caller to fold bonus_damage into the roll and
+## then cleave with (_apply_npc_tidebringer_cleave()). Returns {} (an
+## ordinary Attack, no bonus) if the hero hasn't learned Tidebringer or
+## hasn't reached the threshold yet.
+func _maybe_consume_npc_tidebringer_stack(hero_id: String, hero_static: Dictionary, state: Dictionary) -> Dictionary:
+	var level_data: Dictionary = _get_npc_tidebringer_level_data(hero_id, hero_static)
+	if level_data.is_empty():
+		return {}
+
+	state["tidebringer_attack_count"] += 1
+	if state["tidebringer_attack_count"] < int(level_data.get("hits_to_activate", 1)):
+		return {}
+
+	state["tidebringer_attack_count"] = 0
+	return level_data
+
+
+## Tidebringer's cleave, positionless-sim style: no columns here to
+## measure cleave_columns against `target`'s own, so - same as Dark
+## Pact's and Aphotic Shield's own AoE in this sim - it falls back to
+## hitting every OTHER living enemy, each for cleave_damage_pct of
+## `attack_damage` (the same raw, pre-mitigation roll `target` was just
+## hit with, bonus damage already folded in by the caller), still
+## mitigated by ITS OWN armor via _apply_damage_to_enemy().
+func _apply_npc_tidebringer_cleave(target: Dictionary, attack_damage: float, level_data: Dictionary, living: Array) -> void:
+	var cleave_damage: float = attack_damage * float(level_data.get("cleave_damage_pct", 0.0))
+	if cleave_damage <= 0.0:
+		return
+
+	for enemy in living:
+		if is_same(enemy, target):
+			continue
+		_apply_damage_to_enemy(enemy, cleave_damage)
+
+
+# ------------------------------------------------------------------
+# Abaddon's Borrowed Time - mirrors battle.gd's
+# _maybe_auto_activate_borrowed_time()/_tick_borrowed_time()/
+# _end_borrowed_time(). Like the player's own copy, nothing "casts"
+# this - the only entry point is _apply_reduced_damage_to_npc() below
+# noticing the hero's HP has crossed this level's threshold.
+# ------------------------------------------------------------------
+
+func _get_npc_borrowed_time_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "borrowed_time")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "borrowed_time")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _maybe_auto_activate_npc_borrowed_time(hero_id: String, hero_static: Dictionary, state: Dictionary, current_hp: float, effective_max_hp: float, cooldowns: Dictionary) -> void:
+	var bt: Dictionary = state["borrowed_time"]
+	if bt["active"] or cooldowns.get("borrowed_time", 0) > 0:
+		return
+
+	var level_data: Dictionary = _get_npc_borrowed_time_level_data(hero_id, hero_static)
+	if level_data.is_empty() or effective_max_hp <= 0.0:
+		return
+
+	var hp_pct: float = current_hp / effective_max_hp
+	if hp_pct > float(level_data.get("auto_activate_hp_pct", 0.3)):
+		return
+
+	bt["active"] = true
+	bt["heal_conversion_pct"] = float(level_data.get("heal_conversion_pct", 1.0))
+	bt["turns_remaining"] = int(level_data.get("duration", 0))
+	bt["duration_pending_start"] = true
+
+	# Rides along in the same generic cooldowns dict every KNOWN_ACTIVE_
+	# SKILL_IDS entry uses (see _run_stage_fight()'s per-turn tick loop
+	# at its top) even though "borrowed_time" itself is never a pick-
+	# able skill - exactly mirroring how battle.gd's own auto-activate
+	# starts a normal entry in _skill_cooldowns/_enemy_skill_cooldowns.
+	cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
+
+
+func _tick_npc_borrowed_time(bt: Dictionary) -> void:
+	if not bt["active"]:
+		return
+	if bt["duration_pending_start"]:
+		bt["duration_pending_start"] = false
+		return
+	bt["turns_remaining"] -= 1
+	if bt["turns_remaining"] <= 0:
+		_end_npc_borrowed_time(bt)
+
+
+func _end_npc_borrowed_time(bt: Dictionary) -> void:
+	bt["active"] = false
+	bt["heal_conversion_pct"] = 0.0
+	bt["turns_remaining"] = 0
+	bt["duration_pending_start"] = false
+
+
+## Applies `reduced` retaliation damage (already mitigated by armor/
+## Savage Roar) to the simulated hero's own current_hp, redirecting it
+## through Borrowed Time (converts to a heal) or Aphotic Shield
+## (absorbs into its own HP pool, exploding onto every living enemy if
+## that breaks it) first - mirrors battle.gd's own apply_damage(), just
+## reading/writing `state` instead of instance variables and returning
+## the hero's updated current_hp instead of mutating it in place.
+func _apply_reduced_damage_to_npc(hero_id: String, hero_static: Dictionary, state: Dictionary, cooldowns: Dictionary, current_hp: float, effective_max_hp: float, reduced: float, living: Array) -> float:
+	var bt: Dictionary = state["borrowed_time"]
+	if bt["active"]:
+		return minf(effective_max_hp, current_hp + reduced * bt["heal_conversion_pct"])
+
+	var shield: Dictionary = state["aphotic_shield"]
+	if shield["active"]:
+		var absorbed: float = minf(reduced, shield["hp"])
+		shield["hp"] -= absorbed
+		var new_hp: float = current_hp - (reduced - absorbed)
+		if shield["hp"] <= 0.0:
+			_end_npc_aphotic_shield(shield, true, living)
+		if new_hp > 0.0:
+			_maybe_auto_activate_npc_borrowed_time(hero_id, hero_static, state, new_hp, effective_max_hp, cooldowns)
+		return new_hp
+
+	var new_hp: float = current_hp - reduced
+	if new_hp > 0.0:
+		_maybe_auto_activate_npc_borrowed_time(hero_id, hero_static, state, new_hp, effective_max_hp, cooldowns)
+	return new_hp
 
 
 # ------------------------------------------------------------------

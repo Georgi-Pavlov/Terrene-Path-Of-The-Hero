@@ -181,7 +181,7 @@ theme_override_constants/outline_size = 3
 text = "HP"
 
 [node name="HPBar" type="ProgressBar" parent="BarsBox/HPRow" unique_id=1994048903]
-custom_minimum_size = Vector2(0, 28)
+custom_minimum_size = Vector2(0, 22)
 layout_mode = 2
 size_flags_horizontal = 3
 show_percentage = false
@@ -213,7 +213,7 @@ theme_override_constants/outline_size = 3
 text = "MP"
 
 [node name="ManaBar" type="ProgressBar" parent="BarsBox/ManaRow" unique_id=629633056]
-custom_minimum_size = Vector2(0, 28)
+custom_minimum_size = Vector2(0, 22)
 layout_mode = 2
 size_flags_horizontal = 3
 show_percentage = false
@@ -245,9 +245,24 @@ theme_override_constants/outline_size = 3
 text = "XP"
 
 [node name="XPBar" type="ProgressBar" parent="BarsBox/XPRow" unique_id=946044384]
+custom_minimum_size = Vector2(0, 22)
 layout_mode = 2
 size_flags_horizontal = 3
 show_percentage = false
+
+[node name="XPValueLabel" type="Label" parent="BarsBox/XPRow/XPBar" unique_id=946044385]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 16
+horizontal_alignment = 1
+vertical_alignment = 1
 
 [node name="SkillsPanel" type="PanelContainer" parent="." unique_id=886769240]
 layout_mode = 1

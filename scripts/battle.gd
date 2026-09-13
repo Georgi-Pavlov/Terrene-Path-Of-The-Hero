@@ -8,6 +8,7 @@ extends Control
 @onready var mana_bar: ProgressBar = $BarsBox/ManaRow/ManaBar
 @onready var mana_value_label: Label = $BarsBox/ManaRow/ManaBar/ManaValueLabel
 @onready var xp_bar: ProgressBar = $BarsBox/XPRow/XPBar
+@onready var xp_value_label: Label = $BarsBox/XPRow/XPBar/XPValueLabel
 @onready var skill_buttons_container: HBoxContainer = $SkillsPanel/SkillsMargin/SkillButtons
 @onready var items_grid: GridContainer = $ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid
 @onready var gold_value_label: Label = $ItemsPanel/ItemsMargin/ItemsVBox/GoldRow/GoldValueLabel
@@ -55,6 +56,15 @@ const TRUE_FORM_IMAGE_PATH := "res://assets/heroes/Lone Druid Ultimate.png"
 # How much of the hero's own max HP he loses when the bear dies (see
 # _apply_bear_death_penalty()).
 const BEAR_DEATH_HP_PENALTY_PCT := 0.2
+
+# Kunkka's Ghostship (see _play_ghostship_animation()) always uses this
+# art, regardless of skill level - a purely visual flourish, played
+# alongside the instant, already-resolved damage (_resolve_ghostship_
+# cast()) rather than gating it.
+const GHOSTSHIP_IMAGE_PATH := "res://assets/heroes skills/Kunkka_Ghostship.png"
+# How long the ship's flight from Kunkka's column to the target's takes
+# to visually cross the screen.
+const GHOSTSHIP_TRAVEL_DURATION := 0.6
 
 var _hero_static: Dictionary = {}   # full definition from GameManager (stats, skills, image)
 var _recruited: Dictionary = {}     # saved state from PlayerManager (current hp/mana/xp, chosen skill)
@@ -242,6 +252,14 @@ var _borrowed_time_heal_conversion_pct: float = 0.0
 var _borrowed_time_turns_remaining: int = 0
 var _borrowed_time_duration_pending_start: bool = false
 
+# Kunkka's Tidebringer: a passive counter of plain Attacks landed (see
+# _maybe_consume_tidebringer_stack(), called from _apply_hero_attack())
+# - never reset by a turn going by without attacking, only by another
+# empowered hit consuming it once this level's own hits_to_activate is
+# reached. No duration, no on/off state to track - unlike every buff
+# above, so just the one counter.
+var _tidebringer_attack_count: int = 0
+
 # ------------------------------------------------------------------
 # A rival hero's own skills, during a hero fight (_in_hero_fight) -
 # see _enemy_hero_turn()/_cast_enemy_skill() and everything below it.
@@ -261,6 +279,21 @@ var _enemy_hero_id: String = ""
 
 var _enemy_max_mana: float = 0.0
 var _enemy_current_mana: float = 0.0
+
+# The rival's Health/Mana Potions for this fight - seeded from whatever
+# PlayerManager.get_npc_potion_count() says they've actually got banked
+# (see _reset_enemy_hero_state()), same as their skill levels are read
+# live from PlayerManager rather than reset to some fixed loadout. Each
+# drink (_drink_enemy_health_potion()/_drink_enemy_mana_potion()) writes
+# the new count straight back to PlayerManager too, so a rival that
+# survives the duel - by winning it (_handle_defeat()) or by the player
+# fleeing it (_on_flee_pressed()) - keeps whatever it didn't use, and
+# EnemyHeroManager.restock_npc_potions() tops it back up (gold
+# permitting) before the next encounter, exactly mirroring how the
+# simulation restocks after every fight of its own.
+var _enemy_potion_health_count: int = 0
+var _enemy_potion_mana_count: int = 0
+
 # skill_id -> turns remaining before the rival hero can cast it again -
 # the enemy-side mirror of the player's own _skill_cooldowns. Unlike
 # the player's, these never persist between fights (see
@@ -321,6 +354,38 @@ var _enemy_true_form_duration_pending_start: bool = false
 var _enemy_savage_roar_active: bool = false
 var _enemy_savage_roar_damage_reduction_pct: float = 0.0
 
+# Abaddon's Aphotic Shield, cast by the rival on himself.
+var _enemy_aphotic_shield_active: bool = false
+var _enemy_aphotic_shield_hp: float = 0.0
+var _enemy_aphotic_shield_aoe_damage: float = 0.0
+var _enemy_aphotic_shield_radius: int = 0
+var _enemy_aphotic_shield_turns_remaining: int = 0
+var _enemy_aphotic_shield_duration_pending_start: bool = false
+
+# Abaddon's Borrowed Time, on the rival - same auto-activate-off-HP%
+# pattern as the player's own copy: nothing ever "casts" this, it just
+# triggers itself from _deal_fixed_damage_to_enemy() the moment the
+# rival's HP crosses this level's threshold - see
+# _maybe_auto_activate_enemy_borrowed_time().
+var _enemy_borrowed_time_active: bool = false
+var _enemy_borrowed_time_heal_conversion_pct: float = 0.0
+var _enemy_borrowed_time_turns_remaining: int = 0
+var _enemy_borrowed_time_duration_pending_start: bool = false
+
+# Kunkka's Tidebringer, on the rival - same plain-Attack counter as the
+# player's own copy, just counting the rival's own Attacks on the
+# player instead (see _maybe_consume_enemy_tidebringer_stack(), called
+# from _resolve_enemy_hero_attack()).
+var _enemy_tidebringer_attack_count: int = 0
+
+# Kunkka's X Marks the Spot, on the rival - unlike the player's own
+# copy, the target is always the player (the only other participant in
+# a hero fight, same simplification Dark Pact/Mist Coil/Torrent already
+# use), so there's nothing to hold onto but a single pending flag - see
+# _cast_enemy_xmarks()/_enemy_hero_turn()'s own teleport check at its
+# very top.
+var _enemy_xmarks_pending: bool = false
+
 # ------------------------------------------------------------------
 # What the rival's skills above do TO THE PLAYER. All of this only
 # ever gets set during a hero fight and is reset by
@@ -356,6 +421,19 @@ var _player_entangle_dot_turns_left: int = 0
 # just loses its turn to the player's own Pounce.
 var _player_stun_turns_left: int = 0
 
+# Curse of Avernus's stacks/DoT on the player, built by the rival's own
+# plain Attacks - the mirror of the same fields _apply_curse_of_avernus_
+# stack() writes onto an enemy Dictionary, just held as battle-local
+# vars since there's only one player to track them on. Silence isn't
+# among them - it shares the _player_silence_turns_left field above,
+# same as how a cursed enemy shares its own silence_turns_left with
+# Entangle.
+var _player_curse_stacks: int = 0
+var _player_curse_active: bool = false
+var _player_curse_dot_damage: float = 0.0
+var _player_curse_dot_turns_left: int = 0
+var _player_curse_last_hit_turn: int = 0
+
 # ------------------------------------------------------------------
 # Ranged-hero target selection: when true, the enemies in
 # _valid_targets are highlighted and clickable; clicking one resolves
@@ -380,21 +458,79 @@ var _pending_entangle_level_data: Dictionary = {}
 # (_resolve_mist_coil_enemy_cast()/_resolve_mist_coil_self_cast()).
 var _pending_mist_coil_level_data: Dictionary = {}
 
+# Kunkka's Torrent, held the same way as Entangle's/Mist Coil's own
+# pending level data above, from the moment _start_torrent_targeting()
+# opens targeting until a target is actually clicked
+# (_resolve_torrent_cast()).
+var _pending_torrent_level_data: Dictionary = {}
+
+# Kunkka's X Marks the Spot, held the same way while its own targeting
+# is open (_start_xmarks_targeting()) until a target is clicked
+# (_resolve_xmarks_cast()).
+var _pending_xmarks_level_data: Dictionary = {}
+
+# X Marks the Spot's actual mark, set once _resolve_xmarks_cast() spends
+# the cast and held until the hero's own NEXT turn opens (_end_turn()),
+# at which point he teleports onto the marked enemy's CURRENT position
+# (see _resolve_xmarks_teleport()) - wherever it's moved to by then -
+# for free, without spending that turn's action. `target` is the marked
+# enemy's own Dictionary reference (live - its "pos_index" updates as it
+# moves, so reading it later reads wherever it ended up), {} meaning no
+# mark is pending. `stage_generation` is _stage_generation at the moment
+# of marking, so a stage transition/hero fight change in between (a
+# fresh _enemies array, making `target` a stale reference into a fight
+# that's already over) fizzles the mark instead of teleporting into
+# nothing - see _resolve_xmarks_teleport().
+var _pending_xmarks_target: Dictionary = {}
+var _pending_xmarks_stage_generation: int = -1
+
+# Kunkka's Ghostship, held the same way as Torrent's/X Marks the Spot's
+# own pending level data above, from the moment _start_ghostship_
+# targeting() opens targeting until a target is actually clicked
+# (_resolve_ghostship_cast()).
+var _pending_ghostship_level_data: Dictionary = {}
+
+# Ancient Apparition's Cold Feet, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_cold_feet_targeting() opens targeting until a target is
+# actually clicked (_resolve_cold_feet_cast()).
+var _pending_cold_feet_level_data: Dictionary = {}
+
+# Ancient Apparition's Ice Vortex, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_ice_vortex_targeting() opens targeting until a target is
+# actually clicked (_resolve_ice_vortex_cast()).
+var _pending_ice_vortex_level_data: Dictionary = {}
+
 const RANGE_ENEMY_ATTACK_RANGE := 3
 const RANGE_ENEMY_FLEE_DISTANCE := 1
 
-# Every ACTIVE skill a rival hero might cast during a hero fight, in
-# priority order - checked in _pick_enemy_ready_skill() the same way
-# EnemyHeroManager.KNOWN_ACTIVE_SKILL_IDS drives its own background
-# simulation: direct damage/control first, self-buffs after (so the
-# rival always prefers hitting the player over refreshing a buff it
-# doesn't need yet - see _enemy_skill_worth_casting()). Savage Roar
-# isn't here - like the player's own copy, it's never "cast", just
-# turned on/off automatically off the rival's own HP% (see
-# _update_enemy_savage_roar_state()).
+# Every ACTIVE skill a rival hero might cast during a hero fight - the
+# full candidate pool _pick_enemy_ready_skill() checks for cooldown/
+# worth-casting/mana/range before handing survivors to EnemySkillAI to
+# score and pick from (the same pool EnemyHeroManager.
+# KNOWN_ACTIVE_SKILL_IDS drives for its own background simulation).
+# This is no longer a priority order - see EnemySkillAI.HERO_TIE_BREAK
+# for each hero's own tie-break fallback order, only ever consulted
+# when two skills' scores are too close to call outright. Savage Roar,
+# Curse of Avernus, Borrowed Time, and Tidebringer aren't here - none
+# of them are ever "cast" or scored: Savage Roar and Borrowed Time turn
+# themselves on/off automatically off the rival's own HP% (see
+# _update_enemy_savage_roar_state()/
+# _maybe_auto_activate_enemy_borrowed_time()), and Curse of Avernus/
+# Tidebringer only ever build off the rival's own plain Attacks (see
+# _apply_enemy_curse_of_avernus_stack()/
+# _maybe_consume_enemy_tidebringer_stack()).
+# Ancient Apparition's Cold Feet and Ice Vortex aren't here for a
+# different reason: there's no enemy-side mirror (or EnemySkillAI
+# scoring) for either yet at all - deliberately deferred until every
+# one of his skills exists and the AI tuning for the whole kit is
+# handled in one pass, the same way Abaddon's/Kunkka's own skills were
+# mirrored into rival AI only after their full kits existed.
 const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
 	"dark_pact", "pounce", "essence_shift", "shadow_dance",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
+	"mist_coil", "aphotic_shield", "torrent", "x_marks_the_spot", "ghostship",
 ]
 
 # Reinforcements: if the hero hasn't cleared every enemy within this
@@ -402,7 +538,7 @@ const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
 # own enemy roster) join the fight. Resets naturally every
 # REINFORCEMENT_INTERVAL turns via the modulo check in _end_turn(), so
 # it can trigger more than once in a long fight.
-const REINFORCEMENT_INTERVAL := 20
+const REINFORCEMENT_INTERVAL := 13
 var _turn_count: int = 0
 
 # Which of the zone's up-to-GameManager.MAX_ZONE_STAGE waves this
@@ -436,7 +572,7 @@ var _stage_generation: int = 0
 
 
 func _ready() -> void:
-	flee_button.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/Map.tscn"))
+	flee_button.pressed.connect(_on_flee_pressed)
 	defeat_ok_button.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/PostLogin.tscn"))
 	move_left_button.pressed.connect(_on_move_left_pressed)
 	move_right_button.pressed.connect(_on_move_right_pressed)
@@ -927,9 +1063,11 @@ func _refresh_bars() -> void:
 		# Max level - nothing further to progress toward, show a full bar.
 		xp_bar.max_value = 1.0
 		xp_bar.value = 1.0
+		xp_value_label.text = "MAX"
 	else:
 		xp_bar.max_value = float(xp_required)
 		xp_bar.value = clamp(_recruited.get("xp", 0), 0.0, float(xp_required))
+		xp_value_label.text = str(int(xp_bar.value)) + "/" + str(int(xp_bar.max_value))
 
 	# HP just changed (or at least might have) - re-check Savage
 	# Roar's on/off state against the fresh numbers above.
@@ -1125,6 +1263,46 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			# resolves (_resolve_entangle_cast), not here, so bail out
 			# of this function without falling through to it.
 			return
+		"torrent":
+			if not _start_torrent_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as Entangle/Mist Coil - the
+			# mana/cooldown/turn spend happens once the click resolves
+			# (_resolve_torrent_cast), not here.
+			return
+		"x_marks_the_spot":
+			if not _start_xmarks_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_xmarks_cast), not here.
+			return
+		"ghostship":
+			if not _start_ghostship_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_ghostship_cast), not here.
+			return
+		"cold_feet":
+			if not _start_cold_feet_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_cold_feet_cast), not here.
+			return
+		"ice_vortex":
+			if not _start_ice_vortex_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_ice_vortex_cast), not here.
+			return
 		_:
 			# No effect implemented yet for other skills - this is the
 			# hook point for when they're added. For now it just
@@ -1288,6 +1466,346 @@ func _resolve_mist_coil_enemy_cast(target: Dictionary, level_data: Dictionary) -
 		return
 
 	_mark_turn_used()
+
+
+## Resolves a Torrent cast on `target`: deals `level_data.damage`
+## (mitigated by the target's own armor, via _deal_fixed_damage_to_
+## enemy() - same helper Dark Pact/Mist Coil use) and stuns it for
+## `level_data.stun_turns` if it survives, exactly like Pounce's own
+## stun. At max level (level_data.radius > 0), also splashes every
+## OTHER living, targetable enemy within that radius of `target`'s own
+## column for the same damage - centered on the target rather than the
+## hero, unlike Dark Pact's radius (which is centered on Kunkka
+## himself) - so the splash never re-hits `target` a second time.
+func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+	if target.get("current_hp", 0) > 0:
+		target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+
+	var radius: int = int(level_data.get("radius", 0))
+	if radius > 0:
+		var target_pos: int = target["pos_index"]
+		for enemy in _enemies:
+			if is_same(enemy, target) or _is_target_hidden(enemy):
+				continue
+			if _distance(enemy["pos_index"], target_pos) <= radius:
+				_deal_fixed_damage_to_enemy(enemy, damage)
+
+	# No Shadow Dance check here, unlike Entangle's own resolve - that
+	# only ever matters for Slark's own kit, and Torrent belongs to
+	# Kunkka (same reasoning as Mist Coil's enemy-cast, Abaddon's own
+	# skill, right above/below this).
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["torrent"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("torrent", _skill_cooldowns["torrent"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Resolves an X Marks the Spot cast on `target`: no damage, no
+## immediate effect at all beyond setting the mark itself - see
+## _pending_xmarks_target's own comment above and _resolve_xmarks_
+## teleport() (called from _end_turn()) for what actually happens with
+## it, on the hero's own next turn. Recasting (marking a different
+## target before the first one ever triggers) simply overwrites the
+## pending mark outright, same as Essence Shift/True Form being
+## recast - there's nothing to "give back" from the old one.
+func _resolve_xmarks_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	_pending_xmarks_target = target
+	_pending_xmarks_stage_generation = _stage_generation
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["x_marks_the_spot"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("x_marks_the_spot", _skill_cooldowns["x_marks_the_spot"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Called once per _end_turn() call, right as the hero's new turn opens
+## (see its own call site) - resolves whatever X Marks the Spot mark is
+## pending, if any. Teleports the hero onto the marked enemy's CURRENT
+## pos_index (it may well have moved since it was marked) and clears
+## the mark either way; no-ops (a silent fizzle, no teleport) if the
+## mark's target died in the meantime or the stage/hero fight moved on
+## since it was placed (_pending_xmarks_stage_generation mismatch,
+## meaning `target` is a stale reference into a fight that's already
+## over). Never spends the hero's turn - _end_turn() calls this before
+## reopening the action buttons, not in response to one of them.
+func _resolve_xmarks_teleport() -> void:
+	if _pending_xmarks_target.is_empty():
+		return
+
+	var target: Dictionary = _pending_xmarks_target
+	var stage_generation: int = _pending_xmarks_stage_generation
+	_pending_xmarks_target = {}
+	_pending_xmarks_stage_generation = -1
+
+	if stage_generation != _stage_generation or target.get("current_hp", 0) <= 0:
+		return
+
+	_hero_pos_index = target["pos_index"]
+	_update_hero_position()
+	_show_message_over_hero("X Marks the Spot!")
+
+
+## Resolves a Ghostship cast on `target`: the ship sails in a straight
+## line from Kunkka's own column to `target`'s, so every enemy
+## currently standing anywhere between the two (inclusive of both
+## ends) takes `level_data.damage` - not just `target` itself, unlike
+## every other single-target cast above. Each hit is still mitigated by
+## that enemy's own armor, via _deal_fixed_damage_to_enemy() (same
+## helper Dark Pact/Torrent use to split one amount across several
+## targets). The whole path is snapshotted into `hit_targets` before
+## any damage is dealt, so a kill partway through the loop (removing
+## the dead enemy from _enemies) can't skip whoever comes after it in
+## the same pass. _play_ghostship_animation() is purely the visual
+## flourish of the ship's flight - the damage above has already fully
+## resolved by the time it's even called.
+func _resolve_ghostship_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	var start_col: int = mini(_hero_pos_index, target["pos_index"])
+	var end_col: int = maxi(_hero_pos_index, target["pos_index"])
+
+	var hit_targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		var pos: int = enemy["pos_index"]
+		if pos >= start_col and pos <= end_col:
+			hit_targets.append(enemy)
+	for enemy in hit_targets:
+		_deal_fixed_damage_to_enemy(enemy, damage)
+
+	_play_ghostship_animation(target["pos_index"])
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["ghostship"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("ghostship", _skill_cooldowns["ghostship"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Purely cosmetic: spawns the ship art at Kunkka's own column and
+## tweens it across to `target_pos_index`'s, fading itself out once it
+## arrives - mirrors _summon_spirit_bear()'s own texture-loading/sizing
+## convention, just as a one-shot flight instead of a persistent ally.
+## No-op (with a console print, same as a missing bear image) if the
+## art asset isn't actually there.
+func _play_ghostship_animation(target_pos_index: int) -> void:
+	if not ResourceLoader.exists(GHOSTSHIP_IMAGE_PATH):
+		print("No Ghostship image found at: ", GHOSTSHIP_IMAGE_PATH)
+		return
+
+	var target_height: float = get_viewport_rect().size.y / 4.0
+	var texture: Texture2D = load(GHOSTSHIP_IMAGE_PATH)
+	var tex_size: Vector2 = texture.get_size()
+	var scale_factor: float = target_height / tex_size.y
+	var target_width: float = tex_size.x * scale_factor
+
+	var tex_rect := TextureRect.new()
+	tex_rect.texture = texture
+	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+	tex_rect.size = Vector2(target_width, target_height)
+	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tex_rect.flip_h = target_pos_index < _hero_pos_index
+	tex_rect.position = Vector2(_index_to_x(_hero_pos_index), _creature_y())
+	add_child(tex_rect)
+	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# render at the hero/enemy layer, not on top of every UI panel.
+	move_child(tex_rect, enemies_layer.get_index() + 1)
+
+	var tween := create_tween()
+	tween.tween_property(tex_rect, "position:x", _index_to_x(target_pos_index), GHOSTSHIP_TRAVEL_DURATION)
+	tween.finished.connect(tex_rect.queue_free)
+
+
+## Resolves a Cold Feet cast on `target`: no immediate damage, just
+## arms this level's own damage/duration onto `target`'s own
+## Dictionary (dedicated cold_feet_dot_damage/cold_feet_dot_turns_left
+## fields, separate from Entangle's/Curse of Avernus's own DoT fields
+## even though the mechanism is identical, since a different skill's
+## effect shouldn't silently share or clobber another's state) - ticked
+## once per turn by _tick_cold_feet_effects(), alongside every other
+## enemy-side DoT. Recasting on an already-frozen target simply
+## overwrites its counters with this cast's fresh values, same as
+## Entangle's own recast rule.
+func _resolve_cold_feet_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	target["cold_feet_dot_damage"] = float(level_data.get("damage", 0))
+	target["cold_feet_dot_turns_left"] = int(level_data.get("duration", 0))
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["cold_feet"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("cold_feet", _skill_cooldowns["cold_feet"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Ticks Cold Feet's damage-over-time down by one turn for every enemy
+## currently carrying it, dealing that turn's damage (still mitigated
+## by that enemy's own armor, via _deal_fixed_damage_to_enemy() - same
+## helper Entangle's own DoT uses) - called once per End Turn,
+## alongside _tick_entangle_effects(). Bails out immediately if a
+## tick's damage ends the battle, same reasoning as that function's own
+## early return.
+func _tick_cold_feet_effects() -> void:
+	for enemy in _enemies.duplicate():
+		if enemy.get("cold_feet_dot_turns_left", 0) > 0:
+			enemy["cold_feet_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("cold_feet_dot_damage", 0))
+			if dot_damage > 0.0:
+				_deal_fixed_damage_to_enemy(enemy, dot_damage)
+				if _battle_over:
+					return
+
+
+## Resolves an Ice Vortex cast on `target`: no immediate damage, just
+## arms this level's own damage/duration onto EVERY enemy within
+## this level's own radius of `target`'s column (`target` included -
+## it's just the center of the AoE, not a special case) via dedicated
+## ice_vortex_dot_damage/ice_vortex_dot_turns_left fields, kept
+## separate from Cold Feet's/Entangle's/Curse of Avernus's own DoT
+## fields for the same reason Cold Feet's are separate from theirs.
+## Ticked once per turn by _tick_ice_vortex_effects(). Recasting
+## overwrites whatever DoT an already-affected enemy was carrying,
+## same as every other DoT skill's own recast rule.
+func _resolve_ice_vortex_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	var duration: int = int(level_data.get("duration", 0))
+	var radius: int = int(level_data.get("radius", 1))
+	var target_pos: int = target["pos_index"]
+
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], target_pos) <= radius:
+			enemy["ice_vortex_dot_damage"] = damage
+			enemy["ice_vortex_dot_turns_left"] = duration
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["ice_vortex"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("ice_vortex", _skill_cooldowns["ice_vortex"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Ticks Ice Vortex's damage-over-time down by one turn for every enemy
+## currently carrying it, dealing that turn's damage (still mitigated
+## by that enemy's own armor, via _deal_fixed_damage_to_enemy()) -
+## called once per End Turn, alongside Cold Feet's own tick. Bails out
+## immediately if a tick's damage ends the battle, same reasoning as
+## _tick_entangle_effects()'s own early return.
+func _tick_ice_vortex_effects() -> void:
+	for enemy in _enemies.duplicate():
+		if enemy.get("ice_vortex_dot_turns_left", 0) > 0:
+			enemy["ice_vortex_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("ice_vortex_dot_damage", 0))
+			if dot_damage > 0.0:
+				_deal_fixed_damage_to_enemy(enemy, dot_damage)
+				if _battle_over:
+					return
+
+
+# ------------------------------------------------------------------
+# Kunkka's Tidebringer - a passive, so unlike Torrent above there's no
+# button/cast/mana/cooldown for it (see _populate_skill_buttons()'s
+# "passive" branch); it just triggers off the hero's own plain Attacks
+# (_apply_hero_attack()), exactly the way Curse of Avernus's stacking
+# does for Abaddon.
+# ------------------------------------------------------------------
+
+## Tidebringer's level data for whatever level the player has it at
+## right now - {} if it isn't learned at all (level 0), the same
+## "empty means locked" convention every other auto-triggered skill's
+## own _get_*_level_data() helper uses.
+func _get_tidebringer_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("tidebringer")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "tidebringer":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Called from _apply_hero_attack() right before rolling that Attack's
+## damage: counts one more plain Attack toward this level's own
+## hits_to_activate - never reset by a turn going by without attacking
+## (only consuming the count resets it, never time) - and, once that
+## threshold is reached, consumes the count and returns this level's
+## data for _apply_hero_attack() to fold bonus_damage into the roll and
+## then cleave with (_apply_tidebringer_cleave()). Returns {} (an
+## ordinary Attack, no bonus) if the hero hasn't learned Tidebringer or
+## hasn't reached the threshold yet.
+func _maybe_consume_tidebringer_stack() -> Dictionary:
+	var level_data: Dictionary = _get_tidebringer_level_data()
+	if level_data.is_empty():
+		return {}
+
+	_tidebringer_attack_count += 1
+	if _tidebringer_attack_count < int(level_data.get("hits_to_activate", 1)):
+		return {}
+
+	_tidebringer_attack_count = 0
+	_show_message_over_hero("Tidebringer!")
+	return level_data
+
+
+## Tidebringer's cleave: every OTHER living, targetable enemy within
+## this level's cleave_columns of `target`'s own column takes
+## cleave_damage_pct of `attack_damage` - the same raw, pre-mitigation
+## roll `target` was just hit with (bonus damage already folded in by
+## _apply_hero_attack()), each still mitigated by ITS OWN armor via
+## _deal_fixed_damage_to_enemy(), mirroring Dark Pact's own "one rolled
+## amount, many separately-mitigated hits" pattern (_cast_dark_pact()).
+func _apply_tidebringer_cleave(target: Dictionary, attack_damage: float, level_data: Dictionary) -> void:
+	var cleave_damage: float = attack_damage * float(level_data.get("cleave_damage_pct", 0.0))
+	if cleave_damage <= 0.0:
+		return
+
+	var radius: int = int(level_data.get("cleave_columns", 1))
+	var target_pos: int = target["pos_index"]
+	for enemy in _enemies:
+		if is_same(enemy, target) or _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], target_pos) <= radius:
+			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
 
 
 ## Resolves a Mist Coil cast on Abaddon himself: pays `level_data.
@@ -1860,8 +2378,11 @@ func _refresh_skill_cooldown_labels() -> void:
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
 ## and ticks Essence Shift's, Shadow Dance's, Spirit Link's, True
 ## Form's, Aphotic Shield's, and Borrowed Time's durations, plus every
-## enemy's Entangle/Curse of Avernus root/silence/DoT/stack durations,
-## alongside them. Called once per End Turn.
+## enemy's Entangle/Curse of Avernus/Cold Feet/Ice Vortex root/silence/
+## DoT/stack durations, alongside them - and, during a hero fight, the
+## rival's own mirrored copies of all of the above (Cold Feet/Ice
+## Vortex excepted - see their own notes about not having an enemy-side
+## mirror yet). Called once per End Turn.
 func _tick_skill_cooldowns() -> void:
 	for skill_id in _skill_cooldowns.keys():
 		var new_value: int = maxi(0, _skill_cooldowns[skill_id] - 1)
@@ -1876,6 +2397,8 @@ func _tick_skill_cooldowns() -> void:
 	_tick_borrowed_time()
 	_tick_entangle_effects()
 	_tick_curse_of_avernus_effects()
+	_tick_cold_feet_effects()
+	_tick_ice_vortex_effects()
 
 	if _in_hero_fight:
 		for skill_id in _enemy_skill_cooldowns.keys():
@@ -1885,7 +2408,10 @@ func _tick_skill_cooldowns() -> void:
 		_tick_enemy_shadow_dance()
 		_tick_enemy_spirit_link()
 		_tick_enemy_true_form()
+		_tick_enemy_aphotic_shield()
+		_tick_enemy_borrowed_time()
 		_tick_player_entangle_effects()
+		_tick_enemy_curse_of_avernus_effects()
 
 
 # ------------------------------------------------------------------
@@ -2430,8 +2956,27 @@ func _hero_move(direction: int) -> void:
 	else:
 		_hero_pos_index = _melee_move_target(_hero_pos_index, direction, distance)
 
+	# Hero art is drawn facing right by default (see _spawn_enemy()'s own
+	# note on art orientation), so moving left mirrors it to face that way.
+	hero_image.flip_h = direction < 0
+
 	_update_hero_position()
 	_mark_turn_used()
+
+
+## Fleeing a hero fight leaves the rival alive and, unlike an actual
+## loss, was never going to be caught by _handle_defeat()'s own
+## restock - so it needs its own copy of that same "the rival gets a
+## chance to restock before the player can meet them again" step (see
+## EnemyHeroManager.restock_npc_potions()) or a fled fight would let
+## the player whittle a rival's potions down for free, over and over,
+## with no gold cost ever attached the way losing to them does. Only
+## fires during an actual hero fight - fleeing a normal creep stage has
+## no rival hero to restock.
+func _on_flee_pressed() -> void:
+	if _in_hero_fight:
+		EnemyHeroManager.restock_npc_potions(_enemy_hero_id)
+	get_tree().change_scene_to_file("res://scenes/Map.tscn")
 
 
 func _on_move_left_pressed() -> void:
@@ -2559,6 +3104,149 @@ func _start_mist_coil_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
+## Kunkka's Torrent target picking: same column-range/highlight
+## mechanism as Entangle/ranged Attack, but the range itself comes
+## straight from this level's own `range` field (a constant 3 at every
+## level per the design doc) rather than _hero_attack_column_range() -
+## Torrent lands where Kunkka calls it down, regardless of his Range
+## stat, the same way Mist Coil's own fixed MIST_COIL_RANGE does.
+## Returns false (and shows a message) if nothing is in range.
+func _start_torrent_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 3))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "torrent"
+	_pending_torrent_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 0.85, 1)
+	return true
+
+
+## Kunkka's X Marks the Spot target picking: same column-range/
+## highlight mechanism as Torrent, using this level's own `range` field
+## (2-5 columns, growing with level, unlike Torrent's constant 3).
+## Returns false (and shows a message) if nothing is in range.
+func _start_xmarks_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 2))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "x_marks_the_spot"
+	_pending_xmarks_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(1, 0.85, 0.4)
+	return true
+
+
+## Kunkka's Ghostship target picking: same column-range/highlight
+## mechanism as Torrent/X Marks the Spot, using this level's own
+## `range` field (4-6 columns, growing with level) - just for picking
+## where the ship sails TO; every enemy actually hit is worked out at
+## resolve time from the straight line between Kunkka and that pick
+## (see _resolve_ghostship_cast()), not from this range itself.
+## Returns false (and shows a message) if nothing is in range.
+func _start_ghostship_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 4))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "ghostship"
+	_pending_ghostship_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 0.7, 1)
+	return true
+
+
+## Ancient Apparition's Cold Feet target picking: same column-range/
+## highlight mechanism as every other targeted skill above, using this
+## level's own `range` field (2-4 columns, growing with level).
+## Returns false (and shows a message) if nothing is in range.
+func _start_cold_feet_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 2))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "cold_feet"
+	_pending_cold_feet_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 0.9, 1)
+	return true
+
+
+## Ice Vortex's own targeting range, in columns - fixed regardless of
+## level or the hero's Range stat (unlike Cold Feet's own per-level
+## range), since it's a cast point, not a stat-scaled attack.
+const ICE_VORTEX_RANGE := 3
+
+
+## Ancient Apparition's Ice Vortex target picking: same column-range/
+## highlight mechanism as every other targeted skill above, but always
+## at ICE_VORTEX_RANGE - the level only changes the AoE radius applied
+## around whichever enemy gets clicked (see _resolve_ice_vortex_cast()),
+## never the targeting range itself. Returns false (and shows a
+## message) if nothing is in range.
+func _start_ice_vortex_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= ICE_VORTEX_RANGE:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "ice_vortex"
+	_pending_ice_vortex_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.5, 0.8, 1)
+	return true
+
+
 func _cancel_targeting() -> void:
 	for enemy in _valid_targets:
 		if is_instance_valid(enemy["node"]):
@@ -2585,12 +3273,27 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	var purpose: String = _targeting_purpose
 	var entangle_level_data: Dictionary = _pending_entangle_level_data
 	var mist_coil_level_data: Dictionary = _pending_mist_coil_level_data
+	var torrent_level_data: Dictionary = _pending_torrent_level_data
+	var xmarks_level_data: Dictionary = _pending_xmarks_level_data
+	var ghostship_level_data: Dictionary = _pending_ghostship_level_data
+	var cold_feet_level_data: Dictionary = _pending_cold_feet_level_data
+	var ice_vortex_level_data: Dictionary = _pending_ice_vortex_level_data
 	_cancel_targeting()
 
 	if purpose == "entangle":
 		_resolve_entangle_cast(enemy, entangle_level_data)
 	elif purpose == "mist_coil":
 		_resolve_mist_coil_enemy_cast(enemy, mist_coil_level_data)
+	elif purpose == "torrent":
+		_resolve_torrent_cast(enemy, torrent_level_data)
+	elif purpose == "x_marks_the_spot":
+		_resolve_xmarks_cast(enemy, xmarks_level_data)
+	elif purpose == "ghostship":
+		_resolve_ghostship_cast(enemy, ghostship_level_data)
+	elif purpose == "cold_feet":
+		_resolve_cold_feet_cast(enemy, cold_feet_level_data)
+	elif purpose == "ice_vortex":
+		_resolve_ice_vortex_cast(enemy, ice_vortex_level_data)
 	else:
 		_apply_hero_attack(enemy)
 
@@ -2621,7 +3324,15 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# like the rest of the hit - see _roll_hero_damage()) and ends the
 	# invisibility right here, whether or not the hit kills the target.
 	var shadow_dance_bonus: float = _shadow_dance_bonus_damage if _is_hero_hidden() else 0.0
-	var mitigated_damage: float = _deal_fixed_damage_to_enemy(target, _roll_hero_damage(shadow_dance_bonus))
+	# Tidebringer counts this Attack toward its own threshold - once
+	# reached, THIS hit's roll gets its bonus damage folded in below
+	# (so the cleave that follows is based on the same empowered
+	# total), same as Shadow Dance's own one-shot bonus above.
+	var tidebringer_level_data: Dictionary = _maybe_consume_tidebringer_stack()
+	var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
+
+	var attack_damage: float = _roll_hero_damage(shadow_dance_bonus + tidebringer_bonus)
+	var mitigated_damage: float = _deal_fixed_damage_to_enemy(target, attack_damage)
 	_apply_essence_shift_steal(target)
 	# Lifesteal only ever applies to this plain Attack action - never
 	# to skill damage (Pounce, Dark Pact, Entangle's DoT, etc.) - and
@@ -2631,6 +3342,9 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# Curse of Avernus stacks the same way - only this plain Attack
 	# action builds toward it, never skill damage.
 	_apply_curse_of_avernus_stack(target)
+
+	if not tidebringer_level_data.is_empty():
+		_apply_tidebringer_cleave(target, attack_damage, tidebringer_level_data)
 
 	if shadow_dance_bonus > 0.0:
 		_end_shadow_dance()
@@ -2666,16 +3380,46 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## and Entangle's DoT. Returns the mitigated damage actually dealt, so
 ## callers that need it (Spirit Link's lifesteal, via
 ## _apply_hero_attack()) don't have to re-derive it.
+## For a hero-fight boss, this also doubles as the enemy-side mirror of
+## the player's own apply_damage(): Borrowed Time reverses the hit into
+## a heal, and failing that, Aphotic Shield absorbs it into its own HP
+## pool first - same redirection order as the player's copy, just
+## checked here since every source of damage to an enemy (attacks,
+## Dark Pact, DoTs) already funnels through this one function.
 func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
 	var enemy_armor: float = float(target["static"].get("armor", 0)) + _enemy_hero_bonus_armor(target)
 	var mitigated: float = _apply_armor_reduction(amount, enemy_armor)
-	if target["static"].get("is_hero_fight_boss", false):
+	var is_boss: bool = target["static"].get("is_hero_fight_boss", false)
+	if is_boss:
 		mitigated *= (1.0 - _enemy_savage_roar_damage_reduction_pct)
+
+	if is_boss and _enemy_borrowed_time_active:
+		var max_hp: float = _enemy_hero_effective_max_hp(target)
+		target["current_hp"] = minf(max_hp, target["current_hp"] + mitigated * _enemy_borrowed_time_heal_conversion_pct)
+		return mitigated
+
+	if is_boss and _enemy_aphotic_shield_active:
+		var absorbed: float = minf(mitigated, _enemy_aphotic_shield_hp)
+		_enemy_aphotic_shield_hp -= absorbed
+		var overflow: float = mitigated - absorbed
+		if overflow > 0.0:
+			target["current_hp"] -= overflow
+			_show_damage_number(target["node"], overflow)
+		if _enemy_aphotic_shield_hp <= 0.0:
+			_end_enemy_aphotic_shield(true)
+		if target["current_hp"] <= 0:
+			_kill_enemy(target)
+		else:
+			_maybe_auto_activate_enemy_borrowed_time(target)
+		return mitigated
+
 	target["current_hp"] -= mitigated
 	_show_damage_number(target["node"], mitigated)
 
 	if target["current_hp"] <= 0:
 		_kill_enemy(target)
+	elif is_boss:
+		_maybe_auto_activate_enemy_borrowed_time(target)
 
 	return mitigated
 
@@ -2973,9 +3717,27 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_savage_roar_active = false
 	_enemy_savage_roar_damage_reduction_pct = 0.0
 
+	_enemy_aphotic_shield_active = false
+	_enemy_aphotic_shield_hp = 0.0
+	_enemy_aphotic_shield_aoe_damage = 0.0
+	_enemy_aphotic_shield_radius = 0
+	_enemy_aphotic_shield_turns_remaining = 0
+	_enemy_aphotic_shield_duration_pending_start = false
+
+	_enemy_borrowed_time_active = false
+	_enemy_borrowed_time_heal_conversion_pct = 0.0
+	_enemy_borrowed_time_turns_remaining = 0
+	_enemy_borrowed_time_duration_pending_start = false
+
+	_enemy_tidebringer_attack_count = 0
+	_enemy_xmarks_pending = false
+
 	var stats: Dictionary = hero_static.get("stats", {})
 	_enemy_max_mana = float(stats.get("mana", 0))
 	_enemy_current_mana = _enemy_max_mana
+
+	_enemy_potion_health_count = PlayerManager.get_npc_potion_count(_enemy_hero_id, "health")
+	_enemy_potion_mana_count = PlayerManager.get_npc_potion_count(_enemy_hero_id, "mana")
 
 	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 	_player_root_turns_left = 0
@@ -2983,6 +3745,11 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_player_entangle_dot_damage = 0.0
 	_player_entangle_dot_turns_left = 0
 	_player_stun_turns_left = 0
+	_player_curse_stacks = 0
+	_player_curse_active = false
+	_player_curse_dot_damage = 0.0
+	_player_curse_dot_turns_left = 0
+	_player_curse_last_hit_turn = 0
 
 
 func _update_stage_label() -> void:
@@ -3038,6 +3805,12 @@ func _end_turn() -> void:
 
 	if _player_stun_turns_left > 0:
 		_player_stun_turns_left -= 1
+
+	# The hero's new turn is opening right here - if X Marks the Spot
+	# marked something last turn, this is "his next turn", so he
+	# teleports now, for free (see _resolve_xmarks_teleport() - it
+	# never spends the turn this function is about to reopen below).
+	_resolve_xmarks_teleport()
 
 	_has_acted_this_turn = false
 	_update_action_buttons()
@@ -3194,6 +3967,16 @@ func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
 # ------------------------------------------------------------------
 
 func _enemy_hero_turn(enemy: Dictionary) -> void:
+	# If X Marks the Spot marked the player last turn, this is the
+	# rival's own "next turn" - teleport now, for free, then fall
+	# straight through to everything below so it can still act (skill,
+	# attack, or move) this same turn, same as the player's own copy
+	# never spends the turn it teleports on (_resolve_xmarks_teleport()).
+	if _enemy_xmarks_pending:
+		_enemy_xmarks_pending = false
+		_move_enemy(enemy, _hero_pos_index)
+		_show_message_over_hero("X Marks the Spot!")
+
 	_update_enemy_savage_roar_state(enemy)
 
 	var enemy_type: String = enemy["static"].get("type", "")
@@ -3201,10 +3984,23 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 	var hero_hidden: bool = _is_hero_hidden()
 	var rooted: bool = _is_enemy_rooted(enemy)
 
+	# Potion, skill, or basic attack - in that priority, one action per
+	# turn, exactly mirroring EnemyHeroManager's own simulated turn
+	# order. Drinking a potion is an item, not a spell, so - like the
+	# player's own item buttons - it's never gated by hero_hidden/
+	# silence/root the way casting a skill or attacking is.
+	var effective_max_hp: float = _enemy_hero_effective_max_hp(enemy)
+	if float(enemy.get("current_hp", 0.0)) <= effective_max_hp * EnemyHeroManager.LOW_HP_POTION_THRESHOLD and _enemy_potion_health_count > 0:
+		_drink_enemy_health_potion(enemy)
+		return
+
 	if not hero_hidden and not _is_enemy_silenced(enemy):
-		var skill_id: String = _pick_enemy_ready_skill(enemy_type, hero_distance)
+		var skill_id: String = _pick_enemy_ready_skill(enemy, enemy_type, hero_distance)
 		if skill_id != "":
 			_cast_enemy_skill(enemy, skill_id)
+			return
+		elif _enemy_has_unaffordable_ready_skill(enemy_type, hero_distance) and _enemy_potion_mana_count > 0:
+			_drink_enemy_mana_potion()
 			return
 
 	if enemy_type == "range":
@@ -3226,6 +4022,40 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 			_move_enemy(enemy, enemy["pos_index"] + step)
 
 
+## Heals the boss for the Health Potion's own flat value (same item
+## data the player's own copy in _on_item_pressed() reads), clamped to
+## their current effective max hp, and writes the new count straight
+## back to PlayerManager immediately rather than waiting for the fight
+## to resolve - it's already reflected there no matter how the fight
+## ends (win, loss, or a flee - see _handle_defeat()/_on_flee_pressed()).
+func _drink_enemy_health_potion(enemy: Dictionary) -> void:
+	_enemy_potion_health_count -= 1
+	PlayerManager.set_npc_potion_count(_enemy_hero_id, "health", _enemy_potion_health_count)
+
+	var heal_amount: float = float(GameManager.get_item("health").get("value", 0))
+	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
+	enemy["current_hp"] = minf(max_hp, enemy["current_hp"] + heal_amount)
+	_show_message_over_hero("Rival drank a Health Potion")
+	_refresh_bars()
+
+
+## Restores the Mana Potion's own flat value. _enemy_max_mana is the
+## rival's base max mana, so a hostile-looking but actually-beneficial
+## Essence Shift bonus (_enemy_essence_shift_bonus's own "mana" key)
+## has to be added back in for the clamp, the same pairing
+## _build_enemy_ai_context() uses for its own "hero_mana"/"hero_max_
+## mana" fields.
+func _drink_enemy_mana_potion() -> void:
+	_enemy_potion_mana_count -= 1
+	PlayerManager.set_npc_potion_count(_enemy_hero_id, "mana", _enemy_potion_mana_count)
+
+	var mana_amount: float = float(GameManager.get_item("mana").get("value", 0))
+	var max_mana: float = _enemy_max_mana + _enemy_essence_shift_bonus.get("mana", 0.0)
+	_enemy_current_mana = minf(max_mana, _enemy_current_mana + mana_amount)
+	_show_message_over_hero("Rival drank a Mana Potion")
+	_refresh_bars()
+
+
 ## The rival hero's plain Attack against the player: rolls their
 ## effective damage (folding in their own Essence Shift/True Form
 ## bonuses and, once per activation, Shadow Dance's one-shot bonus if
@@ -3235,10 +4065,20 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 ## plain Attack, never off a skill.
 func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	var shadow_bonus: float = _enemy_shadow_dance_bonus_damage if _enemy_shadow_dance_active else 0.0
-	var mitigated: float = apply_damage(_roll_enemy_hero_damage(enemy, shadow_bonus))
+	var tidebringer_level_data: Dictionary = _maybe_consume_enemy_tidebringer_stack()
+	var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
+	var mitigated: float = apply_damage(_roll_enemy_hero_damage(enemy, shadow_bonus + tidebringer_bonus))
 
 	_apply_enemy_essence_shift_steal()
 	_apply_enemy_spirit_link_lifesteal(enemy, mitigated)
+	_apply_enemy_curse_of_avernus_stack()
+
+	if not tidebringer_level_data.is_empty():
+		# No cleave here - like Dark Pact/Mist Coil/Torrent, there's
+		# only one possible target in a hero fight, so Tidebringer's
+		# cleave has nothing else to reach; only its bonus damage
+		# (already folded into the roll above) applies.
+		_show_message_over_hero("Tidebringer!")
 
 	if _enemy_shadow_dance_active and shadow_bonus > 0.0:
 		_end_enemy_shadow_dance()
@@ -3287,10 +4127,14 @@ func _find_enemy_skill(skill_id: String) -> Dictionary:
 	return {}
 
 
-func _enemy_skill_mana_cost(skill_id: String) -> float:
+func _get_enemy_skill_level_data(skill_id: String) -> Dictionary:
 	var skill: Dictionary = _find_enemy_skill(skill_id)
 	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
-	return float(GameManager.get_skill_level_data(skill, level).get("mana_cost", 0))
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _enemy_skill_mana_cost(skill_id: String) -> float:
+	return float(_get_enemy_skill_level_data(skill_id).get("mana_cost", 0))
 
 
 ## False for a buff/summon skill that's already active and wouldn't do
@@ -3311,18 +4155,89 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			return not _enemy_true_form_active
 		"summon_spirit_bear":
 			return _get_enemy_spirit_bear().is_empty()
+		"aphotic_shield":
+			return not _enemy_aphotic_shield_active
+		"x_marks_the_spot":
+			# Not worth recasting while a mark is already pending -
+			# there's only ever one possible target anyway (the
+			# player), so a second cast would just burn mana/cooldown
+			# on a mark that hasn't even resolved yet.
+			return not _enemy_xmarks_pending
 		_:
 			return true
 
 
-## The first known, off-cooldown, currently-worthwhile, currently-
-## affordable, in-range active skill the rival hero has, in
-## ENEMY_KNOWN_SKILL_IDS priority order - "" if none qualify right now.
-## `enemy_type`/`hero_distance` gate skills that actually need to reach
-## the player - see _enemy_skill_in_range()/EnemySkillRange - so a boss
-## can't land Dark Pact or Entangle from clear across the board; it has
-## to close in first, same as it already must for a plain Attack.
-func _pick_enemy_ready_skill(enemy_type: String, hero_distance: int) -> String:
+## True if `skill_id` is known, off cooldown, worth casting, and
+## affordable right now - the same four gates _pick_enemy_ready_skill()
+## always applied inline, factored out so combo scoring (see
+## _build_enemy_ai_context()'s "kunkka_torrent_combo_ready"/
+## "kunkka_ghostship_combo_ready") can ask "would this skill be usable
+## if range weren't the issue" via `ignore_range`, without duplicating
+## the other four checks. `ignore_range` is only ever true for that
+## combo-readiness question - the real candidate loop below always
+## leaves it false, so nothing here changes for any existing hero.
+func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: int, ignore_range: bool = false) -> bool:
+	if PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id) <= 0:
+		return false
+	if _enemy_skill_cooldowns.get(skill_id, 0) > 0:
+		return false
+	if not _enemy_skill_worth_casting(skill_id):
+		return false
+	var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
+	if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
+		return false
+	if not ignore_range and not _enemy_skill_in_range(skill_id, enemy_type, hero_distance):
+		return false
+	return true
+
+
+## Every known, off-cooldown, currently-worthwhile, currently-
+## affordable, in-range active skill the rival hero has right now (that
+## is, every skill in ENEMY_KNOWN_SKILL_IDS that survives all of those
+## checks), PLUS a plain Attack for whichever heroes EnemySkillAI.
+## basic_attack_participates() opts in (today: only Kunkka, whose
+## Tidebringer can make a plain Attack the better play - see
+## EnemySkillAI's own "basic_attack" scoring), is scored by
+## EnemySkillAI.evaluate_skill()/evaluate_basic_attack(), and the
+## highest-scoring one wins - ties within EnemySkillAI.
+## CLOSE_SCORE_THRESHOLD are resolved by a score-weighted random pick,
+## falling back to the hero's own EnemySkillAI.HERO_TIE_BREAK order only
+## if that still doesn't settle it. Returns "" if no candidate qualifies
+## at all, OR if the winner was that plain-Attack candidate - either way
+## the caller's own existing basic-attack fallback takes over unchanged.
+## `enemy_type`/`hero_distance` still gate skills that actually need to
+## reach the player - see _enemy_skill_in_range()/EnemySkillRange - so a
+## boss can't land Dark Pact or Entangle from clear across the board; it
+## has to close in first, same as it already must for a plain Attack.
+## This replaces the old "first match in ENEMY_KNOWN_SKILL_IDS wins"
+## rule - the array is still every skill this AI ever considers, it's
+## just no longer the order they're preferred in.
+func _pick_enemy_ready_skill(enemy: Dictionary, enemy_type: String, hero_distance: int) -> String:
+	var context: Dictionary = _build_enemy_ai_context(enemy, enemy_type, hero_distance)
+	var candidates: Array = []
+
+	for skill_id in ENEMY_KNOWN_SKILL_IDS:
+		if not _is_enemy_skill_ready(skill_id, enemy_type, hero_distance):
+			continue
+		var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
+		candidates.append({"id": skill_id, "score": EnemySkillAI.evaluate_skill(skill_id, level_data, context)})
+
+	var archetype: String = str(context.get("archetype", ""))
+	if EnemySkillAI.basic_attack_participates(archetype):
+		candidates.append({"id": EnemySkillAI.BASIC_ATTACK_ID, "score": EnemySkillAI.evaluate_basic_attack(context)})
+
+	var chosen_id: String = EnemySkillAI.pick_best_skill(archetype, candidates, str(_enemy_hero_static.get("name", _enemy_hero_id)))
+	return "" if chosen_id == EnemySkillAI.BASIC_ATTACK_ID else chosen_id
+
+
+## True if there's a known, off-cooldown, currently-worthwhile, in-range
+## active skill the rival just can't afford right now - the trigger for
+## drinking a Mana Potion instead of attacking this turn, mirroring
+## EnemyHeroManager's own _has_unaffordable_ready_skill(). Only ever
+## checked once _pick_enemy_ready_skill() has already come up empty, so
+## this only needs to explain WHY it came up empty (mana, specifically)
+## rather than re-picking anything.
+func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int) -> bool:
 	for skill_id in ENEMY_KNOWN_SKILL_IDS:
 		if PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id) <= 0:
 			continue
@@ -3330,12 +4245,73 @@ func _pick_enemy_ready_skill(enemy_type: String, hero_distance: int) -> String:
 			continue
 		if not _enemy_skill_worth_casting(skill_id):
 			continue
-		if _enemy_current_mana < _enemy_skill_mana_cost(skill_id):
-			continue
 		if not _enemy_skill_in_range(skill_id, enemy_type, hero_distance):
 			continue
-		return skill_id
-	return ""
+		var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
+		if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
+			return true
+	return false
+
+
+## Builds the AI context EnemySkillAI scores every candidate skill
+## against for this rival's turn - the battle-mode counterpart of
+## EnemyHeroManager.gd's own _build_npc_ai_context(). The player is
+## always the rival's only possible target during a hero fight, so
+## `enemy_count` is always 1 here (contrast the simulation, where it's
+## however many creeps are still alive) and there's no per-target
+## selection step the way a multi-enemy sim needs one. `living_target_
+## hps` is the single-player mirror of the simulation's own living-
+## enemy HP list - always one entry here, but kept under the same key
+## so EnemySkillAI's shared multi-kill scoring (see Kunkka's own
+## Ghostship/Torrent modifiers) doesn't need a battle-vs-sim branch.
+##
+## The three "kunkka_*"/"tidebringer_*" fields only ever matter for
+## Kunkka (every other hero's own modifier ignores them) - they're
+## still computed unconditionally since that's cheap and keeps this
+## function hero-agnostic, same as every other field here:
+##   - tidebringer_ready/tidebringer_cleave_targets/tidebringer_bonus_
+##     damage: whether the rival's NEXT plain Attack would activate
+##     Tidebringer, and what that's worth - see
+##     _maybe_consume_enemy_tidebringer_stack() for the real activation
+##     this only ever previews. cleave_targets is always 0 here (a hero
+##     fight only ever has the player to cleave onto - see
+##     _resolve_enemy_hero_attack()'s own "no cleave" comment).
+##   - kunkka_torrent_combo_ready/kunkka_ghostship_combo_ready: whether
+##     Torrent/Ghostship would be castable right now if range weren't
+##     the issue (see _is_enemy_skill_ready()'s `ignore_range`) - X
+##     Marks the Spot always closes the distance to 0 by the rival's own
+##     next turn (see _enemy_hero_turn()'s teleport-consumption step),
+##     so "everything else about it is ready" is the real question for
+##     whether marking now sets up a real follow-up.
+func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distance: int) -> Dictionary:
+	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
+	var current_hp: float = float(enemy.get("current_hp", 0.0))
+
+	var tidebringer_level_data: Dictionary = _get_enemy_tidebringer_level_data()
+	var tidebringer_ready: bool = not tidebringer_level_data.is_empty() \
+		and (_enemy_tidebringer_attack_count + 1) >= int(tidebringer_level_data.get("hits_to_activate", 1))
+
+	return {
+		"game_mode": "battle",
+		"archetype": EnemySkillAI.resolve_hero_archetype(_enemy_hero_static),
+		"hero_hp": current_hp,
+		"hero_max_hp": max_hp,
+		"hero_hp_ratio": (current_hp / max_hp) if max_hp > 0.0 else 0.0,
+		"hero_mana": _enemy_current_mana,
+		"hero_max_mana": _enemy_max_mana,
+		"hero_damage": _roll_enemy_hero_damage(enemy),
+		"enemy_count": 1,
+		"target_hp": float(_recruited.get("current_hp", 0)),
+		"target_max_hp": _hero_max_hp(),
+		"target_distance": hero_distance,
+		"bear_active": not _get_enemy_spirit_bear().is_empty(),
+		"living_target_hps": [float(_recruited.get("current_hp", 0))],
+		"tidebringer_ready": tidebringer_ready,
+		"tidebringer_bonus_damage": float(tidebringer_level_data.get("bonus_damage", 0.0)),
+		"tidebringer_cleave_targets": 0,
+		"kunkka_torrent_combo_ready": _is_enemy_skill_ready("torrent", enemy_type, hero_distance, true),
+		"kunkka_ghostship_combo_ready": _is_enemy_skill_ready("ghostship", enemy_type, hero_distance, true),
+	}
 
 
 ## True if a rival hero of `enemy_type`, `hero_distance` columns from
@@ -3347,7 +4323,13 @@ func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: 
 
 	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
 	var level_data: Dictionary = GameManager.get_skill_level_data(_find_enemy_skill(skill_id), level)
-	var radius: int = int(level_data.get("radius", 0))
+	# Torrent's/X Marks the Spot's/Ghostship's own targeting range lives
+	# in a "range" field rather than "radius" (Torrent's separate,
+	# level-4-only splash radius); Pounce's own leap reach lives in a
+	# "distance" field instead - see EnemySkillRange's "torrent"/
+	# "x_marks_the_spot"/"ghostship"/"pounce" case, which compares
+	# distance against whichever of the three this resolves to.
+	var radius: int = int(level_data.get("range", level_data.get("radius", level_data.get("distance", 0))))
 	var attack_range: int = RANGE_ENEMY_ATTACK_RANGE if enemy_type == "range" else 0
 	return EnemySkillRange.is_in_range(skill_id, hero_distance, radius, attack_range)
 
@@ -3376,6 +4358,16 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 			_activate_enemy_spirit_link(level_data)
 		"true_form":
 			_activate_enemy_true_form(enemy, level_data)
+		"mist_coil":
+			_cast_enemy_mist_coil(level_data)
+		"aphotic_shield":
+			_activate_enemy_aphotic_shield(enemy, level_data)
+		"torrent":
+			_cast_enemy_torrent(level_data)
+		"x_marks_the_spot":
+			_cast_enemy_xmarks()
+		"ghostship":
+			_cast_enemy_ghostship(level_data)
 
 	# Shadow Dance only breaks from casting ANOTHER skill (or
 	# attacking, handled separately in _resolve_enemy_hero_attack()),
@@ -3781,11 +4773,300 @@ func _update_enemy_savage_roar_state(enemy: Dictionary) -> void:
 	_enemy_savage_roar_damage_reduction_pct = float(level_data.get("damage_reduction_pct", 0.0)) if _enemy_savage_roar_active else 0.0
 
 
+# ------------------------------------------------------------------
+# Abaddon's Mist Coil and Aphotic Shield, cast by the rival at (or on
+# behalf of) himself - mirrors the player's own
+# _resolve_mist_coil_enemy_cast()/_activate_aphotic_shield()/
+# _tick_aphotic_shield()/_end_aphotic_shield(). Simplification versus
+# Mist Coil's own player-facing copy: the rival never casts it on
+# himself to heal - like Dark Pact/Pounce, it's always a straight hit
+# on the player, the only other participant in a hero fight.
+# ------------------------------------------------------------------
+
+func _cast_enemy_mist_coil(level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+
+
+## Activates (or, if already active, replaces outright, same as the
+## player's own copy) Aphotic Shield on the rival, and dispels every
+## negative effect currently on him - here that's whatever the
+## player's own Entangle/Pounce/Curse of Avernus wrote directly onto
+## this enemy Dictionary (see _apply_root()/_apply_curse_of_avernus_
+## stack()), since a hero-fight boss is otherwise a completely ordinary
+## entry in _enemies.
+func _activate_enemy_aphotic_shield(enemy: Dictionary, level_data: Dictionary) -> void:
+	_enemy_aphotic_shield_active = true
+	_enemy_aphotic_shield_hp = float(level_data.get("shield_hp", 0))
+	_enemy_aphotic_shield_aoe_damage = float(level_data.get("aoe_damage", 0))
+	_enemy_aphotic_shield_radius = int(level_data.get("radius", 0))
+	_enemy_aphotic_shield_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_aphotic_shield_duration_pending_start = true
+
+	enemy["root_turns_left"] = 0
+	enemy["silence_turns_left"] = 0
+	enemy["entangle_dot_damage"] = 0.0
+	enemy["entangle_dot_turns_left"] = 0
+	enemy["stun_turns_left"] = 0
+	enemy["curse_stacks"] = 0
+	enemy["curse_active"] = false
+	enemy["curse_dot_damage"] = 0.0
+	enemy["curse_dot_turns_left"] = 0
+
+
+func _tick_enemy_aphotic_shield() -> void:
+	if not _enemy_aphotic_shield_active:
+		return
+	if _enemy_aphotic_shield_duration_pending_start:
+		_enemy_aphotic_shield_duration_pending_start = false
+		return
+	_enemy_aphotic_shield_turns_remaining -= 1
+	if _enemy_aphotic_shield_turns_remaining <= 0:
+		_end_enemy_aphotic_shield(false)
+
+
+## Ends the rival's Aphotic Shield, whether its duration simply ran out
+## (`exploded` false) or enough damage drained it to 0 HP (`exploded`
+## true, from _deal_fixed_damage_to_enemy()) - in which case it deals
+## the cast's own aoe_damage to the player, the only other participant
+## in a hero fight, mirroring Dark Pact's own single-target
+## simplification for a rival hero (see _cast_enemy_dark_pact()).
+func _end_enemy_aphotic_shield(exploded: bool) -> void:
+	var aoe_damage: float = _enemy_aphotic_shield_aoe_damage
+
+	_enemy_aphotic_shield_active = false
+	_enemy_aphotic_shield_hp = 0.0
+	_enemy_aphotic_shield_aoe_damage = 0.0
+	_enemy_aphotic_shield_radius = 0
+	_enemy_aphotic_shield_turns_remaining = 0
+	_enemy_aphotic_shield_duration_pending_start = false
+
+	if exploded and not _is_hero_hidden():
+		apply_damage(aoe_damage)
+
+
+# ------------------------------------------------------------------
+# Kunkka's Torrent, cast by the rival on the player - mirrors the
+# player's own _resolve_torrent_cast(). Simplification versus that
+# player-facing copy: like Dark Pact/Mist Coil, there's only one
+# possible target in a hero fight (no other enemy, and no bear/column
+# concept to splash onto), so the level-4 AoE radius has nothing extra
+# to reach here - this always resolves as a single hit.
+# ------------------------------------------------------------------
+
+func _cast_enemy_torrent(level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
+	_show_message_over_hero("Stunned!")
+
+
+# ------------------------------------------------------------------
+# Kunkka's Tidebringer, on the rival - same plain-Attack counter as the
+# player's own copy, just counting the rival's own Attacks on the
+# player (see _resolve_enemy_hero_attack()) instead. No cleave here -
+# same "only one possible target" simplification as Torrent's own
+# enemy-side copy above.
+# ------------------------------------------------------------------
+
+func _get_enemy_tidebringer_level_data() -> Dictionary:
+	if _enemy_hero_id == "":
+		return {}
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "tidebringer")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_enemy_skill("tidebringer")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _maybe_consume_enemy_tidebringer_stack() -> Dictionary:
+	var level_data: Dictionary = _get_enemy_tidebringer_level_data()
+	if level_data.is_empty():
+		return {}
+
+	_enemy_tidebringer_attack_count += 1
+	if _enemy_tidebringer_attack_count < int(level_data.get("hits_to_activate", 1)):
+		return {}
+
+	_enemy_tidebringer_attack_count = 0
+	return level_data
+
+
+# ------------------------------------------------------------------
+# Kunkka's X Marks the Spot, cast by the rival - marks the player (the
+# only other participant in a hero fight), so unlike the player's own
+# copy there's nothing to remember but the fact that a mark is pending
+# (_enemy_xmarks_pending) - see _enemy_hero_turn()'s own teleport check
+# at its very top, which resolves it on the rival's next turn without
+# spending that turn's action, mirroring _resolve_xmarks_teleport().
+# ------------------------------------------------------------------
+
+func _cast_enemy_xmarks() -> void:
+	_enemy_xmarks_pending = true
+
+
+# ------------------------------------------------------------------
+# Kunkka's Ghostship, cast by the rival - mirrors the player's own
+# _resolve_ghostship_cast(). Simplification versus that player-facing
+# copy: the ship's whole path-of-enemies concept collapses to a single
+# hit here, same "only one possible target" simplification Dark Pact/
+# Mist Coil/Torrent already use - there's no bear-on-the-path concept
+# for the rival AI to consider either, matching how it never targets
+# the bear in the first place (see _enemy_hero_turn()'s own doc
+# comment). No visual flourish here either - _play_ghostship_
+# animation() is purely cosmetic and only the player's own copy plays it.
+# ------------------------------------------------------------------
+
+func _cast_enemy_ghostship(level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+
+
+# ------------------------------------------------------------------
+# Abaddon's Curse of Avernus, cast by the rival - mirrors
+# _apply_curse_of_avernus_stack()/_tick_curse_of_avernus_effects(),
+# just building stacks on the player (via the _player_curse_* battle-
+# local vars, since there's only one player to track state on) instead
+# of on an enemy Dictionary, the same way Entangle's own root/silence/
+# DoT is mirrored by the _player_root_*/_player_entangle_* vars above.
+# ------------------------------------------------------------------
+
+func _get_enemy_curse_of_avernus_level_data() -> Dictionary:
+	if _enemy_hero_id == "":
+		return {}
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "curse_of_avernus")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_enemy_skill("curse_of_avernus")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+## Called on every rival plain Attack against the player (see
+## _resolve_enemy_hero_attack()): builds one stack, or - once this
+## level's hits_to_activate is reached - consumes them all to actually
+## curse the player (silence, sharing the same _player_silence_turns_
+## left field Entangle uses; and a damage-over-time, ticked by
+## _tick_enemy_curse_of_avernus_effects() below). No-ops entirely if
+## the rival doesn't have this skill learned or the player is already
+## cursed, same as the player's own copy.
+func _apply_enemy_curse_of_avernus_stack() -> void:
+	var level_data: Dictionary = _get_enemy_curse_of_avernus_level_data()
+	if level_data.is_empty() or _player_curse_active:
+		return
+
+	_player_curse_last_hit_turn = _turn_count
+
+	var stacks: int = _player_curse_stacks + 1
+	var hits_to_activate: int = int(level_data.get("hits_to_activate", 1))
+	if stacks < hits_to_activate:
+		_player_curse_stacks = stacks
+		return
+
+	_player_curse_stacks = 0
+	_player_curse_active = true
+	_player_silence_turns_left = int(level_data.get("silence_turns", 0))
+	_player_curse_dot_damage = float(level_data.get("dot_damage", 0))
+	_player_curse_dot_turns_left = int(level_data.get("dot_duration", 0))
+	_show_message_over_hero("Cursed!")
+
+
+## Ticks Curse of Avernus once per End Turn, alongside
+## _tick_player_entangle_effects(): applies this turn's damage-over-
+## time to the player while cursed, ending the curse once its duration
+## runs out; for a not-yet-cursed player still carrying stacks, decays
+## them to 0 once CURSE_OF_AVERNUS_STACK_DECAY_TURNS full turns have
+## passed since the rival's last hit - same rules as the player's own
+## copy, just aimed at the player instead of an enemy.
+func _tick_enemy_curse_of_avernus_effects() -> void:
+	if _player_curse_active:
+		if _player_curse_dot_turns_left > 0:
+			_player_curse_dot_turns_left -= 1
+			if _player_curse_dot_damage > 0.0:
+				apply_damage(_player_curse_dot_damage)
+
+		if _player_curse_dot_turns_left <= 0:
+			_player_curse_active = false
+			_player_curse_dot_damage = 0.0
+	elif _player_curse_stacks > 0:
+		if _turn_count - _player_curse_last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
+			_player_curse_stacks = 0
+
+
+# ------------------------------------------------------------------
+# Abaddon's Borrowed Time, on the rival - mirrors
+# _maybe_auto_activate_borrowed_time()/_tick_borrowed_time()/
+# _end_borrowed_time(). Like the player's own copy, nothing "casts"
+# this - the only entry point is _deal_fixed_damage_to_enemy() noticing
+# the rival's HP has crossed this level's threshold.
+# ------------------------------------------------------------------
+
+func _get_enemy_borrowed_time_level_data() -> Dictionary:
+	if _enemy_hero_id == "":
+		return {}
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "borrowed_time")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_enemy_skill("borrowed_time")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _maybe_auto_activate_enemy_borrowed_time(enemy: Dictionary) -> void:
+	if _enemy_borrowed_time_active or _enemy_skill_cooldowns.get("borrowed_time", 0) > 0:
+		return
+
+	var level_data: Dictionary = _get_enemy_borrowed_time_level_data()
+	if level_data.is_empty():
+		return
+
+	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
+	if max_hp <= 0.0:
+		return
+
+	var hp_pct: float = float(enemy.get("current_hp", 0)) / max_hp
+	if hp_pct > float(level_data.get("auto_activate_hp_pct", 0.3)):
+		return
+
+	_enemy_borrowed_time_active = true
+	_enemy_borrowed_time_heal_conversion_pct = float(level_data.get("heal_conversion_pct", 1.0))
+	_enemy_borrowed_time_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_borrowed_time_duration_pending_start = true
+
+	_enemy_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
+
+
+func _tick_enemy_borrowed_time() -> void:
+	if not _enemy_borrowed_time_active:
+		return
+	if _enemy_borrowed_time_duration_pending_start:
+		_enemy_borrowed_time_duration_pending_start = false
+		return
+	_enemy_borrowed_time_turns_remaining -= 1
+	if _enemy_borrowed_time_turns_remaining <= 0:
+		_end_enemy_borrowed_time()
+
+
+func _end_enemy_borrowed_time() -> void:
+	_enemy_borrowed_time_active = false
+	_enemy_borrowed_time_heal_conversion_pct = 0.0
+	_enemy_borrowed_time_turns_remaining = 0
+	_enemy_borrowed_time_duration_pending_start = false
+
+
 ## Moves an enemy to `new_pos` (clamped on-board) and syncs its node's
-## screen position to match.
+## screen position to match, flipping its art to face the direction it
+## just moved in (same left/right art convention as _spawn_enemy()).
 func _move_enemy(enemy: Dictionary, new_pos: int) -> void:
+	var old_pos: int = enemy["pos_index"]
 	enemy["pos_index"] = clampi(new_pos, 0, GRID_COLUMNS - 1)
 	enemy["node"].position = Vector2(_index_to_x(enemy["pos_index"]), _creature_y())
+
+	var direction: int = enemy["pos_index"] - old_pos
+	if direction != 0:
+		var native_faces_right: bool = enemy["static"].get("is_hero_fight", false)
+		enemy["node"].flip_h = (direction < 0) if native_faces_right else (direction > 0)
 
 
 ## Picks a flee direction once and sticks with it - only flipping to
@@ -3834,5 +5115,14 @@ func _handle_defeat() -> void:
 	_battle_over = true
 	_update_action_buttons()
 	PlayerManager.record_high_score()
+
+	# A rival hero that just won a duel restocks the potions it spent
+	# surviving it, same as EnemyHeroManager's own simulated fights do
+	# right after theirs (see restock_npc_potions()) - otherwise a
+	# player who keeps losing to the same rival would slowly bleed it
+	# dry of potions it can never buy back.
+	if _in_hero_fight:
+		EnemyHeroManager.restock_npc_potions(_enemy_hero_id)
+
 	defeat_popup.visible = true
 	print("Hero defeated.")
