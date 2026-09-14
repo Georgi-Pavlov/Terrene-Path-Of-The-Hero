@@ -66,6 +66,12 @@ const GHOSTSHIP_IMAGE_PATH := "res://assets/heroes skills/Kunkka_Ghostship.png"
 # to visually cross the screen.
 const GHOSTSHIP_TRAVEL_DURATION := 0.6
 
+# Winter Wyvern's Cold Embrace (see _activate_cold_embrace()) always
+# uses this art for the hero's portrait while it's active, regardless
+# of skill level - reverted back to the hero's own normal image
+# (_hero_static.image) once it ends (see _end_cold_embrace()).
+const COLD_EMBRACE_IMAGE_PATH := "res://assets/heroes skills/Winter_Wyvern_Cold_Embrace.png"
+
 var _hero_static: Dictionary = {}   # full definition from GameManager (stats, skills, image)
 var _recruited: Dictionary = {}     # saved state from PlayerManager (current hp/mana/xp, chosen skill)
 
@@ -138,6 +144,62 @@ var _shadow_dance_turns_remaining: int = 0
 # Same "doesn't count on the casting turn" behavior as Essence Shift's
 # duration - see _essence_shift_duration_pending_start.
 var _shadow_dance_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Arctic Burn: while active, the hero's plain Attacks
+# get a flat bonus_damage (folded into _roll_hero_damage(), same slot
+# Essence Shift's/Shadow Dance's/True Form's own bonus damage use) and
+# extra reach (folded into _hero_attack_column_range(), so ranged
+# targeting opens further out too), for this level's own `attacks`
+# count of Attacks or `duration` turns - whichever runs out first, same
+# two-limits race as Essence Shift's attacks_remaining/turns_remaining
+# (see _apply_arctic_burn_attack()/_tick_arctic_burn()). Recasting
+# while a previous activation is still running just overwrites it
+# outright - there's nothing borrowed to give back first, unlike
+# Essence Shift.
+# ------------------------------------------------------------------
+var _arctic_burn_active: bool = false
+var _arctic_burn_bonus_damage: float = 0.0
+var _arctic_burn_bonus_range: int = 0
+var _arctic_burn_attacks_remaining: int = 0
+var _arctic_burn_turns_remaining: int = 0
+var _arctic_burn_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Cold Embrace: a defensive self-cast that swaps the
+# hero's portrait to COLD_EMBRACE_IMAGE_PATH, makes him fully immune to
+# damage (see apply_damage()), heals him once per turn, and locks out
+# EVERY other action - move, attack, skill, or item (see _hero_move()/
+# _on_attack_pressed()/_on_skill_pressed()/_on_item_pressed()) - for the
+# duration, same "casting turn doesn't count" pattern as every other
+# buff (see _tick_cold_embrace()). With no action possible, the turn
+# auto-skips straight through to the next one (_end_turn()'s own tail),
+# the same way a stunned turn does. Casting it also dispels every OTHER
+# effect currently on the hero, good or bad, before establishing itself
+# (see _dispel_all_hero_effects(), called from _activate_cold_embrace()).
+# ------------------------------------------------------------------
+var _cold_embrace_active: bool = false
+var _cold_embrace_heal_per_turn: float = 0.0
+var _cold_embrace_turns_remaining: int = 0
+var _cold_embrace_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Winter Wyvern's ultimate, Winter's Curse: freezes a target enemy
+# (target["stun_turns_left"], same shared per-enemy field Torrent's/
+# Ice Blast's own stun already uses) for `level_data.duration` of its
+# own turns. There's no separate duration counter for the "nearby
+# enemies pile onto it instead of the hero" half of the effect either -
+# _is_winters_curse_active() derives it straight from that same stun
+# counter, so both halves always wear off together. _enemy_turn()
+# captures whether the curse is active once at the very top of each
+# full enemy-turn pass (see its own `curse_active`/`curse_target_pos`
+# locals) rather than re-checking per enemy, so every enemy this turn
+# sees the same answer even though the target's own stun_turns_left
+# ticks down partway through that same pass.
+# ------------------------------------------------------------------
+var _winter_curse_target: Dictionary = {}
+var _winter_curse_bonus_damage_pct: float = 0.0
+var _winter_curse_range: int = 0
 
 # ------------------------------------------------------------------
 # Lone Druid's Spirit Bear (summon_spirit_bear): a persistent ally
@@ -386,6 +448,33 @@ var _enemy_tidebringer_attack_count: int = 0
 # very top.
 var _enemy_xmarks_pending: bool = false
 
+# Winter Wyvern's Arctic Burn, cast by the rival on themselves - mirrors
+# the player's own _activate_arctic_burn()/_apply_arctic_burn_attack()/
+# _tick_arctic_burn()/_end_arctic_burn(): bonus damage/range for this
+# level's own `attacks` count of Attacks, or `duration` turns, whichever
+# runs out first.
+var _enemy_arctic_burn_active: bool = false
+var _enemy_arctic_burn_bonus_damage: float = 0.0
+var _enemy_arctic_burn_bonus_range: int = 0
+var _enemy_arctic_burn_attacks_remaining: int = 0
+var _enemy_arctic_burn_turns_remaining: int = 0
+var _enemy_arctic_burn_duration_pending_start: bool = false
+
+# Winter Wyvern's Cold Embrace, cast by the rival on themselves - mirrors
+# the player's own _activate_cold_embrace()/_tick_cold_embrace()/
+# _end_cold_embrace(): full damage immunity (see
+# _deal_fixed_damage_to_enemy()) plus a heal every turn, for the
+# duration - during which the rival can't move or attack (see
+# _enemy_hero_turn()'s own lockout) but CAN still cast another skill,
+# same as the player's own copy only blocks Move/Attack, never
+# _on_skill_pressed(). Casting it also dispels every other effect
+# currently on the rival, good or bad - see
+# _dispel_all_enemy_hero_effects().
+var _enemy_cold_embrace_active: bool = false
+var _enemy_cold_embrace_heal_per_turn: float = 0.0
+var _enemy_cold_embrace_turns_remaining: int = 0
+var _enemy_cold_embrace_duration_pending_start: bool = false
+
 # ------------------------------------------------------------------
 # What the rival's skills above do TO THE PLAYER. All of this only
 # ever gets set during a hero fight and is reset by
@@ -433,6 +522,28 @@ var _player_curse_active: bool = false
 var _player_curse_dot_damage: float = 0.0
 var _player_curse_dot_turns_left: int = 0
 var _player_curse_last_hit_turn: int = 0
+
+# Ancient Apparition's Cold Feet/Ice Vortex, cast by the rival on the
+# player - both are plain damage-over-time, so both mirror Entangle's
+# own _player_entangle_dot_* fields exactly, just held separately (each
+# under its own dedicated pair of fields) since a different skill's DoT
+# shouldn't silently share or clobber another's counters, the same
+# reasoning the player-side per-enemy cold_feet_dot_*/ice_vortex_dot_*
+# fields already follow.
+var _player_cold_feet_dot_damage: float = 0.0
+var _player_cold_feet_dot_turns_left: int = 0
+var _player_ice_vortex_dot_damage: float = 0.0
+var _player_ice_vortex_dot_turns_left: int = 0
+
+# Ancient Apparition's Ice Blast, cast by the rival on the player -
+# mirrors the player-side per-enemy ice_blast_dot_damage/ice_blast_dot_
+# turns_left/ice_blast_execute_pct fields (see _resolve_ice_blast_
+# cast()/_tick_ice_blast_effects()), just held as battle-local vars
+# since there's only one player to track them on. The stun shares
+# _player_stun_turns_left above, same as Torrent's own stun does.
+var _player_ice_blast_dot_damage: float = 0.0
+var _player_ice_blast_dot_turns_left: int = 0
+var _player_ice_blast_execute_pct: float = 0.0
 
 # ------------------------------------------------------------------
 # Ranged-hero target selection: when true, the enemies in
@@ -502,6 +613,42 @@ var _pending_cold_feet_level_data: Dictionary = {}
 # actually clicked (_resolve_ice_vortex_cast()).
 var _pending_ice_vortex_level_data: Dictionary = {}
 
+# Ancient Apparition's Chilling Touch, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_chilling_touch_targeting() opens targeting until a target is
+# actually clicked (_resolve_chilling_touch_cast()).
+var _pending_chilling_touch_level_data: Dictionary = {}
+
+# Ancient Apparition's Ice Blast, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_ice_blast_targeting() opens targeting until a target is
+# actually clicked (_resolve_ice_blast_cast()).
+var _pending_ice_blast_level_data: Dictionary = {}
+
+# Winter Wyvern's Splinter Blast, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_splinter_blast_targeting() opens targeting until a target is
+# actually clicked (_resolve_splinter_blast_cast()).
+var _pending_splinter_blast_level_data: Dictionary = {}
+
+# Winter Wyvern's ultimate, Winter's Curse, held the same way as every
+# other targeted skill's own pending level data above, from the moment
+# _start_winters_curse_targeting() opens targeting until a target is
+# actually clicked (_resolve_winters_curse_cast()).
+var _pending_winters_curse_level_data: Dictionary = {}
+
+# Crystal Maiden's Crystal Nova, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_crystal_nova_targeting() opens targeting until a target is
+# actually clicked (_resolve_crystal_nova_cast()).
+var _pending_crystal_nova_level_data: Dictionary = {}
+
+# Crystal Maiden's Frostbite, held the same way as every other targeted
+# skill's own pending level data above, from the moment
+# _start_frostbite_targeting() opens targeting until a target is
+# actually clicked (_resolve_frostbite_cast()).
+var _pending_frostbite_level_data: Dictionary = {}
+
 const RANGE_ENEMY_ATTACK_RANGE := 3
 const RANGE_ENEMY_FLEE_DISTANCE := 1
 
@@ -521,16 +668,12 @@ const RANGE_ENEMY_FLEE_DISTANCE := 1
 # Tidebringer only ever build off the rival's own plain Attacks (see
 # _apply_enemy_curse_of_avernus_stack()/
 # _maybe_consume_enemy_tidebringer_stack()).
-# Ancient Apparition's Cold Feet and Ice Vortex aren't here for a
-# different reason: there's no enemy-side mirror (or EnemySkillAI
-# scoring) for either yet at all - deliberately deferred until every
-# one of his skills exists and the AI tuning for the whole kit is
-# handled in one pass, the same way Abaddon's/Kunkka's own skills were
-# mirrored into rival AI only after their full kits existed.
 const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
 	"dark_pact", "pounce", "essence_shift", "shadow_dance",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
 	"mist_coil", "aphotic_shield", "torrent", "x_marks_the_spot", "ghostship",
+	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
+	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
 ]
 
 # Reinforcements: if the hero hasn't cleared every enemy within this
@@ -973,7 +1116,9 @@ func _populate_item_grid() -> void:
 
 			if is_consumable:
 				btn.mouse_filter = Control.MOUSE_FILTER_STOP
-				btn.disabled = _battle_over or _has_acted_this_turn
+				# Items are locked out for as long as Cold Embrace is
+				# active on the hero (see _cold_embrace_active).
+				btn.disabled = _battle_over or _has_acted_this_turn or _cold_embrace_active
 				btn.pressed.connect(_on_item_pressed.bind(item_id))
 			else:
 				# Equipment is passive, not clickable - but `disabled`
@@ -995,7 +1140,7 @@ func _refresh_gold_label() -> void:
 
 
 func _on_item_pressed(item_id: String) -> void:
-	if _battle_over or _has_acted_this_turn:
+	if _battle_over or _has_acted_this_turn or _cold_embrace_active:
 		return
 	if not PlayerManager.use_item(item_id):
 		return
@@ -1197,6 +1342,10 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 	if _battle_over or _has_acted_this_turn:
 		return
 
+	if _cold_embrace_active:
+		_show_message_over_hero("Encased in ice!")
+		return
+
 	if _player_silence_turns_left > 0:
 		_show_message_over_hero("Silenced!")
 		return
@@ -1245,6 +1394,10 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			_activate_essence_shift(level_data)
 		"shadow_dance":
 			_activate_shadow_dance(level_data)
+		"arctic_burn":
+			_activate_arctic_burn(level_data)
+		"cold_embrace":
+			_activate_cold_embrace(level_data)
 		"summon_spirit_bear":
 			_summon_spirit_bear(level_data)
 		"spirit_link":
@@ -1302,6 +1455,55 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			# Same deferred-spend pattern as every other targeted skill
 			# above - the mana/cooldown/turn spend happens once the
 			# click resolves (_resolve_ice_vortex_cast), not here.
+			return
+		"chilling_touch":
+			if not _start_chilling_touch_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_chilling_touch_cast), not here.
+			return
+		"ice_blast":
+			if not _start_ice_blast_targeting(level_data):
+				# No living enemy anywhere on the field - nothing
+				# happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_ice_blast_cast), not here.
+			return
+		"splinter_blast":
+			if not _start_splinter_blast_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_splinter_blast_cast), not here.
+			return
+		"winter's_curse":
+			if not _start_winters_curse_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_winters_curse_cast), not here.
+			return
+		"crystal_nova":
+			if not _start_crystal_nova_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_crystal_nova_cast), not here.
+			return
+		"frostbite":
+			if not _start_frostbite_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_frostbite_cast), not here.
 			return
 		_:
 			# No effect implemented yet for other skills - this is the
@@ -1742,6 +1944,279 @@ func _tick_ice_vortex_effects() -> void:
 					return
 
 
+## Resolves a Chilling Touch cast on `target`: one instant hit for the
+## hero's own rolled Attack damage (_roll_hero_damage(), the same roll
+## a plain Attack uses) plus this level's own flat bonus_damage on top,
+## mitigated by the target's own armor via _deal_fixed_damage_to_enemy()
+## - same helper Dark Pact/Torrent/Ghostship use. This is SKILL damage,
+## not the plain Attack action itself, so - same as every other skill
+## here - it never triggers Essence Shift's steal, Spirit Link's
+## lifesteal, or Curse of Avernus's stacking; those are all scoped
+## specifically to _apply_hero_attack().
+func _resolve_chilling_touch_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = _roll_hero_damage() + float(level_data.get("bonus_damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["chilling_touch"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("chilling_touch", _skill_cooldowns["chilling_touch"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Resolves an Ice Blast cast on `target`: `level_data.damage` to
+## `target` and every OTHER living, targetable enemy within
+## `level_data.radius` columns of it (mirroring Dark Pact's/Torrent's
+## own "one rolled amount, many separately-mitigated hits" pattern),
+## then arms this level's own DoT (dot_damage/dot_duration) AND execute
+## threshold (execute_pct, the "reserved %" of max HP - see
+## _tick_ice_blast_effects() for how that's actually enforced) on every
+## one of them that survived the initial hit. `target` alone also gets
+## stunned, mirroring Torrent's own "only the primary target" rule for
+## its stun.
+func _resolve_ice_blast_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	var dot_damage: float = float(level_data.get("dot_damage", 0))
+	var dot_duration: int = int(level_data.get("dot_duration", 0))
+	var execute_pct: float = float(level_data.get("execute_pct", 0.0))
+	var radius: int = int(level_data.get("radius", 1))
+	var target_pos: int = target["pos_index"]
+
+	var hit_targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], target_pos) <= radius:
+			hit_targets.append(enemy)
+
+	for enemy in hit_targets:
+		_deal_fixed_damage_to_enemy(enemy, damage)
+		if enemy.get("current_hp", 0) > 0:
+			enemy["ice_blast_dot_damage"] = dot_damage
+			enemy["ice_blast_dot_turns_left"] = dot_duration
+			enemy["ice_blast_execute_pct"] = execute_pct
+
+	if target.get("current_hp", 0) > 0:
+		target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["ice_blast"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("ice_blast", _skill_cooldowns["ice_blast"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Ticks Ice Blast's damage-over-time down by one turn for every enemy
+## currently carrying it, dealing that turn's damage (still mitigated
+## by that enemy's own armor, via _deal_fixed_damage_to_enemy()) - then,
+## if it survived that hit, checks its execute threshold: an enemy
+## whose current_hp has dropped to or below execute_pct of its own max
+## HP dies outright, regardless of how much literal HP it has left
+## (the "reserved %" - see the skill's own design doc). Once the DoT
+## duration itself runs out, the execute threshold resets to 0 (no more
+## instant kills) until Ice Blast is cast on that enemy again. Called
+## once per End Turn, alongside every other enemy-side DoT.
+func _tick_ice_blast_effects() -> void:
+	for enemy in _enemies.duplicate():
+		if enemy.get("ice_blast_dot_turns_left", 0) <= 0:
+			continue
+
+		enemy["ice_blast_dot_turns_left"] -= 1
+		var dot_damage: float = float(enemy.get("ice_blast_dot_damage", 0))
+		if dot_damage > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, dot_damage)
+			if _battle_over:
+				return
+
+		if enemy.get("current_hp", 0) > 0:
+			var execute_pct: float = float(enemy.get("ice_blast_execute_pct", 0.0))
+			var max_hp: float = float(enemy["static"].get("hp", 1))
+			if execute_pct > 0.0 and enemy["current_hp"] <= max_hp * execute_pct:
+				_kill_enemy(enemy)
+				if _battle_over:
+					return
+
+		if enemy.get("ice_blast_dot_turns_left", 0) <= 0:
+			enemy["ice_blast_execute_pct"] = 0.0
+
+
+## Resolves a Splinter Blast cast on `target`: `level_data.damage` to
+## `target` alone, then `level_data.splinter_damage` - a separate,
+## lighter amount, not a fraction of the main hit - to every OTHER
+## living, targetable enemy within `level_data.splinter_range` columns
+## of `target`'s own position, mirroring Torrent's own "splash centered
+## on the target, never re-hitting it" radius (_resolve_torrent_cast()),
+## just with the splash using its own flat damage figure instead of
+## reusing the primary hit's.
+func _resolve_splinter_blast_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+
+	var splinter_damage: float = float(level_data.get("splinter_damage", 0))
+	var splinter_range: int = int(level_data.get("splinter_range", 0))
+	var target_pos: int = target["pos_index"]
+	for enemy in _enemies:
+		if is_same(enemy, target) or _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], target_pos) <= splinter_range:
+			_deal_fixed_damage_to_enemy(enemy, splinter_damage)
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["splinter_blast"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("splinter_blast", _skill_cooldowns["splinter_blast"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Resolves a Winter's Curse cast on `target`: freezes it in place for
+## `level_data.duration` of its own turns (target["stun_turns_left"],
+## the same shared per-enemy field Torrent's/Ice Blast's own stun
+## already uses - see _enemy_turn()'s stun check), then marks it as the
+## hero's current curse target so _enemy_turn() redirects every OTHER
+## enemy within `level_data.curse_range` columns of it for as long as
+## that freeze holds (see _is_winters_curse_active()). Recasting while a
+## previous curse is still running simply overwrites it outright -
+## there's nothing to give back the way Essence Shift's borrowed stats
+## need.
+func _resolve_winters_curse_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	target["stun_turns_left"] = int(level_data.get("duration", 0))
+	_winter_curse_target = target
+	_winter_curse_bonus_damage_pct = float(level_data.get("bonus_damage_pct", 0.0))
+	_winter_curse_range = int(level_data.get("curse_range", 0))
+
+	_show_message_over_hero("Winter's Curse!")
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["winter's_curse"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("winter's_curse", _skill_cooldowns["winter's_curse"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Whether Winter's Curse is still actively redirecting enemies toward
+## its target right now: there's a target at all, it's still part of
+## the current fight (_is_enemy_still_active() - the same "hasn't died
+## or been cleared by a stage/hero-fight transition" check Essence
+## Shift's own donors use), and its freeze (target["stun_turns_left"])
+## hasn't run out. No separate duration counter to keep in sync - the
+## curse's "pile onto the target" half rides on exactly the same clock
+## as the freeze itself, by design (see the state-var block's own
+## comment above).
+func _is_winters_curse_active() -> bool:
+	if _winter_curse_target.is_empty():
+		return false
+	if not _is_enemy_still_active(_winter_curse_target):
+		return false
+	return _winter_curse_target.get("stun_turns_left", 0) > 0
+
+
+## Resolves a Crystal Nova cast on `target`: `level_data.damage` to
+## `target`, then - once level_data.radius rises above 0, starting at
+## level 3 - that same damage to every OTHER living, targetable enemy
+## within `level_data.radius` columns of `target`'s own position too,
+## mirroring Torrent's own "splash centered on the target, never
+## re-hitting it, same amount as the primary hit" radius
+## (_resolve_torrent_cast()).
+func _resolve_crystal_nova_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+
+	var radius: int = int(level_data.get("radius", 0))
+	if radius > 0:
+		var target_pos: int = target["pos_index"]
+		for enemy in _enemies:
+			if is_same(enemy, target) or _is_target_hidden(enemy):
+				continue
+			if _distance(enemy["pos_index"], target_pos) <= radius:
+				_deal_fixed_damage_to_enemy(enemy, damage)
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["crystal_nova"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("crystal_nova", _skill_cooldowns["crystal_nova"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Resolves a Frostbite cast on `target`: freezes it in place for
+## `level_data.stun_turns` of its own turns (target["stun_turns_left"],
+## the same shared per-enemy field Torrent's/Ice Blast's/Winter's
+## Curse's own stun already uses), then arms its own damage-over-time
+## (target["frostbite_dot_damage"]/["frostbite_dot_turns_left"], ticked
+## by _tick_frostbite_effects() alongside every other DoT) - a
+## dedicated pair of fields rather than reusing Cold Feet's/Ice
+## Vortex's/Ice Blast's own, so a different skill's DoT never silently
+## shares or clobbers another's counters on the same target.
+func _resolve_frostbite_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	target["stun_turns_left"] = int(level_data.get("stun_turns", 0))
+	target["frostbite_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["frostbite_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["frostbite"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("frostbite", _skill_cooldowns["frostbite"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Ticks Frostbite's damage-over-time down by one turn for every enemy
+## currently carrying it, dealing that turn's damage (still mitigated
+## by that enemy's own armor, via _deal_fixed_damage_to_enemy()) -
+## called once per End Turn, alongside every other DoT. Bails out
+## immediately if a tick's damage ends the battle, same reasoning as
+## _tick_cold_feet_effects()'s own early return.
+func _tick_frostbite_effects() -> void:
+	for enemy in _enemies.duplicate():
+		if enemy.get("frostbite_dot_turns_left", 0) > 0:
+			enemy["frostbite_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("frostbite_dot_damage", 0))
+			if dot_damage > 0.0:
+				_deal_fixed_damage_to_enemy(enemy, dot_damage)
+				if _battle_over:
+					return
+
+
 # ------------------------------------------------------------------
 # Kunkka's Tidebringer - a passive, so unlike Torrent above there's no
 # button/cast/mana/cooldown for it (see _populate_skill_buttons()'s
@@ -2028,6 +2503,179 @@ func _is_enemy_still_active(enemy_ref: Dictionary) -> bool:
 		if enemy == enemy_ref:
 			return true
 	return false
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Arctic Burn.
+# ------------------------------------------------------------------
+
+## Activates Arctic Burn: arms this level's own bonus_damage/bonus_range
+## for the next `level_data.attacks` plain Attacks, or `level_data.
+## duration` turns - whichever runs out first (see
+## _apply_arctic_burn_attack()/_tick_arctic_burn()). Always "succeeds" -
+## no target or range requirement to cast it, same as Essence Shift/
+## Shadow Dance.
+func _activate_arctic_burn(level_data: Dictionary) -> void:
+	_arctic_burn_active = true
+	_arctic_burn_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_arctic_burn_bonus_range = int(level_data.get("bonus_range", 0))
+	_arctic_burn_attacks_remaining = int(level_data.get("attacks", 0))
+	_arctic_burn_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_arctic_burn()), same as
+	# every other duration-based buff.
+	_arctic_burn_duration_pending_start = true
+
+
+## Called right after a plain Attack lands (see _apply_hero_attack()).
+## Spends one of Arctic Burn's banked attacks, if any are left, and ends
+## the whole effect right there once the last one is used - the other
+## half of the attacks-or-duration race _tick_arctic_burn() runs on the
+## turn-count side.
+func _apply_arctic_burn_attack() -> void:
+	if not _arctic_burn_active or _arctic_burn_attacks_remaining <= 0:
+		return
+
+	_arctic_burn_attacks_remaining -= 1
+	if _arctic_burn_attacks_remaining <= 0:
+		_end_arctic_burn()
+
+
+## Ticks Arctic Burn's duration down once per End Turn, same timing (and
+## same "the casting turn doesn't count" skip) as Essence Shift's own
+## _tick_essence_shift().
+func _tick_arctic_burn() -> void:
+	if not _arctic_burn_active:
+		return
+
+	if _arctic_burn_duration_pending_start:
+		_arctic_burn_duration_pending_start = false
+		return
+
+	_arctic_burn_turns_remaining -= 1
+	if _arctic_burn_turns_remaining <= 0:
+		_end_arctic_burn()
+
+
+## Arctic Burn has run its course - either every banked Attack got used
+## (_apply_arctic_burn_attack()) or its duration ran out first
+## (_tick_arctic_burn()), whichever came first.
+func _end_arctic_burn() -> void:
+	_arctic_burn_active = false
+	_arctic_burn_bonus_damage = 0.0
+	_arctic_burn_bonus_range = 0
+	_arctic_burn_attacks_remaining = 0
+	_arctic_burn_turns_remaining = 0
+	_arctic_burn_duration_pending_start = false
+
+	_show_message_over_hero("Arctic Burn wore off")
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Cold Embrace.
+# ------------------------------------------------------------------
+
+## Activates Cold Embrace: dispels every OTHER effect currently on the
+## hero (see _dispel_all_hero_effects()), swaps his portrait to
+## COLD_EMBRACE_IMAGE_PATH, and arms this level's own heal_per_turn for
+## `level_data.duration` turns - during which apply_damage() blocks
+## every hit outright and _hero_move()/_on_attack_pressed() refuse to
+## act. Always "succeeds" - no target or range requirement to cast it,
+## same as every other self-cast buff.
+func _activate_cold_embrace(level_data: Dictionary) -> void:
+	_dispel_all_hero_effects()
+
+	_cold_embrace_active = true
+	_cold_embrace_heal_per_turn = float(level_data.get("heal", 0))
+	_cold_embrace_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_cold_embrace()), same as
+	# every other duration-based buff.
+	_cold_embrace_duration_pending_start = true
+
+	_set_hero_image(COLD_EMBRACE_IMAGE_PATH)
+	_show_message_over_hero("Encased in ice!")
+
+
+## Dispels every other effect currently on the hero, good or bad, right
+## before Cold Embrace establishes its own state (_activate_cold_
+## embrace()): every self-buff that could in principle be active - only
+## ever really Arctic Burn for Winter Wyvern's own kit, since the rest
+## belong to other heroes, but this stays generic and correct regardless
+## of whose battle it runs in - plus every debuff a rival hero fight
+## boss could have inflicted (root, silence, Entangle's/Curse of
+## Avernus's/Cold Feet's/Ice Vortex's/Ice Blast's damage-over-time, Ice
+## Blast's execute threshold, Pounce's/Torrent's stun, and a hostile
+## Essence Shift's stat penalty) - the same field list _reset_enemy_
+## hero_state() clears fresh for each new hero fight.
+func _dispel_all_hero_effects() -> void:
+	if _arctic_burn_active:
+		_end_arctic_burn()
+	if _essence_shift_active:
+		_end_essence_shift()
+	if _shadow_dance_active:
+		_end_shadow_dance()
+	if _spirit_link_active:
+		_end_spirit_link()
+	if _true_form_active:
+		_end_true_form()
+	if _aphotic_shield_active:
+		_end_aphotic_shield(false)
+	if _borrowed_time_active:
+		_end_borrowed_time()
+
+	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_player_root_turns_left = 0
+	_player_silence_turns_left = 0
+	_player_entangle_dot_damage = 0.0
+	_player_entangle_dot_turns_left = 0
+	_player_stun_turns_left = 0
+	_player_curse_stacks = 0
+	_player_curse_active = false
+	_player_curse_dot_damage = 0.0
+	_player_curse_dot_turns_left = 0
+	_player_curse_last_hit_turn = 0
+	_player_cold_feet_dot_damage = 0.0
+	_player_cold_feet_dot_turns_left = 0
+	_player_ice_vortex_dot_damage = 0.0
+	_player_ice_vortex_dot_turns_left = 0
+	_player_ice_blast_dot_damage = 0.0
+	_player_ice_blast_dot_turns_left = 0
+	_player_ice_blast_execute_pct = 0.0
+
+	_refresh_bars()
+
+
+## Ticks Cold Embrace's duration down once per End Turn, same timing
+## (and same "the casting turn doesn't count" skip) as every other
+## duration-based buff - healing the hero for this level's own
+## heal_per_turn on every tick that actually counts against the
+## duration (the skipped casting-turn one doesn't heal either).
+func _tick_cold_embrace() -> void:
+	if not _cold_embrace_active:
+		return
+
+	if _cold_embrace_duration_pending_start:
+		_cold_embrace_duration_pending_start = false
+		return
+
+	heal(_cold_embrace_heal_per_turn)
+	_cold_embrace_turns_remaining -= 1
+	if _cold_embrace_turns_remaining <= 0:
+		_end_cold_embrace()
+
+
+## Ends Cold Embrace once its duration runs out: reverts the hero's
+## portrait and drops his damage immunity/heal-per-turn/full-action
+## lockout (see _update_action_buttons()/_end_turn()'s own auto-skip).
+func _end_cold_embrace() -> void:
+	_cold_embrace_active = false
+	_cold_embrace_heal_per_turn = 0.0
+	_cold_embrace_turns_remaining = 0
+	_cold_embrace_duration_pending_start = false
+
+	_set_hero_image(_hero_static.get("image", ""))
+	_show_message_over_hero("Cold Embrace wears off")
 
 
 # ------------------------------------------------------------------
@@ -2376,13 +3024,13 @@ func _refresh_skill_cooldown_labels() -> void:
 
 
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
-## and ticks Essence Shift's, Shadow Dance's, Spirit Link's, True
-## Form's, Aphotic Shield's, and Borrowed Time's durations, plus every
-## enemy's Entangle/Curse of Avernus/Cold Feet/Ice Vortex root/silence/
-## DoT/stack durations, alongside them - and, during a hero fight, the
-## rival's own mirrored copies of all of the above (Cold Feet/Ice
-## Vortex excepted - see their own notes about not having an enemy-side
-## mirror yet). Called once per End Turn.
+## and ticks Essence Shift's, Shadow Dance's, Arctic Burn's, Cold
+## Embrace's, Spirit Link's, True Form's, Aphotic Shield's, and Borrowed
+## Time's durations, plus every
+## enemy's Entangle/Curse of Avernus/Cold Feet/Ice Vortex/Ice Blast
+## root/silence/DoT/stack/execute durations, alongside them - and,
+## during a hero fight, the rival's own mirrored copies of all of the
+## above. Called once per End Turn.
 func _tick_skill_cooldowns() -> void:
 	for skill_id in _skill_cooldowns.keys():
 		var new_value: int = maxi(0, _skill_cooldowns[skill_id] - 1)
@@ -2391,6 +3039,8 @@ func _tick_skill_cooldowns() -> void:
 
 	_tick_essence_shift()
 	_tick_shadow_dance()
+	_tick_arctic_burn()
+	_tick_cold_embrace()
 	_tick_spirit_link()
 	_tick_true_form()
 	_tick_aphotic_shield()
@@ -2399,6 +3049,8 @@ func _tick_skill_cooldowns() -> void:
 	_tick_curse_of_avernus_effects()
 	_tick_cold_feet_effects()
 	_tick_ice_vortex_effects()
+	_tick_ice_blast_effects()
+	_tick_frostbite_effects()
 
 	if _in_hero_fight:
 		for skill_id in _enemy_skill_cooldowns.keys():
@@ -2412,6 +3064,11 @@ func _tick_skill_cooldowns() -> void:
 		_tick_enemy_borrowed_time()
 		_tick_player_entangle_effects()
 		_tick_enemy_curse_of_avernus_effects()
+		_tick_player_cold_feet_effects()
+		_tick_player_ice_vortex_effects()
+		_tick_player_ice_blast_effects()
+		_tick_enemy_arctic_burn()
+		_tick_enemy_cold_embrace()
 
 
 # ------------------------------------------------------------------
@@ -2698,8 +3355,15 @@ func _end_borrowed_time() -> void:
 ## converted into a heal while Borrowed Time is active (see below), or
 ## absorbed some/all by Aphotic Shield's own HP pool instead - so
 ## callers that need it (a rival hero's own Spirit Link lifesteal, via
-## _resolve_enemy_hero_attack()) don't have to re-derive it.
+## _resolve_enemy_hero_attack()) don't have to re-derive it. While
+## Winter Wyvern's Cold Embrace is active the hero is fully immune -
+## every hit (a creep's, a rival hero's skill, any ongoing DoT) is
+## discarded outright before armor mitigation, Borrowed Time, or Aphotic
+## Shield ever get a look at it.
 func apply_damage(amount: float) -> float:
+	if _cold_embrace_active:
+		return 0.0
+
 	var reduced: float = _apply_armor_reduction(amount, _hero_armor())
 	# Savage Roar's damage reduction stacks on top of armor mitigation
 	# rather than replacing it, and only applies while it's active.
@@ -2947,6 +3611,10 @@ func _hero_move(direction: int) -> void:
 		_show_message_over_hero("Rooted!")
 		return
 
+	if _cold_embrace_active:
+		_show_message_over_hero("Encased in ice!")
+		return
+
 	_cancel_targeting()
 
 	var distance: int = _hero_move_distance()
@@ -2991,6 +3659,10 @@ func _on_attack_pressed() -> void:
 	if _battle_over or _has_acted_this_turn:
 		return
 
+	if _cold_embrace_active:
+		_show_message_over_hero("Encased in ice!")
+		return
+
 	if _is_ranged_hero():
 		_start_ranged_targeting()
 	else:
@@ -3007,10 +3679,13 @@ func _resolve_melee_attack() -> void:
 
 ## How many columns away a ranged hero can hit, from their Range
 ## stat: 200-300 -> 1 column, 300-400 -> 2 columns, and so on
-## (+100 range per extra column).
+## (+100 range per extra column) - plus Winter Wyvern's Arctic Burn
+## bonus_range while it's active, folded straight in so it stretches
+## every consumer of this helper (a plain ranged Attack, Chilling
+## Touch's own "same as attack range" targeting) the same way.
 func _hero_attack_column_range() -> int:
 	var range_stat: float = float(_recruited.get("stats", {}).get("range", 200))
-	return maxi(1, floori((range_stat - 200.0) / 100.0) + 1)
+	return maxi(1, floori((range_stat - 200.0) / 100.0) + 1) + _arctic_burn_bonus_range
 
 
 func _start_ranged_targeting() -> void:
@@ -3247,6 +3922,168 @@ func _start_ice_vortex_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
+## Ancient Apparition's Chilling Touch target picking: same column-
+## range/highlight mechanism as every other targeted skill above, but
+## using the hero's own normal attack range (_hero_attack_column_
+## range(), the same stat-scaled helper a plain ranged Attack/Entangle
+## use) rather than a skill-specific field - Chilling Touch is
+## explicitly "attack range", not its own distance. Returns false (and
+## shows a message) if nothing is in range.
+func _start_chilling_touch_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "chilling_touch"
+	_pending_chilling_touch_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.7, 0.95, 1)
+	return true
+
+
+## Ancient Apparition's Ice Blast target picking: no range limit at
+## all, unlike every other targeted skill above - the design doc's own
+## "targets an enemy anywhere on the field" - so every living,
+## targetable enemy is a valid target regardless of column distance
+## from the hero. Returns false (and shows a message) only if there's
+## no enemy left to target at all.
+func _start_ice_blast_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "ice_blast"
+	_pending_ice_blast_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.75, 0.9, 1)
+	return true
+
+
+## Winter Wyvern's Splinter Blast target picking: same column-range/
+## highlight mechanism as Chilling Touch - the hero's own normal attack
+## range (_hero_attack_column_range()), since the design doc calls for
+## "an enemy in range (range of normal attack)" rather than a skill-
+## specific distance. Returns false (and shows a message) if nothing is
+## in range.
+func _start_splinter_blast_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "splinter_blast"
+	_pending_splinter_blast_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.65, 0.85, 1)
+	return true
+
+
+## Winter Wyvern's Winter's Curse target picking: same column-range/
+## highlight mechanism as Splinter Blast/Chilling Touch - the hero's own
+## normal attack range (_hero_attack_column_range()), per the design
+## doc's own "an enemy in range (normal attack range)". Returns false
+## (and shows a message) if nothing is in range.
+func _start_winters_curse_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "winter's_curse"
+	_pending_winters_curse_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.55, 0.8, 1)
+	return true
+
+
+## Crystal Maiden's Crystal Nova target picking: same column-range/
+## highlight mechanism as every other "normal attack range" targeted
+## skill above (_hero_attack_column_range()). Returns false (and shows
+## a message) if nothing is in range.
+func _start_crystal_nova_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "crystal_nova"
+	_pending_crystal_nova_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 0.85, 1)
+	return true
+
+
+## Crystal Maiden's Frostbite target picking: same column-range/
+## highlight mechanism as every other "normal attack range" targeted
+## skill above (_hero_attack_column_range()). Returns false (and shows
+## a message) if nothing is in range.
+func _start_frostbite_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "frostbite"
+	_pending_frostbite_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.5, 0.75, 1)
+	return true
+
+
 func _cancel_targeting() -> void:
 	for enemy in _valid_targets:
 		if is_instance_valid(enemy["node"]):
@@ -3278,6 +4115,12 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	var ghostship_level_data: Dictionary = _pending_ghostship_level_data
 	var cold_feet_level_data: Dictionary = _pending_cold_feet_level_data
 	var ice_vortex_level_data: Dictionary = _pending_ice_vortex_level_data
+	var chilling_touch_level_data: Dictionary = _pending_chilling_touch_level_data
+	var ice_blast_level_data: Dictionary = _pending_ice_blast_level_data
+	var splinter_blast_level_data: Dictionary = _pending_splinter_blast_level_data
+	var winters_curse_level_data: Dictionary = _pending_winters_curse_level_data
+	var crystal_nova_level_data: Dictionary = _pending_crystal_nova_level_data
+	var frostbite_level_data: Dictionary = _pending_frostbite_level_data
 	_cancel_targeting()
 
 	if purpose == "entangle":
@@ -3294,6 +4137,18 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		_resolve_cold_feet_cast(enemy, cold_feet_level_data)
 	elif purpose == "ice_vortex":
 		_resolve_ice_vortex_cast(enemy, ice_vortex_level_data)
+	elif purpose == "chilling_touch":
+		_resolve_chilling_touch_cast(enemy, chilling_touch_level_data)
+	elif purpose == "ice_blast":
+		_resolve_ice_blast_cast(enemy, ice_blast_level_data)
+	elif purpose == "splinter_blast":
+		_resolve_splinter_blast_cast(enemy, splinter_blast_level_data)
+	elif purpose == "winter's_curse":
+		_resolve_winters_curse_cast(enemy, winters_curse_level_data)
+	elif purpose == "crystal_nova":
+		_resolve_crystal_nova_cast(enemy, crystal_nova_level_data)
+	elif purpose == "frostbite":
+		_resolve_frostbite_cast(enemy, frostbite_level_data)
 	else:
 		_apply_hero_attack(enemy)
 
@@ -3334,6 +4189,10 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	var attack_damage: float = _roll_hero_damage(shadow_dance_bonus + tidebringer_bonus)
 	var mitigated_damage: float = _deal_fixed_damage_to_enemy(target, attack_damage)
 	_apply_essence_shift_steal(target)
+	# Arctic Burn's bonus_damage is already folded into the roll above
+	# (see _roll_hero_damage()) - this just spends one of its banked
+	# Attacks, ending the effect once the last one is used.
+	_apply_arctic_burn_attack()
 	# Lifesteal only ever applies to this plain Attack action - never
 	# to skill damage (Pounce, Dark Pact, Entangle's DoT, etc.) - and
 	# uses the damage actually dealt, i.e. after the target's armor
@@ -3392,6 +4251,12 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
 	var is_boss: bool = target["static"].get("is_hero_fight_boss", false)
 	if is_boss:
 		mitigated *= (1.0 - _enemy_savage_roar_damage_reduction_pct)
+
+	if is_boss and _enemy_cold_embrace_active:
+		# Full immunity, same as the player's own apply_damage() check -
+		# no absorption pool to track the way Aphotic Shield has, the
+		# hit just never happens.
+		return mitigated
 
 	if is_boss and _enemy_borrowed_time_active:
 		var max_hp: float = _enemy_hero_effective_max_hp(target)
@@ -3452,8 +4317,10 @@ func _is_target_hidden(target: Dictionary) -> bool:
 
 
 ## Rolls a hero attack's damage, adding Essence Shift's ongoing
-## borrowed damage plus (for the single hit that triggers it) Shadow
-## Dance's one-shot `extra_bonus`, before mitigation.
+## borrowed damage, True Form's bonus damage, and Winter Wyvern's
+## Arctic Burn bonus damage (while each is active) plus (for the single
+## hit that triggers it) Shadow Dance's one-shot `extra_bonus`, before
+## mitigation.
 func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
 	var damage_str: String = str(stats.get("damage", "0-0"))
@@ -3461,12 +4328,12 @@ func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	# Essence Shift's borrowed damage and True Form's bonus damage
-	# (while each is active) apply on top of both ends of the roll,
-	# same as a permanent damage bonus would - Shadow Dance's bonus
-	# (passed in by the caller, only for the specific hit that
-	# triggers it) stacks on top of that the same way.
-	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + extra_bonus - _player_essence_shift_penalty.get("damage", 0.0)
+	# Essence Shift's borrowed damage, True Form's bonus damage, and
+	# Arctic Burn's bonus damage (while each is active) apply on top of
+	# both ends of the roll, same as a permanent damage bonus would -
+	# Shadow Dance's bonus (passed in by the caller, only for the
+	# specific hit that triggers it) stacks on top of that the same way.
+	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + _arctic_burn_bonus_damage + extra_bonus - _player_essence_shift_penalty.get("damage", 0.0)
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
@@ -3732,6 +4599,18 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_tidebringer_attack_count = 0
 	_enemy_xmarks_pending = false
 
+	_enemy_arctic_burn_active = false
+	_enemy_arctic_burn_bonus_damage = 0.0
+	_enemy_arctic_burn_bonus_range = 0
+	_enemy_arctic_burn_attacks_remaining = 0
+	_enemy_arctic_burn_turns_remaining = 0
+	_enemy_arctic_burn_duration_pending_start = false
+
+	_enemy_cold_embrace_active = false
+	_enemy_cold_embrace_heal_per_turn = 0.0
+	_enemy_cold_embrace_turns_remaining = 0
+	_enemy_cold_embrace_duration_pending_start = false
+
 	var stats: Dictionary = hero_static.get("stats", {})
 	_enemy_max_mana = float(stats.get("mana", 0))
 	_enemy_current_mana = _enemy_max_mana
@@ -3750,6 +4629,13 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_player_curse_dot_damage = 0.0
 	_player_curse_dot_turns_left = 0
 	_player_curse_last_hit_turn = 0
+	_player_cold_feet_dot_damage = 0.0
+	_player_cold_feet_dot_turns_left = 0
+	_player_ice_vortex_dot_damage = 0.0
+	_player_ice_vortex_dot_turns_left = 0
+	_player_ice_blast_dot_damage = 0.0
+	_player_ice_blast_dot_turns_left = 0
+	_player_ice_blast_execute_pct = 0.0
 
 
 func _update_stage_label() -> void:
@@ -3816,13 +4702,16 @@ func _end_turn() -> void:
 	_update_action_buttons()
 	_refresh_skill_cooldown_labels()
 
-	# Still stunned after that decrement: the player gets no action at
-	# all this "turn" - skip straight back to another _end_turn() call
-	# (Spirit Bear + enemy turn again) after a short pause, the same
-	# way a stunned enemy just loses its own turn to the player's own
-	# Pounce, rather than opening the action buttons only to lock them
-	# again next turn.
-	if _player_stun_turns_left > 0:
+	# Still stunned after that decrement, or still encased in Cold
+	# Embrace (already ticked - healed and counted down - by
+	# _tick_skill_cooldowns()/_tick_cold_embrace() above, so this just
+	# checks whether it's still active for the turn that was about to
+	# open): the player gets no action at all this "turn" - skip
+	# straight back to another _end_turn() call (Spirit Bear + enemy
+	# turn again) after a short pause, the same way a stunned enemy
+	# just loses its own turn to the player's own Pounce, rather than
+	# opening the action buttons only to lock them again next turn.
+	if _player_stun_turns_left > 0 or _cold_embrace_active:
 		get_tree().create_timer(0.9).timeout.connect(_end_turn)
 
 
@@ -3857,7 +4746,24 @@ func _end_turn() -> void:
 ## every movement branch (flee and the "close in" fallback) is
 ## skipped. Its attack is untouched, though - if it's already within
 ## range/on the hero's column, a root doesn't stop it from swinging.
+##
+## Winter's Curse overrides all of the above for whichever OTHER
+## enemies currently fall within its own curse_range of its frozen
+## target (see _is_winters_curse_active()): they ignore the hero (and
+## the bear) entirely for as long as the freeze holds, piling onto the
+## target instead - see the dedicated block right after `rooted` is
+## computed below. `curse_active`/`curse_target`/`curse_target_pos` are
+## captured once, right here at the top, rather than re-checked per
+## enemy - the target's own stun_turns_left (what actually drives
+## _is_winters_curse_active()) ticks down partway through this same
+## loop once its own turn comes up, so every enemy this pass needs to
+## see the same answer regardless of iteration order.
 func _enemy_turn() -> void:
+	var curse_active: bool = _is_winters_curse_active()
+	var curse_target: Dictionary = _winter_curse_target if curse_active else {}
+	var curse_target_pos: int = curse_target.get("pos_index", -1) if curse_active else -1
+	var curse_damage_multiplier: float = 1.0 + _winter_curse_bonus_damage_pct
+
 	for enemy in _enemies.duplicate():
 		var stun_turns_left: int = enemy.get("stun_turns_left", 0)
 		if stun_turns_left > 0:
@@ -3876,6 +4782,27 @@ func _enemy_turn() -> void:
 		var enemy_damage: float = float(enemy_static.get("damage", 0))
 		var hero_hidden: bool = _is_hero_hidden()
 		var rooted: bool = _is_enemy_rooted(enemy)
+
+		if curse_active and not is_same(enemy, curse_target) and _distance(enemy["pos_index"], curse_target_pos) <= _winter_curse_range:
+			# Cursed: this enemy drops the hero/bear entirely for this
+			# turn and piles onto the frozen target instead - attacking
+			# it (for bonus damage) if already within its own normal
+			# attack reach of the target, otherwise closing in on it one
+			# step at a time, same movement rules (including staying put
+			# while rooted) as it would use against the hero.
+			if enemy_type == "range":
+				if _distance(enemy["pos_index"], curse_target_pos) <= RANGE_ENEMY_ATTACK_RANGE:
+					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
+				elif not rooted:
+					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
+					_move_enemy(enemy, enemy["pos_index"] + step)
+			elif enemy_type == "mele":
+				if enemy["pos_index"] == curse_target_pos:
+					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
+				elif not rooted:
+					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
+					_move_enemy(enemy, enemy["pos_index"] + step)
+			continue
 
 		if enemy_type == "range":
 			var hero_distance: int = _distance(enemy["pos_index"], _hero_pos_index)
@@ -3967,6 +4894,16 @@ func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
 # ------------------------------------------------------------------
 
 func _enemy_hero_turn(enemy: Dictionary) -> void:
+	# Encased in ice - no action at all this turn, not even a free
+	# X Marks the Spot teleport or a potion: move, attack, skill, and
+	# item are ALL locked out for the duration, matching the player's
+	# own copy (_update_action_buttons()/_end_turn()'s auto-skip). Its
+	# immunity/heal-per-turn already run via _tick_enemy_cold_embrace()
+	# regardless of what this turn does, so this just needs to do
+	# nothing and let the turn pass.
+	if _enemy_cold_embrace_active:
+		return
+
 	# If X Marks the Spot marked the player last turn, this is the
 	# rival's own "next turn" - teleport now, for free, then fall
 	# straight through to everything below so it can still act (skill,
@@ -4072,6 +5009,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	_apply_enemy_essence_shift_steal()
 	_apply_enemy_spirit_link_lifesteal(enemy, mitigated)
 	_apply_enemy_curse_of_avernus_stack()
+	_apply_enemy_arctic_burn_attack()
 
 	if not tidebringer_level_data.is_empty():
 		# No cleave here - like Dark Pact/Mist Coil/Torrent, there's
@@ -4093,7 +5031,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 ## range.
 func _roll_enemy_hero_damage(enemy: Dictionary, extra_bonus: float = 0.0) -> float:
 	var base_damage: float = float(enemy["static"].get("damage", 0))
-	var bonus: float = _enemy_essence_shift_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + extra_bonus
+	var bonus: float = _enemy_essence_shift_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + _enemy_arctic_burn_bonus_damage + extra_bonus
 	return maxf(0.0, base_damage + bonus)
 
 
@@ -4163,6 +5101,21 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			# player), so a second cast would just burn mana/cooldown
 			# on a mark that hasn't even resolved yet.
 			return not _enemy_xmarks_pending
+		"cold_feet":
+			# Recasting on an already-frozen player just resets the
+			# same level's own damage/duration back to full - no extra
+			# total damage over just letting the existing DoT run out,
+			# so (same simplification as every buff above) it's simply
+			# not worth it while one is already ticking.
+			return _player_cold_feet_dot_turns_left <= 0
+		"ice_vortex":
+			# Same "no benefit from resetting your own DoT" reasoning
+			# as Cold Feet above.
+			return _player_ice_vortex_dot_turns_left <= 0
+		"arctic_burn":
+			return not _enemy_arctic_burn_active
+		"cold_embrace":
+			return not _enemy_cold_embrace_active
 		_:
 			return true
 
@@ -4260,10 +5213,12 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int)
 ## `enemy_count` is always 1 here (contrast the simulation, where it's
 ## however many creeps are still alive) and there's no per-target
 ## selection step the way a multi-enemy sim needs one. `living_target_
-## hps` is the single-player mirror of the simulation's own living-
-## enemy HP list - always one entry here, but kept under the same key
-## so EnemySkillAI's shared multi-kill scoring (see Kunkka's own
-## Ghostship/Torrent modifiers) doesn't need a battle-vs-sim branch.
+## hps`/`living_target_max_hps` are the single-player mirror of the
+## simulation's own living-enemy HP/max-HP lists - always one entry
+## here, but kept under the same keys so EnemySkillAI's shared multi-
+## kill/execute scoring (see Kunkka's own Ghostship/Torrent modifiers
+## and Ancient Apparition's own Ice Blast modifier) doesn't need a
+## battle-vs-sim branch.
 ##
 ## The three "kunkka_*"/"tidebringer_*" fields only ever matter for
 ## Kunkka (every other hero's own modifier ignores them) - they're
@@ -4283,6 +5238,21 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int)
 ##     next turn (see _enemy_hero_turn()'s teleport-consumption step),
 ##     so "everything else about it is ready" is the real question for
 ##     whether marking now sets up a real follow-up.
+##   - in_attack_range_now/in_attack_range_with_arctic_burn_bonus/
+##     arctic_burn_active: for Winter Wyvern's own Arctic Burn - whether
+##     the player is (or would be, with the bonus range folded in)
+##     within the rival's own basic-attack reach right now, so casting
+##     it only scores well when there's a realistic attack coming, not
+##     just because it's off cooldown.
+##   - has_harmful_debuff: whether the rival currently has anything the
+##     player inflicted on it (root/silence/a DoT/Curse of Avernus) -
+##     for Winter Wyvern's own Cold Embrace, which dispels it.
+##   - redirect_candidate_count/avg_enemy_damage: for Winter Wyvern's own
+##     Winter's Curse. Always 0/0.0 here - a hero fight only ever has
+##     the player to curse, and nothing else on the rival's own side to
+##     redirect onto the frozen target the way the simulation's other
+##     living creeps can (see EnemyHeroManager's own _build_npc_ai_
+##     context() for the real multi-enemy version of both fields).
 func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distance: int) -> Dictionary:
 	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 	var current_hp: float = float(enemy.get("current_hp", 0.0))
@@ -4290,6 +5260,8 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 	var tidebringer_level_data: Dictionary = _get_enemy_tidebringer_level_data()
 	var tidebringer_ready: bool = not tidebringer_level_data.is_empty() \
 		and (_enemy_tidebringer_attack_count + 1) >= int(tidebringer_level_data.get("hits_to_activate", 1))
+
+	var base_attack_range: int = RANGE_ENEMY_ATTACK_RANGE if enemy_type == "range" else 0
 
 	return {
 		"game_mode": "battle",
@@ -4306,12 +5278,43 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 		"target_distance": hero_distance,
 		"bear_active": not _get_enemy_spirit_bear().is_empty(),
 		"living_target_hps": [float(_recruited.get("current_hp", 0))],
+		"living_target_max_hps": [_hero_max_hp()],
 		"tidebringer_ready": tidebringer_ready,
 		"tidebringer_bonus_damage": float(tidebringer_level_data.get("bonus_damage", 0.0)),
 		"tidebringer_cleave_targets": 0,
 		"kunkka_torrent_combo_ready": _is_enemy_skill_ready("torrent", enemy_type, hero_distance, true),
 		"kunkka_ghostship_combo_ready": _is_enemy_skill_ready("ghostship", enemy_type, hero_distance, true),
+		"in_attack_range_now": hero_distance <= base_attack_range,
+		"in_attack_range_with_arctic_burn_bonus": hero_distance <= (base_attack_range + _enemy_arctic_burn_bonus_range),
+		"arctic_burn_active": _enemy_arctic_burn_active,
+		"has_harmful_debuff": _enemy_has_harmful_debuff(enemy),
+		"redirect_candidate_count": 0,
+		"avg_enemy_damage": 0.0,
 	}
+
+
+## Whether `enemy` (a hero-fight boss) currently has anything the player
+## inflicted on it - root, silence, or any of the DoTs a player skill
+## can apply directly onto an enemy Dictionary (Entangle's, Curse of
+## Avernus's, Cold Feet's, Ice Vortex's, Ice Blast's) - used by Winter
+## Wyvern's own Cold Embrace scoring (see EnemySkillAI's own "winter_
+## wyvern" modifier), since casting it dispels all of them at once.
+func _enemy_has_harmful_debuff(enemy: Dictionary) -> bool:
+	if enemy.get("root_turns_left", 0) > 0:
+		return true
+	if enemy.get("silence_turns_left", 0) > 0:
+		return true
+	if enemy.get("entangle_dot_turns_left", 0) > 0:
+		return true
+	if enemy.get("curse_active", false) or enemy.get("curse_stacks", 0) > 0:
+		return true
+	if enemy.get("cold_feet_dot_turns_left", 0) > 0:
+		return true
+	if enemy.get("ice_vortex_dot_turns_left", 0) > 0:
+		return true
+	if enemy.get("ice_blast_dot_turns_left", 0) > 0:
+		return true
+	return false
 
 
 ## True if a rival hero of `enemy_type`, `hero_distance` columns from
@@ -4323,13 +5326,18 @@ func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: 
 
 	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
 	var level_data: Dictionary = GameManager.get_skill_level_data(_find_enemy_skill(skill_id), level)
-	# Torrent's/X Marks the Spot's/Ghostship's own targeting range lives
-	# in a "range" field rather than "radius" (Torrent's separate,
-	# level-4-only splash radius); Pounce's own leap reach lives in a
-	# "distance" field instead - see EnemySkillRange's "torrent"/
-	# "x_marks_the_spot"/"ghostship"/"pounce" case, which compares
-	# distance against whichever of the three this resolves to.
-	var radius: int = int(level_data.get("range", level_data.get("radius", level_data.get("distance", 0))))
+	# Torrent's/X Marks the Spot's/Ghostship's/Cold Feet's own targeting
+	# range lives in a "range" field rather than "radius" (Torrent's
+	# separate, level-4-only splash radius); Pounce's own leap reach
+	# lives in a "distance" field instead - see EnemySkillRange's
+	# "torrent"/"x_marks_the_spot"/"ghostship"/"pounce"/"cold_feet" case,
+	# which compares distance against whichever of the three this
+	# resolves to. Ice Vortex is the one exception: its own targeting
+	# range is the FIXED constant ICE_VORTEX_RANGE, never part of its
+	# level data (which only carries its AoE radius, 1-2) - falling
+	# through the same generic chain would silently grab that AoE
+	# radius instead, so it's special-cased here first.
+	var radius: int = ICE_VORTEX_RANGE if skill_id == "ice_vortex" else int(level_data.get("range", level_data.get("radius", level_data.get("distance", 0))))
 	var attack_range: int = RANGE_ENEMY_ATTACK_RANGE if enemy_type == "range" else 0
 	return EnemySkillRange.is_in_range(skill_id, hero_distance, radius, attack_range)
 
@@ -4368,6 +5376,22 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 			_cast_enemy_xmarks()
 		"ghostship":
 			_cast_enemy_ghostship(level_data)
+		"cold_feet":
+			_cast_enemy_cold_feet(level_data)
+		"ice_vortex":
+			_cast_enemy_ice_vortex(level_data)
+		"chilling_touch":
+			_cast_enemy_chilling_touch(enemy, level_data)
+		"ice_blast":
+			_cast_enemy_ice_blast(level_data)
+		"arctic_burn":
+			_cast_enemy_arctic_burn(level_data)
+		"splinter_blast":
+			_cast_enemy_splinter_blast(level_data)
+		"cold_embrace":
+			_cast_enemy_cold_embrace(level_data)
+		"winter's_curse":
+			_cast_enemy_winters_curse(level_data)
 
 	# Shadow Dance only breaks from casting ANOTHER skill (or
 	# attacking, handled separately in _resolve_enemy_hero_attack()),
@@ -5055,6 +6079,264 @@ func _end_enemy_borrowed_time() -> void:
 	_enemy_borrowed_time_duration_pending_start = false
 
 
+# ------------------------------------------------------------------
+# Ancient Apparition's Cold Feet/Ice Vortex, cast by the rival on the
+# player - mirrors the player-side _resolve_cold_feet_cast()/
+# _resolve_ice_vortex_cast(), just arming the single-player _player_
+# cold_feet_dot_*/_player_ice_vortex_dot_* vars instead of per-enemy
+# Dictionary fields, since there's only one player to track them on
+# (same simplification Entangle's own _player_entangle_dot_* fields
+# already use). Ice Vortex's own AoE has nothing else to reach in a
+# hero fight (there's no other enemy besides the player), same "only
+# one possible target" simplification Dark Pact/Torrent's splash
+# already use for a rival.
+# ------------------------------------------------------------------
+
+func _cast_enemy_cold_feet(level_data: Dictionary) -> void:
+	_player_cold_feet_dot_damage = float(level_data.get("damage", 0))
+	_player_cold_feet_dot_turns_left = int(level_data.get("duration", 0))
+	_show_message_over_hero("Cold Feet!")
+
+
+func _tick_player_cold_feet_effects() -> void:
+	if _player_cold_feet_dot_turns_left <= 0:
+		return
+	_player_cold_feet_dot_turns_left -= 1
+	if _player_cold_feet_dot_damage > 0.0:
+		apply_damage(_player_cold_feet_dot_damage)
+
+
+func _cast_enemy_ice_vortex(level_data: Dictionary) -> void:
+	_player_ice_vortex_dot_damage = float(level_data.get("damage", 0))
+	_player_ice_vortex_dot_turns_left = int(level_data.get("duration", 0))
+	_show_message_over_hero("Ice Vortex!")
+
+
+func _tick_player_ice_vortex_effects() -> void:
+	if _player_ice_vortex_dot_turns_left <= 0:
+		return
+	_player_ice_vortex_dot_turns_left -= 1
+	if _player_ice_vortex_dot_damage > 0.0:
+		apply_damage(_player_ice_vortex_dot_damage)
+
+
+# ------------------------------------------------------------------
+# Ancient Apparition's Chilling Touch, cast by the rival - mirrors the
+# player's own _resolve_chilling_touch_cast(): the rival's own rolled
+# Attack damage (_roll_enemy_hero_damage(), the enemy-side mirror of
+# _roll_hero_damage()) plus this level's own flat bonus_damage on top.
+# Like the player's own copy, this is SKILL damage, not the plain
+# Attack action itself, so it never triggers Essence Shift's steal,
+# Spirit Link's lifesteal, or Curse of Avernus's stacking - those stay
+# scoped specifically to _resolve_enemy_hero_attack().
+# ------------------------------------------------------------------
+
+func _cast_enemy_chilling_touch(enemy: Dictionary, level_data: Dictionary) -> void:
+	apply_damage(_roll_enemy_hero_damage(enemy) + float(level_data.get("bonus_damage", 0)))
+
+
+# ------------------------------------------------------------------
+# Ancient Apparition's Ice Blast, cast by the rival - mirrors the
+# player's own _resolve_ice_blast_cast()/_tick_ice_blast_effects().
+# Like Dark Pact/Torrent/Ghostship's own rival copies, there's only one
+# possible target in a hero fight (the player), so the "hit everyone
+# within radius" AoE collapses to a single hit; the DoT/execute state
+# lives in the single-player _player_ice_blast_* vars instead of a
+# per-enemy Dictionary field for the same reason Cold Feet's/Ice
+# Vortex's own rival copies do.
+# ------------------------------------------------------------------
+
+func _cast_enemy_ice_blast(level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+	_player_ice_blast_dot_damage = float(level_data.get("dot_damage", 0))
+	_player_ice_blast_dot_turns_left = int(level_data.get("dot_duration", 0))
+	_player_ice_blast_execute_pct = float(level_data.get("execute_pct", 0.0))
+	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
+	_show_message_over_hero("Ice Blast!")
+
+
+## Ticks Ice Blast's damage-over-time down by one turn on the player,
+## dealing that turn's damage, then - if the player survived it -
+## checks the execute threshold: if the player's current HP has dropped
+## to or below execute_pct of their own max HP, they die outright,
+## regardless of how much literal HP is left, mirroring
+## _tick_ice_blast_effects()'s own enemy-side execute check. There's no
+## dedicated "kill the player" helper the way _kill_enemy() exists for
+## an enemy - zeroing PlayerManager's own current_hp is enough, since
+## _end_turn()'s own "current_hp <= 0" check (run right after this
+## tick, as part of _tick_skill_cooldowns()) already handles calling
+## _handle_defeat() from there, the same way Entangle's/Curse of
+## Avernus's own DoT-driven kills already do today.
+func _tick_player_ice_blast_effects() -> void:
+	if _player_ice_blast_dot_turns_left <= 0:
+		return
+
+	_player_ice_blast_dot_turns_left -= 1
+	if _player_ice_blast_dot_damage > 0.0:
+		apply_damage(_player_ice_blast_dot_damage)
+
+	if _recruited.get("current_hp", 0) > 0 and _player_ice_blast_execute_pct > 0.0:
+		var max_hp: float = _hero_max_hp()
+		if max_hp > 0.0 and float(_recruited.get("current_hp", 0)) <= max_hp * _player_ice_blast_execute_pct:
+			PlayerManager.damage_hero(float(_recruited.get("current_hp", 0)))
+			_refresh_bars()
+
+	if _player_ice_blast_dot_turns_left <= 0:
+		_player_ice_blast_execute_pct = 0.0
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Arctic Burn, cast by the rival on themselves - mirrors
+# the player's own _activate_arctic_burn()/_apply_arctic_burn_attack()/
+# _tick_arctic_burn()/_end_arctic_burn(). _apply_enemy_arctic_burn_
+# attack() is called from _resolve_enemy_hero_attack(), the enemy-side
+# mirror of _apply_hero_attack()'s own call to _apply_arctic_burn_
+# attack().
+# ------------------------------------------------------------------
+
+func _cast_enemy_arctic_burn(level_data: Dictionary) -> void:
+	_enemy_arctic_burn_active = true
+	_enemy_arctic_burn_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_enemy_arctic_burn_bonus_range = int(level_data.get("bonus_range", 0))
+	_enemy_arctic_burn_attacks_remaining = int(level_data.get("attacks", 0))
+	_enemy_arctic_burn_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_arctic_burn_duration_pending_start = true
+	_show_message_over_hero("Arctic Burn!")
+
+
+func _apply_enemy_arctic_burn_attack() -> void:
+	if not _enemy_arctic_burn_active or _enemy_arctic_burn_attacks_remaining <= 0:
+		return
+	_enemy_arctic_burn_attacks_remaining -= 1
+	if _enemy_arctic_burn_attacks_remaining <= 0:
+		_end_enemy_arctic_burn()
+
+
+func _tick_enemy_arctic_burn() -> void:
+	if not _enemy_arctic_burn_active:
+		return
+	if _enemy_arctic_burn_duration_pending_start:
+		_enemy_arctic_burn_duration_pending_start = false
+		return
+	_enemy_arctic_burn_turns_remaining -= 1
+	if _enemy_arctic_burn_turns_remaining <= 0:
+		_end_enemy_arctic_burn()
+
+
+func _end_enemy_arctic_burn() -> void:
+	_enemy_arctic_burn_active = false
+	_enemy_arctic_burn_bonus_damage = 0.0
+	_enemy_arctic_burn_bonus_range = 0
+	_enemy_arctic_burn_attacks_remaining = 0
+	_enemy_arctic_burn_turns_remaining = 0
+	_enemy_arctic_burn_duration_pending_start = false
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Splinter Blast, cast by the rival on the player -
+# mirrors the player's own _resolve_splinter_blast_cast(). Simplification
+# versus that player-facing copy: like Dark Pact/Mist Coil/Torrent,
+# there's only one possible target in a hero fight, so the splash onto
+# "every OTHER enemy within splinter_range" has nothing else to reach -
+# this always resolves as a single hit.
+# ------------------------------------------------------------------
+
+func _cast_enemy_splinter_blast(level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Cold Embrace, cast by the rival on themselves -
+# mirrors the player's own _activate_cold_embrace()/_dispel_all_hero_
+# effects()/_tick_cold_embrace()/_end_cold_embrace(). Damage immunity is
+# enforced in _deal_fixed_damage_to_enemy() (checked before Borrowed
+# Time/Aphotic Shield, same as the player's own apply_damage() checks
+# Cold Embrace before anything else); the full action lockout (no move,
+# attack, OR skill cast - stricter than the player's own copy, which can
+# still cast something else while encased) is enforced at the very top
+# of _enemy_hero_turn().
+# ------------------------------------------------------------------
+
+func _cast_enemy_cold_embrace(level_data: Dictionary) -> void:
+	_dispel_all_enemy_hero_effects()
+
+	_enemy_cold_embrace_active = true
+	_enemy_cold_embrace_heal_per_turn = float(level_data.get("heal", 0))
+	_enemy_cold_embrace_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_cold_embrace_duration_pending_start = true
+	_show_message_over_hero("Encased in ice!")
+
+
+## Dispels every other effect currently on the rival, good or bad, right
+## before Cold Embrace establishes its own state - the enemy-side mirror
+## of the player's own _dispel_all_hero_effects(), enumerating the same
+## kind of fields but from the "_enemy_*" block instead (this rival's
+## own buffs) - there's nothing equivalent to the player's debuff-
+## receiving fields to clear here, since nothing in this game currently
+## lets a rival hero's own AI inflict a debuff on ITSELF.
+func _dispel_all_enemy_hero_effects() -> void:
+	if _enemy_arctic_burn_active:
+		_end_enemy_arctic_burn()
+	if _enemy_essence_shift_active:
+		_end_enemy_essence_shift()
+	if _enemy_shadow_dance_active:
+		_end_enemy_shadow_dance()
+	if _enemy_spirit_link_active:
+		_end_enemy_spirit_link()
+	if _enemy_true_form_active:
+		_end_enemy_true_form()
+	if _enemy_aphotic_shield_active:
+		_end_enemy_aphotic_shield(false)
+	if _enemy_borrowed_time_active:
+		_end_enemy_borrowed_time()
+
+
+func _tick_enemy_cold_embrace() -> void:
+	if not _enemy_cold_embrace_active:
+		return
+
+	if _enemy_cold_embrace_duration_pending_start:
+		_enemy_cold_embrace_duration_pending_start = false
+		return
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if not boss.is_empty():
+		var max_hp: float = _enemy_hero_effective_max_hp(boss)
+		boss["current_hp"] = minf(max_hp, float(boss.get("current_hp", 0.0)) + _enemy_cold_embrace_heal_per_turn)
+
+	_enemy_cold_embrace_turns_remaining -= 1
+	if _enemy_cold_embrace_turns_remaining <= 0:
+		_end_enemy_cold_embrace()
+
+
+func _end_enemy_cold_embrace() -> void:
+	_enemy_cold_embrace_active = false
+	_enemy_cold_embrace_heal_per_turn = 0.0
+	_enemy_cold_embrace_turns_remaining = 0
+	_enemy_cold_embrace_duration_pending_start = false
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's ultimate, Winter's Curse, cast by the rival - mirrors
+# the player's own _resolve_winters_curse_cast()/_is_winters_curse_
+# active(). Simplification versus that player-facing copy: the "every
+# OTHER enemy within curse_range piles onto the frozen target instead
+# of the caster" half of the effect has nothing to redirect in a hero
+# fight - the rival's only possible "attacker" is the player himself,
+# controlled directly rather than by the same AI _enemy_turn() redirect
+# logic uses, so there's no second enemy to pull off of him. This
+# collapses Winter's Curse down to freezing the player outright
+# (reusing the shared _player_stun_turns_left field Torrent's/Pounce's/
+# Ice Blast's own stun already use), the same "AoE/redirect skill with
+# only one possible target" simplification Dark Pact/Splinter Blast/
+# Ice Vortex already use for a rival.
+# ------------------------------------------------------------------
+
+func _cast_enemy_winters_curse(level_data: Dictionary) -> void:
+	_player_stun_turns_left = int(level_data.get("duration", 0))
+	_show_message_over_hero("Winter's Curse!")
+
+
 ## Moves an enemy to `new_pos` (clamped on-board) and syncs its node's
 ## screen position to match, flipping its art to face the direction it
 ## just moved in (same left/right art convention as _spawn_enemy()).
@@ -5094,9 +6376,13 @@ func _get_flee_position(enemy: Dictionary) -> int:
 
 
 ## The hero gets exactly one action per turn - move, attack, skill, or
-## item. Once any of them is used, all four lock until End Turn.
+## item. Once any of them is used, all four lock until End Turn. Cold
+## Embrace locks all four too, same as a stun - see _cold_embrace_active
+## and _end_turn()'s own tail, which auto-skips the turn entirely while
+## either is still in effect rather than leaving these open with
+## nothing the player can actually do with them.
 func _update_action_buttons() -> void:
-	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0
+	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0 or _cold_embrace_active
 	move_left_button.disabled = locked
 	move_right_button.disabled = locked
 	attack_button.disabled = locked

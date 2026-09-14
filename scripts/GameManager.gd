@@ -823,27 +823,34 @@ var zones: Dictionary = {
 						"type": "standard",
 						"description": "Casts a freezing vortex at a fixed range, dealing damage over time to every enemy caught within its radius.",
 						"levels": [
-							{"damage": 10, "radius": 1, "duration": 3, "mana_cost": 40, "cooldown": 5},
-							{"damage": 20, "radius": 1, "duration": 3, "mana_cost": 45, "cooldown": 5},
-							{"damage": 30, "radius": 1, "duration": 4, "mana_cost": 50, "cooldown": 4},
-							{"damage": 40, "radius": 2, "duration": 4, "mana_cost": 55, "cooldown": 4}
+							{"damage": 15, "radius": 1, "duration": 3, "mana_cost": 40, "cooldown": 5},
+							{"damage": 25, "radius": 1, "duration": 3, "mana_cost": 45, "cooldown": 5},
+							{"damage": 35, "radius": 1, "duration": 4, "mana_cost": 50, "cooldown": 4},
+							{"damage": 45, "radius": 2, "duration": 4, "mana_cost": 55, "cooldown": 4}
 						]
 					},
 					{
 						"id": "chilling_touch",
 						"name": "Chilling Touch",
 						"type": "standard",
-						"description": "Blast an enemy with cold magic",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Blasts an enemy within normal attack range for the hero's own attack damage plus a flat bonus.",
+						"levels": [
+							{"bonus_damage": 80, "mana_cost": 50, "cooldown": 6},
+							{"bonus_damage": 120, "mana_cost": 55, "cooldown": 6},
+							{"bonus_damage": 160, "mana_cost": 60, "cooldown": 5},
+							{"bonus_damage": 200, "mana_cost": 65, "cooldown": 5}
+						]
 					},
 					{
 						"id": "ice_blast",
 						"name": "Ice Blast",
 						"type": "ultimate",
-						"description": "Ultimate: fires an ice sphere that damage enemies based on the distance from the hero and shatters them if they are below a health threshold",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: targets any enemy on the field, dealing damage to it and every enemy around it, then damage over time for the duration. Any enemy hit has a percentage of its max HP reserved for that same duration - if its HP ever drops to or below that reserved amount, it dies outright.",
+						"levels": [
+							{"damage": 150, "dot_damage": 20, "dot_duration": 3, "stun_turns": 1, "execute_pct": 0.20, "radius": 1, "mana_cost": 100, "cooldown": 10},
+							{"damage": 225, "dot_damage": 30, "dot_duration": 3, "stun_turns": 1, "execute_pct": 0.25, "radius": 1, "mana_cost": 110, "cooldown": 9},
+							{"damage": 300, "dot_damage": 40, "dot_duration": 4, "stun_turns": 2, "execute_pct": 0.30, "radius": 2, "mana_cost": 120, "cooldown": 8}
+						]
 					},
 				],
 				"level_up": {
@@ -876,33 +883,48 @@ var zones: Dictionary = {
 						"id": "arctic_burn",
 						"name": "Arctic Burn",
 						"type": "standard",
-						"description": "Grants bonus attack range, dealing burn damage based on the enemy's current health.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Grants bonus attack damage and range for a number of Attacks, or until the effect's own duration runs out - whichever comes first.",
+						"levels": [
+							{"bonus_damage": 30, "bonus_range": 2, "attacks": 2, "duration": 3, "mana_cost": 40, "cooldown": 5},
+							{"bonus_damage": 50, "bonus_range": 2, "attacks": 3, "duration": 3, "mana_cost": 50, "cooldown": 5},
+							{"bonus_damage": 70, "bonus_range": 3, "attacks": 3, "duration": 4, "mana_cost": 60, "cooldown": 4},
+							{"bonus_damage": 90, "bonus_range": 3, "attacks": 4, "duration": 4, "mana_cost": 70, "cooldown": 4}
+						]
 					},
 					{
 						"id": "splinter_blast",
 						"name": "Splinter Blast",
 						"type": "standard",
-						"description": " Launches a floating ball of ice that shatters upon hitting an enemy, dealing area-of-effect damage to surrounding targets.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Launches a floating ball of ice at an enemy within normal attack range, dealing damage to it - every other enemy within a splinter range of it takes separate, lighter splinter damage.",
+						"levels": [
+							{"damage": 100, "splinter_damage": 60, "splinter_range": 1, "mana_cost": 50, "cooldown": 5},
+							{"damage": 150, "splinter_damage": 90, "splinter_range": 1, "mana_cost": 55, "cooldown": 5},
+							{"damage": 200, "splinter_damage": 120, "splinter_range": 1, "mana_cost": 60, "cooldown": 4},
+							{"damage": 250, "splinter_damage": 150, "splinter_range": 2, "mana_cost": 65, "cooldown": 4}
+						]
 					},
 					{
 						"id": "cold_embrace",
 						"name": "Cold Embrace",
 						"type": "standard",
-						"description": "Encases themselves in ice, rendering them immune to physical damage and healing them based on missing health plus a base amount",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Encases the hero in ice, becoming immune to all damage and healing every turn for the duration - but unable to move or attack while it lasts. Casting it clears every other effect currently on the hero, good or bad.",
+						"levels": [
+							{"heal": 75, "duration": 2, "mana_cost": 50, "cooldown": 6},
+							{"heal": 110, "duration": 2, "mana_cost": 55, "cooldown": 6},
+							{"heal": 135, "duration": 3, "mana_cost": 60, "cooldown": 5},
+							{"heal": 180, "duration": 3, "mana_cost": 65, "cooldown": 5}
+						]
 					},
 					{
 						"id": "winter's_curse",
 						"name": "Winter's Curse",
 						"type": "ultimate",
-						"description": "Ultimate: Freezes a target enemy in place, forcing nearby allies of the target to attack it with bonus damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: Freezes an enemy within normal attack range in place for the duration. Every OTHER enemy within curse_range columns of it ignores the hero for as long as the freeze holds, piling onto the frozen target instead - moving toward it or attacking it for bonus damage - while anything outside that range keeps targeting the hero as normal. The hero's own damage against the frozen target isn't boosted.",
+						"levels": [
+							{"duration": 2, "curse_range": 2, "bonus_damage_pct": 0.10, "mana_cost": 100, "cooldown": 10},
+							{"duration": 3, "curse_range": 2, "bonus_damage_pct": 0.15, "mana_cost": 110, "cooldown": 9},
+							{"duration": 4, "curse_range": 3, "bonus_damage_pct": 0.20, "mana_cost": 120, "cooldown": 8}
+						]
 					},
 				],
 				"level_up": {
@@ -994,17 +1016,25 @@ var zones: Dictionary = {
 						"id": "crystal_nova",
 						"name": "Crystal Nova",
 						"type": "standard",
-						"description": "A freezing blast that deals damage and slows enemy movement and attack speed in an area.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "A freezing blast cast on an enemy within normal attack range, dealing damage to it - at later levels, every other enemy within its own radius of the target takes that same damage too.",
+						"levels": [
+							{"damage": 100, "radius": 0, "mana_cost": 70, "cooldown": 3},
+							{"damage": 160, "radius": 0, "mana_cost": 100, "cooldown": 3},
+							{"damage": 230, "radius": 1, "mana_cost": 135, "cooldown": 4},
+							{"damage": 310, "radius": 2, "mana_cost": 170, "cooldown": 4}
+						]
 					},
 					{
 						"id": "frostbite",
 						"name": "Frostbite",
 						"type": "standard",
-						"description": "Locks an enemy in ice to deal damage over time and prevent movement or attacks.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Locks an enemy within normal attack range in ice, stunning it for the duration and dealing damage over time on top.",
+						"levels": [
+							{"stun_turns": 1, "dot_damage": 30, "dot_duration": 2, "mana_cost": 80, "cooldown": 4},
+							{"stun_turns": 1, "dot_damage": 55, "dot_duration": 2, "mana_cost": 110, "cooldown": 4},
+							{"stun_turns": 2, "dot_damage": 70, "dot_duration": 3, "mana_cost": 145, "cooldown": 5},
+							{"stun_turns": 2, "dot_damage": 90, "dot_duration": 4, "mana_cost": 180, "cooldown": 5}
+						]
 					},
 					{
 						"id": "arcane_aura",

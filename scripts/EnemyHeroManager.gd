@@ -252,9 +252,10 @@ const FLEE_HP_THRESHOLD: float = 0.15
 const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
-# Every ACTIVE skill across Slark, Lone Druid, Abaddon, and Kunkka, the
-# only four heroes with any simulated skill logic today - anything else
-# a hero knows just never gets cast here. This is the full candidate pool
+# Every ACTIVE skill across Slark, Lone Druid, Abaddon, Kunkka, Ancient
+# Apparition, and Winter Wyvern, the only six heroes with any simulated
+# skill logic today - anything else a hero knows just never gets cast
+# here. This is the full candidate pool
 # _pick_ready_skill() checks for cooldown/worth-casting/mana before
 # handing survivors to EnemySkillAI to score and pick from - no longer
 # a priority order (see EnemySkillAI.HERO_TIE_BREAK for each hero's own
@@ -282,11 +283,20 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # columns to work out a path along here, so it falls back to the same
 # "no columns, hit everyone" simplification Dark Pact's own sim copy
 # already uses (see this file's "dark_pact" case in _cast_skill()
-# below).
+# below). Ice Vortex and Ice Blast (both Ancient Apparition's) use that
+# exact same "no columns, hit everyone" fallback for their own AoE, so
+# both ARE in this list, same reasoning as Ghostship's. Splinter Blast
+# and Winter's Curse (both Winter Wyvern's) use it too - Splinter
+# Blast's splash lands on every other living enemy, and Winter's Curse
+# redirects every OTHER living enemy's own retaliation onto its frozen
+# target instead of the hero (see _cast_skill()'s own "splinter_blast"/
+# "winter's_curse" cases and _run_stage_fight()'s own retaliation loop).
 const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"dark_pact", "pounce", "essence_shift", "shadow_dance",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
 	"mist_coil", "aphotic_shield", "torrent", "ghostship",
+	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
+	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
 ]
 
 # How many full turns a target can go without being hit by the hero's
@@ -692,11 +702,15 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_borrowed_time(state["borrowed_time"])
 		_tick_npc_entangle_effects(enemies)
 		_tick_npc_curse_of_avernus_effects(enemies, turn_index)
+		_tick_npc_cold_feet_effects(enemies)
+		_tick_npc_ice_vortex_effects(enemies)
+		_tick_npc_ice_blast_effects(enemies)
 		var kills: Dictionary = _collect_npc_kills(enemies, counted_dead)
 		xp_gained += kills["xp"]
 		gold_gained += kills["gold"]
 
 		var effective_max_hp: float = _npc_effective_max_hp(max_hp, state)
+		current_hp = _tick_npc_cold_embrace(state["cold_embrace"], current_hp, effective_max_hp)
 		_update_npc_savage_roar_state(hero_id, hero_static, state["savage_roar"], current_hp, effective_max_hp)
 
 		var living: Array = _living_enemies(enemies)
@@ -711,7 +725,15 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# --- Hero's turn: potion, skill, or basic attack - in that
 		# priority, one action per turn, same as the player. ---
 		var acted_with: String = ""
-		if current_hp <= effective_max_hp * LOW_HP_POTION_THRESHOLD and PlayerManager.get_npc_potion_count(hero_id, "health") > 0:
+		if state["cold_embrace"]["active"]:
+			# Encased in ice - can't move, attack, cast another skill, or
+			# drink a potion, matching battle.gd's own copy (both the
+			# player's and a duel boss's) which locks every action the
+			# same way for the duration; its immunity/heal-per-turn
+			# already run via _tick_npc_cold_embrace() and the
+			# retaliation guard below regardless of what this turn does.
+			pass
+		elif current_hp <= effective_max_hp * LOW_HP_POTION_THRESHOLD and PlayerManager.get_npc_potion_count(hero_id, "health") > 0:
 			PlayerManager.set_npc_potion_count(hero_id, "health", PlayerManager.get_npc_potion_count(hero_id, "health") - 1)
 			current_hp = minf(effective_max_hp, current_hp + float(GameManager.get_item("health").get("value", 0)))
 		else:
@@ -735,6 +757,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				_apply_npc_curse_of_avernus_stack(hero_id, hero_static, target, turn_index)
 				if not tidebringer_level_data.is_empty():
 					_apply_npc_tidebringer_cleave(target, dmg, tidebringer_level_data, living)
+				_apply_npc_arctic_burn_attack(state["arctic_burn"])
 				current_hp = minf(effective_max_hp, current_hp + _npc_spirit_link_lifesteal(state["spirit_link"], mitigated))
 				acted_with = "attack"
 
@@ -775,17 +798,40 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				result = "win"
 				break
 
-		# --- Enemies retaliate, skipping anyone Pounce just stunned or
+		# --- Enemies retaliate, skipping anyone Pounce just stunned,
 		# while Shadow Dance is hiding the hero entirely (mirrors
-		# battle.gd's _is_hero_hidden() check in _enemy_turn()). ---
-		if not state["shadow_dance"]["active"]:
+		# battle.gd's _is_hero_hidden() check in _enemy_turn()), or while
+		# Cold Embrace makes the hero fully immune (mirrors battle.gd's
+		# own _deal_fixed_damage_to_enemy() check - skipping this whole
+		# block is equivalent, since nothing else in this sim can damage
+		# the hero). While Winter's Curse is active, every OTHER living
+		# enemy piles onto its frozen target instead of the hero, for
+		# bonus_damage_pct extra damage - see KNOWN_ACTIVE_SKILL_IDS's
+		# own "no columns, redirect everyone" comment. curse_target/
+		# curse_active are captured once here, before the loop, mirroring
+		# battle.gd's own _enemy_turn(): the target's own stun_turns_left
+		# (what curse_active is actually derived from) ticks down
+		# partway through this same loop once its turn comes up, so
+		# every enemy this pass needs to see the same answer regardless
+		# of iteration order. ---
+		if not state["shadow_dance"]["active"] and not state["cold_embrace"]["active"]:
 			var effective_armor: float = _npc_effective_armor(base_armor, state)
+			var curse_target: Dictionary = state["winters_curse"].get("target_ref", {})
+			var curse_active: bool = not curse_target.is_empty() and int(curse_target.get("stun_turns_left", 0)) > 0
+			var curse_multiplier: float = 1.0 + float(state["winters_curse"].get("bonus_damage_pct", 0.0))
+
 			for enemy in living:
 				var stun_left: int = enemy.get("stun_turns_left", 0)
 				if stun_left > 0:
 					enemy["stun_turns_left"] = stun_left - 1
 					continue
+
 				var enemy_damage: float = float(enemy["static"].get("damage", 0))
+
+				if curse_active and not is_same(enemy, curse_target):
+					_apply_damage_to_enemy(curse_target, enemy_damage * curse_multiplier)
+					continue
+
 				var reduced: float = _apply_armor_reduction(enemy_damage, effective_armor)
 				reduced *= (1.0 - float(state["savage_roar"].get("damage_reduction_pct", 0.0)))
 				current_hp = _apply_reduced_damage_to_npc(hero_id, hero_static, state, cooldowns, current_hp, effective_max_hp, reduced, living)
@@ -827,6 +873,9 @@ func _new_npc_combat_state() -> Dictionary:
 		"bear": {},
 		"savage_roar": {"active": false, "damage_reduction_pct": 0.0},
 		"tidebringer_attack_count": 0,
+		"arctic_burn": {"active": false, "bonus_damage": 0.0, "bonus_range": 0, "attacks_remaining": 0, "turns_remaining": 0, "duration_pending_start": false},
+		"cold_embrace": {"active": false, "heal_per_turn": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"winters_curse": {"target_ref": {}, "bonus_damage_pct": 0.0},
 	}
 
 
@@ -895,6 +944,82 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			var ghostship_damage: float = float(level_data.get("damage", 0))
 			for enemy in living:
 				_apply_damage_to_enemy(enemy, ghostship_damage)
+		"cold_feet":
+			var cold_feet_target: Dictionary = _lowest_hp_enemy(living)
+			cold_feet_target["cold_feet_dot_damage"] = float(level_data.get("damage", 0))
+			cold_feet_target["cold_feet_dot_turns_left"] = int(level_data.get("duration", 0))
+		"ice_vortex":
+			# No columns to center an AoE on a specific position here -
+			# same "no columns, hit everyone" fallback Dark Pact's/
+			# Torrent's/Ghostship's own sim copies already use (see
+			# KNOWN_ACTIVE_SKILL_IDS's own comment above), so the DoT
+			# lands on every living enemy instead of just whichever one
+			# would've been at its center.
+			var vortex_damage: float = float(level_data.get("damage", 0))
+			var vortex_duration: int = int(level_data.get("duration", 0))
+			for enemy in living:
+				enemy["ice_vortex_dot_damage"] = vortex_damage
+				enemy["ice_vortex_dot_turns_left"] = vortex_duration
+		"chilling_touch":
+			var chilling_touch_target: Dictionary = _lowest_hp_enemy(living)
+			var chilling_touch_damage: float = _npc_roll_damage(damage_range, state) + float(level_data.get("bonus_damage", 0))
+			_apply_damage_to_enemy(chilling_touch_target, chilling_touch_damage)
+		"ice_blast":
+			# Same "no columns, hit everyone" fallback as Ghostship/Ice
+			# Vortex above - every living enemy is within its own AoE
+			# radius here, so there's no separate "pick the best
+			# target/position" step the way the real fight's own
+			# _cast_enemy_ice_blast() (which only ever has the player to
+			# hit anyway) or the player's own multi-enemy _resolve_ice_
+			# blast_cast() need one. Only the stun singles out one
+			# target, the same "primary target only" rule Torrent's own
+			# sim copy uses for its own stun.
+			var blast_damage: float = float(level_data.get("damage", 0))
+			var blast_dot_damage: float = float(level_data.get("dot_damage", 0))
+			var blast_dot_duration: int = int(level_data.get("dot_duration", 0))
+			var blast_execute_pct: float = float(level_data.get("execute_pct", 0.0))
+			var blast_primary: Dictionary = _lowest_hp_enemy(living)
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, blast_damage)
+				if enemy["current_hp"] > 0:
+					enemy["ice_blast_dot_damage"] = blast_dot_damage
+					enemy["ice_blast_dot_turns_left"] = blast_dot_duration
+					enemy["ice_blast_execute_pct"] = blast_execute_pct
+			if blast_primary["current_hp"] > 0:
+				blast_primary["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+		"arctic_burn":
+			_activate_npc_arctic_burn(state["arctic_burn"], level_data)
+		"splinter_blast":
+			# No columns to single out "every OTHER enemy within
+			# splinter_range" here - same "no columns, hit everyone"
+			# fallback Torrent's/Ice Vortex's own sim copies already use
+			# (see KNOWN_ACTIVE_SKILL_IDS's own comment above), so the
+			# primary target takes the full hit and every other living
+			# enemy takes the (lighter) splinter hit.
+			var splinter_primary: Dictionary = _lowest_hp_enemy(living)
+			_apply_damage_to_enemy(splinter_primary, float(level_data.get("damage", 0)))
+			var splinter_damage: float = float(level_data.get("splinter_damage", 0))
+			for enemy in living:
+				if is_same(enemy, splinter_primary):
+					continue
+				_apply_damage_to_enemy(enemy, splinter_damage)
+		"cold_embrace":
+			_dispel_all_npc_effects(state)
+			_activate_npc_cold_embrace(state["cold_embrace"], level_data)
+		"winter's_curse":
+			# No columns to check curse_range against here - same "no
+			# columns, redirect everyone" fallback the AoE skills above
+			# use, so EVERY other living enemy (not just ones within some
+			# range of the frozen target) piles onto it instead of the
+			# hero for as long as the freeze holds - see
+			# _run_stage_fight()'s own retaliation loop, which reads
+			# state["winters_curse"] every turn.
+			var curse_target: Dictionary = _lowest_hp_enemy(living)
+			curse_target["stun_turns_left"] = int(level_data.get("duration", 0))
+			state["winters_curse"] = {
+				"target_ref": curse_target,
+				"bonus_damage_pct": float(level_data.get("bonus_damage_pct", 0.0)),
+			}
 
 
 func _get_npc_skill_level_data(hero_id: String, hero_static: Dictionary, skill_id: String) -> Dictionary:
@@ -933,6 +1058,10 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 			return state["bear"].is_empty()
 		"aphotic_shield":
 			return not state["aphotic_shield"]["active"]
+		"arctic_burn":
+			return not state["arctic_burn"]["active"]
+		"cold_embrace":
+			return not state["cold_embrace"]["active"]
 		_:
 			return true
 
@@ -985,16 +1114,46 @@ func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dict
 ## ever reads those two), and `target` is always whichever living enemy
 ## the hero would attack anyway (_lowest_hp_enemy()), since that's the
 ## only target this sim's basic attack (and most of its skills) ever
-## considers. `living_target_hps` is every living enemy's own current
-## HP, for EnemySkillAI's shared multi-kill scoring (see Ghostship's/
-## Torrent's own modifiers, which need to know how many OTHER targets a
-## hit would also kill, not just the primary one `target_hp` covers).
+## considers. `living_target_hps`/`living_target_max_hps` are every
+## living enemy's own current/max HP, for EnemySkillAI's shared multi-
+## kill/execute scoring (see Ghostship's/Torrent's own modifiers, which
+## need to know how many OTHER targets a hit would also kill, not just
+## the primary one `target_hp` covers, and Ancient Apparition's own Ice
+## Blast modifier, which needs each target's own max HP to work out its
+## execute threshold).
+##
+## Winter Wyvern's own fields:
+##   - in_attack_range_now/in_attack_range_with_arctic_burn_bonus: always
+##     true here - this sim's basic attack already reaches whichever
+##     living enemy it targets with no travel cost at all (same reason
+##     X Marks the Spot isn't even a candidate here), so there's no
+##     "can't reach the target" case to model the way battle.gd's real
+##     columns have one.
+##   - arctic_burn_active: mirrors battle.gd's own field, just reading
+##     `state` instead of an instance var.
+##   - has_harmful_debuff: always false - nothing in this sim ever
+##     debuffs the simulated hero itself (only ITS OWN skills debuff the
+##     enemies it's fighting - see _tick_npc_entangle_effects() and
+##     friends), so Cold Embrace never has a harmful effect on the hero
+##     to dispel here, unlike a real hero fight where the player's own
+##     skills can land on the rival boss.
+##   - redirect_candidate_count/avg_enemy_damage: for Winter Wyvern's own
+##     Winter's Curse - every OTHER living enemy is a redirect candidate
+##     here (see _run_stage_fight()'s own retaliation loop, which
+##     redirects all of them, not just ones "in range" - there are no
+##     columns to check a curse_range against), and their average damage
+##     stat, for estimating the bonus damage the curse would generate.
 func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp: float, effective_max_hp: float, current_mana: float, max_mana: float, damage_range: String, state: Dictionary, living: Array) -> Dictionary:
 	var target: Dictionary = {} if living.is_empty() else _lowest_hp_enemy(living)
 
 	var tidebringer_level_data: Dictionary = _get_npc_tidebringer_level_data(hero_id, hero_static)
 	var tidebringer_ready: bool = not tidebringer_level_data.is_empty() \
 		and (int(state.get("tidebringer_attack_count", 0)) + 1) >= int(tidebringer_level_data.get("hits_to_activate", 1))
+
+	var total_enemy_damage: float = 0.0
+	for enemy in living:
+		total_enemy_damage += float(enemy["static"].get("damage", 0))
+	var avg_enemy_damage: float = total_enemy_damage / float(living.size()) if not living.is_empty() else 0.0
 
 	return {
 		"game_mode": "simulation",
@@ -1010,9 +1169,16 @@ func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp:
 		"target_max_hp": float(target.get("static", {}).get("hp", 0.0)) if not target.is_empty() else 0.0,
 		"bear_active": not state["bear"].is_empty(),
 		"living_target_hps": living.map(func(e): return float(e.get("current_hp", 0.0))),
+		"living_target_max_hps": living.map(func(e): return float(e["static"].get("hp", 1))),
 		"tidebringer_ready": tidebringer_ready,
 		"tidebringer_bonus_damage": float(tidebringer_level_data.get("bonus_damage", 0.0)),
 		"tidebringer_cleave_targets": maxi(living.size() - 1, 0) if tidebringer_ready else 0,
+		"in_attack_range_now": true,
+		"in_attack_range_with_arctic_burn_bonus": true,
+		"arctic_burn_active": bool(state["arctic_burn"]["active"]),
+		"has_harmful_debuff": false,
+		"redirect_candidate_count": maxi(living.size() - 1, 0),
+		"avg_enemy_damage": avg_enemy_damage,
 	}
 
 
@@ -1189,6 +1355,179 @@ func _tick_npc_entangle_effects(enemies: Array) -> void:
 			var dot_damage: float = float(enemy.get("entangle_dot_damage", 0))
 			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
 				_apply_damage_to_enemy(enemy, dot_damage)
+
+
+# ------------------------------------------------------------------
+# Ancient Apparition's Cold Feet/Ice Vortex - both plain damage-over-
+# time, so both mirror _tick_npc_entangle_effects()'s own DoT half
+# exactly, just against their own dedicated per-enemy fields (see
+# battle.gd's _resolve_cold_feet_cast()/_resolve_ice_vortex_cast() for
+# why they're kept separate from Entangle's own DoT fields).
+# ------------------------------------------------------------------
+
+func _tick_npc_cold_feet_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("cold_feet_dot_turns_left", 0) > 0:
+			enemy["cold_feet_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("cold_feet_dot_damage", 0))
+			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, dot_damage)
+
+
+func _tick_npc_ice_vortex_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("ice_vortex_dot_turns_left", 0) > 0:
+			enemy["ice_vortex_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("ice_vortex_dot_damage", 0))
+			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, dot_damage)
+
+
+## Ticks Ice Blast's damage-over-time down by one turn for every enemy
+## currently carrying it, then - if it survived that hit - checks its
+## execute threshold: an enemy whose current_hp has dropped to or below
+## execute_pct of its own max HP dies outright, regardless of how much
+## literal HP it has left, mirroring battle.gd's own _tick_ice_blast_
+## effects(). Setting current_hp to 0 is enough to register as a kill
+## here - _collect_npc_kills() (called right after this, in
+## _run_stage_fight()'s own top-of-turn block) credits XP/gold off
+## current_hp <= 0 by index, so no separate kill helper is needed the
+## way battle.gd's own _kill_enemy() is.
+func _tick_npc_ice_blast_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("ice_blast_dot_turns_left", 0) <= 0:
+			continue
+		if enemy.get("current_hp", 0) <= 0:
+			continue
+
+		enemy["ice_blast_dot_turns_left"] -= 1
+		var dot_damage: float = float(enemy.get("ice_blast_dot_damage", 0))
+		if dot_damage > 0.0:
+			_apply_damage_to_enemy(enemy, dot_damage)
+
+		if enemy.get("current_hp", 0) > 0:
+			var execute_pct: float = float(enemy.get("ice_blast_execute_pct", 0.0))
+			var max_hp: float = float(enemy["static"].get("hp", 1))
+			if execute_pct > 0.0 and enemy["current_hp"] <= max_hp * execute_pct:
+				enemy["current_hp"] = 0.0
+
+		if enemy.get("ice_blast_dot_turns_left", 0) <= 0:
+			enemy["ice_blast_execute_pct"] = 0.0
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Arctic Burn - mirrors battle.gd's own
+# _activate_arctic_burn()/_apply_arctic_burn_attack()/_tick_arctic_
+# burn()/_end_arctic_burn(). _apply_npc_arctic_burn_attack() is called
+# from _run_stage_fight()'s own basic-attack branch, right after the
+# attack lands, the same way _maybe_consume_npc_tidebringer_stack()'s
+# result is used there.
+# ------------------------------------------------------------------
+
+func _activate_npc_arctic_burn(ab: Dictionary, level_data: Dictionary) -> void:
+	ab["active"] = true
+	ab["bonus_damage"] = float(level_data.get("bonus_damage", 0))
+	ab["bonus_range"] = int(level_data.get("bonus_range", 0))
+	ab["attacks_remaining"] = int(level_data.get("attacks", 0))
+	ab["turns_remaining"] = int(level_data.get("duration", 0))
+	ab["duration_pending_start"] = true
+
+
+func _apply_npc_arctic_burn_attack(ab: Dictionary) -> void:
+	if not ab["active"] or ab["attacks_remaining"] <= 0:
+		return
+	ab["attacks_remaining"] -= 1
+	if ab["attacks_remaining"] <= 0:
+		_end_npc_arctic_burn(ab)
+
+
+func _tick_npc_arctic_burn(ab: Dictionary) -> void:
+	if not ab["active"]:
+		return
+	if ab["duration_pending_start"]:
+		ab["duration_pending_start"] = false
+		return
+	ab["turns_remaining"] -= 1
+	if ab["turns_remaining"] <= 0:
+		_end_npc_arctic_burn(ab)
+
+
+func _end_npc_arctic_burn(ab: Dictionary) -> void:
+	ab["active"] = false
+	ab["bonus_damage"] = 0.0
+	ab["bonus_range"] = 0
+	ab["attacks_remaining"] = 0
+	ab["turns_remaining"] = 0
+	ab["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Winter Wyvern's Cold Embrace - mirrors battle.gd's own
+# _activate_cold_embrace()/_dispel_all_hero_effects()/_tick_cold_
+# embrace()/_end_cold_embrace(). Damage immunity and the move/attack
+# lockout are both enforced directly in _run_stage_fight() (the
+# retaliation loop's own guard, and the basic-attack branch's own
+# early-out) rather than here, the same split battle.gd uses between
+# this section and _deal_fixed_damage_to_enemy()/_enemy_hero_turn().
+# ------------------------------------------------------------------
+
+func _activate_npc_cold_embrace(ce: Dictionary, level_data: Dictionary) -> void:
+	ce["active"] = true
+	ce["heal_per_turn"] = float(level_data.get("heal", 0))
+	ce["turns_remaining"] = int(level_data.get("duration", 0))
+	ce["duration_pending_start"] = true
+
+
+## Ticks Cold Embrace's duration down once per turn, healing the hero
+## for its own heal_per_turn on every tick that counts against the
+## duration - mirrors battle.gd's own _tick_cold_embrace(). Called from
+## _run_stage_fight() right after `effective_max_hp` is computed for the
+## turn (needed to clamp the heal), returning the hero's updated
+## current_hp the same way _apply_reduced_damage_to_npc() does.
+func _tick_npc_cold_embrace(ce: Dictionary, current_hp: float, effective_max_hp: float) -> float:
+	if not ce["active"]:
+		return current_hp
+	if ce["duration_pending_start"]:
+		ce["duration_pending_start"] = false
+		return current_hp
+
+	current_hp = minf(effective_max_hp, current_hp + ce["heal_per_turn"])
+	ce["turns_remaining"] -= 1
+	if ce["turns_remaining"] <= 0:
+		_end_npc_cold_embrace(ce)
+	return current_hp
+
+
+func _end_npc_cold_embrace(ce: Dictionary) -> void:
+	ce["active"] = false
+	ce["heal_per_turn"] = 0.0
+	ce["turns_remaining"] = 0
+	ce["duration_pending_start"] = false
+
+
+## Dispels every other self-buff currently active on the hero, right
+## before Cold Embrace establishes its own state - the simulation's own
+## mirror of battle.gd's _dispel_all_hero_effects()/_dispel_all_enemy_
+## hero_effects(). Simplified versus both of those: this sim has no
+## concept of a debuff landing ON the simulated hero in the first place
+## (creeps only ever deal flat retaliation damage here - see
+## _run_stage_fight()'s own retaliation loop), so there's nothing
+## harmful to clear, only these seven self-buffs.
+func _dispel_all_npc_effects(state: Dictionary) -> void:
+	if state["arctic_burn"]["active"]:
+		_end_npc_arctic_burn(state["arctic_burn"])
+	if state["essence_shift"]["active"]:
+		_end_npc_essence_shift(state["essence_shift"])
+	if state["shadow_dance"]["active"]:
+		_end_npc_shadow_dance(state["shadow_dance"])
+	if state["spirit_link"]["active"]:
+		_end_npc_spirit_link(state["spirit_link"])
+	if state["true_form"]["active"]:
+		_end_npc_true_form(state["true_form"])
+	if state["aphotic_shield"]["active"]:
+		_end_npc_aphotic_shield(state["aphotic_shield"], false, [])
+	if state["borrowed_time"]["active"]:
+		_end_npc_borrowed_time(state["borrowed_time"])
 
 
 # ------------------------------------------------------------------
@@ -1585,7 +1924,7 @@ func _npc_roll_damage(damage_range: String, state: Dictionary, extra_bonus: floa
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + extra_bonus
+	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + extra_bonus
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
