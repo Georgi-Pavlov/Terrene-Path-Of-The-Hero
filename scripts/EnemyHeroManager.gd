@@ -202,8 +202,10 @@ func _restock_npc_potion(hero_id: String, potion_id: String) -> void:
 # Combat simulation
 # ------------------------------------------------------------------
 # A lightweight, positionless stand-in for a real Battle scene fight -
-# no grid/columns, no reinforcements, no hero-vs-hero yet (that's
-# Step 5's invasion duels). Known simplifications, called out because
+# no grid/columns, though it does now have both reinforcements (see
+# _spawn_npc_reinforcements()) and hero-vs-hero fights (zone-mate
+# fights via _try_npc_zone_mate_fight(), invasion duels via
+# _try_npc_invasion_duel()). Known simplifications, called out because
 # they make simulated combat meaningfully different from a real fight:
 #   - Pounce always targets the lowest-HP enemy (no "nearest along a
 #     column" concept) but still applies its real stun duration.
@@ -219,6 +221,16 @@ func _restock_npc_potion(hero_id: String, potion_id: String) -> void:
 # it's treated as a loss (HP resets next attempt, no stage progress,
 # but XP/gold/potions already spent this attempt are kept).
 const MAX_SIMULATED_TURNS: int = 30
+
+# Reinforcements - mirrors battle.gd's own REINFORCEMENT_INTERVAL/
+# REINFORCEMENT_REPEAT_INTERVAL (kept in sync by hand, same as every
+# other simulated number in this file that isn't shared code - see
+# _run_stage_fight()/_spawn_npc_reinforcements()): the first wave is
+# due after this many turns, every wave after that after another
+# REINFORCEMENT_REPEAT_INTERVAL on top, for as long as the fight goes
+# on unresolved.
+const REINFORCEMENT_INTERVAL: int = 13
+const REINFORCEMENT_REPEAT_INTERVAL: int = 10
 
 # Drink a Health Potion once HP falls to (or below) this fraction of
 # max. Should stay ABOVE FLEE_HP_THRESHOLD so a hero gets a real chance
@@ -253,23 +265,30 @@ const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
 # Every ACTIVE skill across Slark, Lone Druid, Abaddon, Kunkka, Ancient
-# Apparition, and Winter Wyvern, the only six heroes with any simulated
-# skill logic today - anything else a hero knows just never gets cast
-# here. This is the full candidate pool
+# Apparition, Winter Wyvern, Crystal Maiden, and Tusk, the only eight
+# heroes with any simulated skill logic today - anything else a hero
+# knows just never gets cast here. This is the full candidate pool
 # _pick_ready_skill() checks for cooldown/worth-casting/mana before
 # handing survivors to EnemySkillAI to score and pick from - no longer
 # a priority order (see EnemySkillAI.HERO_TIE_BREAK for each hero's own
 # tie-break fallback order, only consulted when two skills' scores are
 # too close to call outright).
 # Savage Roar (Lone Druid's passive), Curse of Avernus and Borrowed
-# Time (both Abaddon's), and Tidebringer (Kunkka's) aren't in this list
-# - none of them are ever "cast" or scored: Savage Roar and Borrowed
-# Time turn themselves on/off automatically off the hero's own HP%,
-# same as the player's own copies - see _update_npc_savage_roar_state()/
-# _maybe_auto_activate_npc_borrowed_time() - and Curse of Avernus/
-# Tidebringer only ever build off the hero's own plain Attacks - see
-# _apply_npc_curse_of_avernus_stack()/_maybe_consume_npc_tidebringer_
-# stack().
+# Time (both Abaddon's), Tidebringer (Kunkka's), and Arcane Aura
+# (Crystal Maiden's) aren't in this list - none of them are ever "cast"
+# or scored: Savage Roar and Borrowed Time turn themselves on/off
+# automatically off the hero's own HP%, same as the player's own copies
+# - see _update_npc_savage_roar_state()/_maybe_auto_activate_npc_
+# borrowed_time() - Curse of Avernus/Tidebringer only ever build off the
+# hero's own plain Attacks - see _apply_npc_curse_of_avernus_stack()/
+# _maybe_consume_npc_tidebringer_stack() - and Arcane Aura just
+# regenerates mana passively; there's nowhere in this sim's own mana
+# bookkeeping for it to hook into yet (see _get_npc_combat_stats()/
+# _npc_estimate_damage() for where a future hook would go), so for now
+# a simulated Crystal Maiden simply doesn't regenerate mana beyond
+# whatever NEW_SIM_MANA_RESTORE_PCT already grants at the start of a
+# fresh attempt - same "no benefit invented that doesn't already exist"
+# rule this whole file follows elsewhere.
 # X Marks the Spot (Kunkka's own other skill) isn't here for a
 # different reason: it's purely a positioning tool (mark now, teleport
 # onto the target next turn, no damage) with nothing else to it, and
@@ -277,7 +296,21 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # "the lowest HP enemy" with no travel cost to begin with, so a
 # guaranteed teleport would have literally nothing to accomplish here.
 # It's simulated in the real fight (battle.gd's own _enemy_hero_turn())
-# since that one has real columns for it to matter on.
+# since that one has real columns for it to matter on. Tusk's Ice
+# Shards is a similar story: its whole "wall off columns" mechanic has
+# nothing to act on here (nothing in this sim moves at all - creeps are
+# a pure HP pool the hero attacks each turn, never a flee/positioning
+# decision of their own), so its sim copy is just a flat hit to the
+# primary target, same as every other single-target damage skill's own
+# copy (see this file's "ice_shards" case in _cast_skill() below) -
+# EnemySkillAI's own _tusk_ice_shards_modifier() already accounts for
+# this by falling back to a generic "more living enemies, more a
+# control effect is worth" proxy rather than any real column math here.
+# Walrus Punch's own knockback/collision is approximated the same way -
+# no real destination to walk out, so its sim copy never adds the 50%
+# collision bonus at all (see _tusk_walrus_punch_modifier()'s own
+# sim-side proxy for how the AI still accounts for the POSSIBILITY of
+# one without the actual cast ever guaranteeing it).
 # Ghostship (Kunkka's ultimate) IS in this list, unlike X Marks the
 # Spot - its whole "everyone the ship's path crosses" concept has no
 # columns to work out a path along here, so it falls back to the same
@@ -297,6 +330,8 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"mist_coil", "aphotic_shield", "torrent", "ghostship",
 	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
 	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
+	"crystal_nova", "frostbite", "freezing_field",
+	"ice_shards", "snowball", "tag_team", "walrus_punch",
 ]
 
 # How many full turns a target can go without being hit by the hero's
@@ -342,7 +377,7 @@ func simulate_npc_stage_attempt(hero_id: String, hero_static: Dictionary) -> Dic
 		starting_mana = PlayerManager.get_npc_current_mana(hero_id)
 
 	var enemies: Array = _build_simulated_stage_enemies(zone_id, stage)
-	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, starting_hp, starting_mana, true)
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, starting_hp, starting_mana, true, zone_id, stage)
 
 	PlayerManager.set_npc_current_hp(hero_id, fight["ending_hp"])
 	PlayerManager.set_npc_current_mana(hero_id, fight["ending_mana"])
@@ -394,8 +429,14 @@ func tick_npc_hero(hero_id: String, hero_static: Dictionary) -> void:
 ## After fully clearing their own home zone's final stage, fights a
 ## random undefeated zone-mate if one exists - the exact same
 ## one-sided "hero as a single tough enemy" model the player fights
-## via GameManager.build_hero_fight_enemy_def(), just simulated. If no
-## zone-mate is left alive, this hero is now free.
+## via GameManager.build_hero_fight_enemy_def(), just simulated. The
+## player's own recruited hero is excluded from the candidate pool even
+## if they share this zone (mirrors battle.gd's own _get_eligible_hero_
+## fight_heroes() exclusion, and _pick_invasion_target()'s below) - the
+## player controls that hero directly, so a background sim killing them
+## off would surface as their own hero getting "slain" out from under
+## them mid-playthrough. If no OTHER zone-mate is left alive, this hero
+## is now free.
 ## Winning uses the XP bounty formula (get_hero_kill_bounty) rather
 ## than the enemy_def's own built-in XP field, since that field is
 ## sized for a flat creep-style reward, not a hero kill - gold still
@@ -403,10 +444,11 @@ func tick_npc_hero(hero_id: String, hero_static: Dictionary) -> void:
 ## asked to change for hero kills.
 func _try_npc_zone_mate_fight(hero_id: String, hero_static: Dictionary) -> void:
 	var home_zone_id: String = GameManager.get_zone_id_for_hero(hero_id)
+	var player_hero_id: String = PlayerManager.get_recruited_hero().get("id", "")
 	var zone_mates: Array = []
 	for hero in GameManager.get_zone(home_zone_id).get("heroes", []):
 		var mate_id: String = hero.get("id", "")
-		if mate_id == hero_id or PlayerManager.is_hero_defeated(mate_id):
+		if mate_id == hero_id or mate_id == player_hero_id or PlayerManager.is_hero_defeated(mate_id):
 			continue
 		zone_mates.append(hero)
 
@@ -430,7 +472,7 @@ func _try_npc_zone_mate_fight(hero_id: String, hero_static: Dictionary) -> void:
 	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
 	var max_hp: float = float(combat_stats.get("hp", 1))
 	var max_mana: float = float(combat_stats.get("mana", 0))
-	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, max_hp, max_mana, false)
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, max_hp, max_mana, false, home_zone_id, GameManager.MAX_ZONE_STAGE)
 
 	if fight["gold_gained"] > 0:
 		PlayerManager.add_npc_gold(hero_id, fight["gold_gained"])
@@ -525,10 +567,13 @@ func _try_npc_invasion_duel(hero_id: String, hero_static: Dictionary, target_id:
 	# Same rules as _try_npc_zone_mate_fight: full HP/mana for both
 	# sides, no flee, fight to the death or a 30-turn stalemate - and
 	# this doesn't touch the hero's persisted grind HP/mana either.
+	# Reinforcements (if the duel runs long enough to trigger any) pull
+	# from the TARGET's own zone roster, same as the duel itself being
+	# staged there.
 	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
 	var max_hp: float = float(combat_stats.get("hp", 1))
 	var max_mana: float = float(combat_stats.get("mana", 0))
-	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, max_hp, max_mana, false)
+	var fight: Dictionary = _run_stage_fight(hero_id, hero_static, enemies, max_hp, max_mana, false, GameManager.get_zone_id_for_hero(target_id), GameManager.MAX_ZONE_STAGE)
 
 	if fight["gold_gained"] > 0:
 		PlayerManager.add_npc_gold(hero_id, fight["gold_gained"])
@@ -624,6 +669,44 @@ func _build_stage_enemy_batch(templates: Array, count: int, stage: int) -> Array
 	return result
 
 
+## Appends a reinforcement wave straight into `enemies` in place -
+## called from _run_stage_fight() once every REINFORCEMENT_INTERVAL/
+## REINFORCEMENT_REPEAT_INTERVAL turns, mirroring battle.gd's own
+## _spawn_reinforcements(). `allow_flee` doubles as "is this a normal
+## creep stage fight" (see _run_stage_fight()'s own doc on what that
+## flag distinguishes): a stage fight gets the smaller
+## GameManager.REINFORCEMENT_ENEMY_COUNTS top-up for `stage`, while a
+## hero-vs-hero duel (allow_flee == false) always gets the FULL stage 3
+## GameManager.STAGE_ENEMY_COUNTS composition instead, regardless of
+## `stage` - a boss fight already means business, so its own
+## reinforcements hit as hard as an entire fresh stage 3 wave rather
+## than a token trickle, exactly matching battle.gd's own hero-fight
+## exception in _spawn_reinforcements(). Built via
+## _build_stage_enemy_batch(), the same helper _build_simulated_stage_
+## enemies() uses for a fight's opening wave, so reinforcements come in
+## scaled to whichever stage they're actually sized at.
+func _spawn_npc_reinforcements(enemies: Array, zone_id: String, stage: int, allow_flee: bool) -> void:
+	var zone_data: Dictionary = GameManager.get_zone(zone_id)
+	var enemy_defs: Array = zone_data.get("enemies", [])
+
+	var mele_templates: Array = []
+	var range_templates: Array = []
+	for enemy_def in enemy_defs:
+		if enemy_def.get("type", "") == "range":
+			range_templates.append(enemy_def)
+		else:
+			mele_templates.append(enemy_def)
+
+	var reinforcement_stage: int = stage if allow_flee else GameManager.MAX_ZONE_STAGE
+	var counts: Dictionary = (
+		GameManager.get_reinforcement_enemy_counts(reinforcement_stage) if allow_flee
+		else GameManager.get_stage_enemy_counts(reinforcement_stage)
+	)
+
+	enemies.append_array(_build_stage_enemy_batch(mele_templates, int(counts.get("mele", 0)), reinforcement_stage))
+	enemies.append_array(_build_stage_enemy_batch(range_templates, int(counts.get("range", 0)), reinforcement_stage))
+
+
 func _apply_stage_bonus(base_def: Dictionary, stage: int) -> Dictionary:
 	if stage <= 1:
 		return base_def
@@ -668,7 +751,13 @@ func _get_npc_combat_stats(hero_id: String, hero_static: Dictionary) -> Dictiona
 ## FLEE_HP_THRESHOLD - only ever true for stage fights against creeps;
 ## hero-vs-hero fights (_try_npc_zone_mate_fight/
 ## _try_npc_invasion_duel) pass false, since those have no flee option.
-func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, starting_hp: float, starting_mana: float, allow_flee: bool) -> Dictionary:
+## `zone_id`/`stage` are only used for reinforcements (see
+## _spawn_npc_reinforcements()) - `zone_id` says whose enemy roster to
+## pull from, `stage` says how strong a creep-fight's own top-up should
+## be (ignored in favor of a flat MAX_ZONE_STAGE for a hero-vs-hero
+## fight, which always throws the full stage 3 composition instead -
+## see _spawn_npc_reinforcements()'s own doc).
+func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, starting_hp: float, starting_mana: float, allow_flee: bool, zone_id: String, stage: int) -> Dictionary:
 	var combat_stats: Dictionary = _get_npc_combat_stats(hero_id, hero_static)
 	var max_hp: float = float(combat_stats.get("hp", 1))
 	var max_mana: float = float(combat_stats.get("mana", 0))
@@ -690,7 +779,19 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 	# left and re-entered.
 	var state: Dictionary = _new_npc_combat_state()
 
+	# Reinforcements - mirrors battle.gd's own _turn_count/
+	# _next_reinforcement_turn pair: the first wave is due after
+	# REINFORCEMENT_INTERVAL turns, every wave after that after another
+	# REINFORCEMENT_REPEAT_INTERVAL on top, for as long as this attempt
+	# keeps going. turn_index is 0-based, so "+1" turns it into the same
+	# 1-based turn count battle.gd's own _turn_count tracks.
+	var next_reinforcement_turn: int = REINFORCEMENT_INTERVAL
+
 	for turn_index in range(MAX_SIMULATED_TURNS):
+		if turn_index + 1 >= next_reinforcement_turn:
+			_spawn_npc_reinforcements(enemies, zone_id, stage, allow_flee)
+			next_reinforcement_turn += REINFORCEMENT_REPEAT_INTERVAL
+
 		for skill_id in cooldowns.keys():
 			cooldowns[skill_id] = maxi(0, cooldowns[skill_id] - 1)
 
@@ -700,11 +801,14 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_true_form(state["true_form"])
 		_tick_npc_aphotic_shield(state["aphotic_shield"])
 		_tick_npc_borrowed_time(state["borrowed_time"])
+		_tick_npc_tag_team(state["tag_team"])
 		_tick_npc_entangle_effects(enemies)
 		_tick_npc_curse_of_avernus_effects(enemies, turn_index)
 		_tick_npc_cold_feet_effects(enemies)
 		_tick_npc_ice_vortex_effects(enemies)
 		_tick_npc_ice_blast_effects(enemies)
+		_tick_npc_frostbite_effects(enemies)
+		_tick_npc_freezing_field(state["freezing_field"], enemies)
 		var kills: Dictionary = _collect_npc_kills(enemies, counted_dead)
 		xp_gained += kills["xp"]
 		gold_gained += kills["gold"]
@@ -876,6 +980,8 @@ func _new_npc_combat_state() -> Dictionary:
 		"arctic_burn": {"active": false, "bonus_damage": 0.0, "bonus_range": 0, "attacks_remaining": 0, "turns_remaining": 0, "duration_pending_start": false},
 		"cold_embrace": {"active": false, "heal_per_turn": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"winters_curse": {"target_ref": {}, "bonus_damage_pct": 0.0},
+		"freezing_field": {"active": false, "damage_per_turn": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"tag_team": {"active": false, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 	}
 
 
@@ -1020,6 +1126,54 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 				"target_ref": curse_target,
 				"bonus_damage_pct": float(level_data.get("bonus_damage_pct", 0.0)),
 			}
+		"crystal_nova":
+			# No columns to check radius against here - same "no columns,
+			# hit everyone else" fallback Torrent's level-4 splash uses
+			# (see this match's "torrent" case above) once Crystal Nova's
+			# own radius actually exists (level 3+); at levels 1-2
+			# (radius 0) it's a single-target nuke same as everywhere else.
+			var nova_primary: Dictionary = _lowest_hp_enemy(living)
+			var nova_damage: float = float(level_data.get("damage", 0))
+			_apply_damage_to_enemy(nova_primary, nova_damage)
+			if int(level_data.get("radius", 0)) > 0:
+				for enemy in living:
+					if is_same(enemy, nova_primary):
+						continue
+					_apply_damage_to_enemy(enemy, nova_damage)
+		"frostbite":
+			# Single-target control, same "whichever enemy the hero would
+			# attack anyway" target as Cold Feet/Torrent's own primary hit.
+			var frostbite_target: Dictionary = _lowest_hp_enemy(living)
+			frostbite_target["frostbite_dot_damage"] = float(level_data.get("dot_damage", 0))
+			frostbite_target["frostbite_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+			if frostbite_target["current_hp"] > 0:
+				frostbite_target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+		"freezing_field":
+			_activate_npc_freezing_field(state["freezing_field"], level_data)
+		"ice_shards":
+			# The wall itself has nothing to act on here - nothing in this
+			# sim moves at all (see KNOWN_ACTIVE_SKILL_IDS's own comment
+			# above) - so this is just a flat hit to the primary target,
+			# same as Mist Coil/Chilling Touch's own sim copies.
+			_apply_damage_to_enemy(_lowest_hp_enemy(living), float(level_data.get("damage", 0)))
+		"snowball":
+			var snowball_target: Dictionary = _lowest_hp_enemy(living)
+			_apply_damage_to_enemy(snowball_target, float(level_data.get("damage", 0)))
+			if snowball_target["current_hp"] > 0:
+				snowball_target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+		"tag_team":
+			_activate_npc_tag_team(state["tag_team"], level_data)
+		"walrus_punch":
+			# No real knockback/collision to resolve here (see
+			# KNOWN_ACTIVE_SKILL_IDS's own comment above) - just the base
+			# hero_damage x damage_multiplier hit, same "no columns" honesty
+			# every other position-dependent skill's own sim copy has.
+			var punch_target: Dictionary = _lowest_hp_enemy(living)
+			var punch_multiplier: float = float(level_data.get("damage_multiplier", 1.0))
+			var punch_dmg: float = _npc_roll_damage(damage_range, state) * punch_multiplier
+			_apply_damage_to_enemy(punch_target, punch_dmg)
+			if punch_target["current_hp"] > 0:
+				punch_target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
 
 
 func _get_npc_skill_level_data(hero_id: String, hero_static: Dictionary, skill_id: String) -> Dictionary:
@@ -1062,6 +1216,10 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 			return not state["arctic_burn"]["active"]
 		"cold_embrace":
 			return not state["cold_embrace"]["active"]
+		"freezing_field":
+			return not state["freezing_field"]["active"]
+		"tag_team":
+			return not state["tag_team"]["active"]
 		_:
 			return true
 
@@ -1191,7 +1349,7 @@ func _npc_estimate_damage(damage_range: String, state: Dictionary) -> float:
 	var parts: PackedStringArray = damage_range.split("-")
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
-	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"]
+	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["tag_team"]["bonus_damage"]
 	return (min_dmg + max_dmg) / 2.0 + bonus_damage
 
 
@@ -1528,6 +1686,101 @@ func _dispel_all_npc_effects(state: Dictionary) -> void:
 		_end_npc_aphotic_shield(state["aphotic_shield"], false, [])
 	if state["borrowed_time"]["active"]:
 		_end_npc_borrowed_time(state["borrowed_time"])
+
+
+# ------------------------------------------------------------------
+# Crystal Maiden's Frostbite - mirrors _tick_npc_cold_feet_effects()'/
+# _tick_npc_ice_vortex_effects()'s own DoT tick exactly, just against
+# Frostbite's own dedicated per-enemy fields (see battle.gd's
+# _resolve_frostbite_cast() for why it's kept separate from every other
+# skill's own DoT fields). The stun itself needs no separate tick here -
+# it shares stun_turns_left, the same generic per-enemy field Pounce's/
+# Torrent's own stun already decrements in _run_stage_fight()'s own
+# retaliation loop.
+# ------------------------------------------------------------------
+
+func _tick_npc_frostbite_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("frostbite_dot_turns_left", 0) > 0:
+			enemy["frostbite_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("frostbite_dot_damage", 0))
+			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, dot_damage)
+
+
+# ------------------------------------------------------------------
+# Crystal Maiden's ultimate, Freezing Field - mirrors battle.gd's own
+# _activate_freezing_field()/_tick_freezing_field()/_end_freezing_
+# field(). No columns to check radius against here - same "no columns,
+# hit everyone" fallback Ice Vortex's own sim copy already uses (see
+# this file's own KNOWN_ACTIVE_SKILL_IDS header comment), so every tick
+# that counts against the duration hits every still-living enemy, not
+# just whichever ones would really be within radius of the hero's own
+# position in a real fight.
+# ------------------------------------------------------------------
+
+func _activate_npc_freezing_field(ff: Dictionary, level_data: Dictionary) -> void:
+	ff["active"] = true
+	ff["damage_per_turn"] = float(level_data.get("damage", 0))
+	ff["turns_remaining"] = int(level_data.get("duration", 0))
+	ff["duration_pending_start"] = true
+
+
+func _tick_npc_freezing_field(ff: Dictionary, enemies: Array) -> void:
+	if not ff["active"]:
+		return
+	if ff["duration_pending_start"]:
+		ff["duration_pending_start"] = false
+		return
+
+	var damage: float = float(ff["damage_per_turn"])
+	if damage > 0.0:
+		for enemy in enemies:
+			if enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, damage)
+
+	ff["turns_remaining"] -= 1
+	if ff["turns_remaining"] <= 0:
+		_end_npc_freezing_field(ff)
+
+
+func _end_npc_freezing_field(ff: Dictionary) -> void:
+	ff["active"] = false
+	ff["damage_per_turn"] = 0.0
+	ff["turns_remaining"] = 0
+	ff["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Tusk's Tag Team - mirrors battle.gd's own _activate_tag_team()/_tick_
+# tag_team()/_end_tag_team(): a flat bonus_damage added to
+# _npc_roll_damage()/_npc_estimate_damage() for the duration, same spot
+# Arctic Burn's/True Form's own bonus_damage already occupy there.
+# ------------------------------------------------------------------
+
+func _activate_npc_tag_team(tt: Dictionary, level_data: Dictionary) -> void:
+	tt["active"] = true
+	tt["bonus_damage"] = float(level_data.get("bonus_damage", 0))
+	tt["turns_remaining"] = int(level_data.get("duration", 0))
+	tt["duration_pending_start"] = true
+
+
+func _tick_npc_tag_team(tt: Dictionary) -> void:
+	if not tt["active"]:
+		return
+	if tt["duration_pending_start"]:
+		tt["duration_pending_start"] = false
+		return
+	tt["turns_remaining"] -= 1
+	if tt["turns_remaining"] <= 0:
+		_end_npc_tag_team(tt)
+
+
+func _end_npc_tag_team(tt: Dictionary) -> void:
+	tt["active"] = false
+	tt["bonus_damage"] = 0.0
+	tt["turns_remaining"] = 0
+	tt["duration_pending_start"] = false
 
 
 # ------------------------------------------------------------------
@@ -1924,7 +2177,7 @@ func _npc_roll_damage(damage_range: String, state: Dictionary, extra_bonus: floa
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + extra_bonus
+	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + state["tag_team"]["bonus_damage"] + extra_bonus
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 

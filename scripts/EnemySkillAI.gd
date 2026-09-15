@@ -39,9 +39,9 @@ class_name EnemySkillAI
 # _kunkka_modifier()), since a Tidebringer-empowered Attack can
 # genuinely be the better play than any of Kunkka's real skills.
 #
-# Six heroes have real AI logic today: Slark, Lone Druid, Abaddon,
-# Kunkka, Ancient Apparition, and Winter Wyvern - see
-# resolve_hero_archetype() for how a hero_static maps to one of them,
+# Eight heroes have real AI logic today: Slark, Lone Druid, Abaddon,
+# Kunkka, Ancient Apparition, Winter Wyvern, Crystal Maiden, and Tusk -
+# see resolve_hero_archetype() for how a hero_static maps to one of them,
 # and each one's own _*_modifier() function below for its personality.
 # Ancient Apparition's Ice Blast in particular models an "execute"
 # mechanic (a target dies outright once its HP drops to or below a
@@ -52,6 +52,26 @@ class_name EnemySkillAI
 # piles onto the frozen target instead, for bonus damage - see
 # _ww_winters_curse_modifier()'s own "redirect_candidate_count" scoring
 # and battle.gd's/EnemyHeroManager.gd's own retaliation-loop hooks).
+# Crystal Maiden's Freezing Field is a self-cast AoE ultimate (centered
+# on HER OWN position, never a selected enemy's) rather than a targeted
+# one - see _cm_freezing_field_modifier()'s own "target_distance" check,
+# which is battle.gd's already-computed distance from Crystal Maiden's
+# own pos_index to the player, not a fresh per-target search. Arcane
+# Aura is passive and deliberately never appears in SKILL_INFO/
+# HERO_TIE_BREAK/_estimate_skill_damage - callers only ever hand this
+# file a hero's KNOWN active skills to begin with (see battle.gd's
+# ENEMY_KNOWN_SKILL_IDS/EnemyHeroManager's KNOWN_ACTIVE_SKILL_IDS,
+# neither of which lists it), so it can never become a scored candidate.
+# Tusk's Ice Shards is the one skill in this file whose main value is
+# positional rather than a raw damage/control number - see
+# _tusk_ice_shards_modifier()'s own "grid_columns" check, real board
+# data battle.gd's own _build_enemy_ai_context() supplies (never present
+# in the simulation - see EnemyHeroManager's own _build_npc_ai_context()
+# docstring - where a missing value falls back to a generic "more
+# enemies around, more this matters" proxy, same spirit as Winter's
+# Curse's own redirect_candidate_count). Walrus Punch's own damage is
+# Tusk's actual (rolled) Attack damage times a multiplier, not a flat
+# number - see its own "walrus_punch" case in _estimate_skill_damage().
 # ============================================================
 
 const DEBUG_AI := false
@@ -84,6 +104,13 @@ const SKILL_INFO := {
 	"splinter_blast": {"category": "offensive", "base_score": 50.0},
 	"cold_embrace": {"category": "defensive", "base_score": 45.0},
 	"winter's_curse": {"category": "defensive", "base_score": 65.0},
+	"crystal_nova": {"category": "offensive", "base_score": 45.0},
+	"frostbite": {"category": "offensive", "base_score": 50.0},
+	"freezing_field": {"category": "offensive", "base_score": 65.0},
+	"ice_shards": {"category": "offensive", "base_score": 40.0},
+	"snowball": {"category": "offensive", "base_score": 50.0},
+	"tag_team": {"category": "utility", "base_score": 35.0},
+	"walrus_punch": {"category": "offensive", "base_score": 65.0},
 }
 
 # A plain Attack's own pseudo skill id - never a real skill, but scored
@@ -110,6 +137,8 @@ const HERO_TIE_BREAK := {
 	"kunkka": ["ghostship", "torrent", "x_marks_the_spot"],
 	"ancient_apparition": ["ice_blast", "chilling_touch", "cold_feet", "ice_vortex"],
 	"winter_wyvern": ["winter's_curse", "splinter_blast", "cold_embrace", "arctic_burn"],
+	"crystal_maiden": ["freezing_field", "frostbite", "crystal_nova"],
+	"tusk": ["walrus_punch", "snowball", "ice_shards", "tag_team"],
 }
 
 # Scores within this many points of the top score are treated as
@@ -144,6 +173,10 @@ static func resolve_hero_archetype(hero_static: Dictionary) -> String:
 		return "ancient_apparition"
 	if "winter's_curse" in skill_ids:
 		return "winter_wyvern"
+	if "freezing_field" in skill_ids:
+		return "crystal_maiden"
+	if "walrus_punch" in skill_ids:
+		return "tusk"
 	return ""
 
 
@@ -181,9 +214,17 @@ static func evaluate_skill(skill_id: String, level_data: Dictionary, context: Di
 ## expire unused (see _ww_basic_attack_modifier()). This stays a hero-
 ## gated switch rather than always-on so no other hero's existing
 ## behavior changes: for everyone else, a plain Attack is still purely
-## the fallback for "nothing else qualified," exactly as before.
+## the fallback for "nothing else qualified," exactly as before. Crystal
+## Maiden opts in too: her whole kit is mana-hungry (70-330 a cast), so a
+## plain Attack that can already finish a low-HP target off deserves a
+## real shot at beating one of them outright - see
+## _cm_basic_attack_modifier(). Tusk opts in for the same reason - his
+## Walrus Punch in particular is an expensive ultimate that a cheap
+## plain Attack can already make redundant against a low-HP target (see
+## _tusk_basic_attack_modifier()/_tusk_walrus_punch_modifier()'s own
+## early-out).
 static func basic_attack_participates(archetype: String) -> bool:
-	return archetype == "kunkka" or archetype == "winter_wyvern"
+	return archetype == "kunkka" or archetype == "winter_wyvern" or archetype == "crystal_maiden" or archetype == "tusk"
 
 
 ## The score for a plain Attack, for a hero basic_attack_participates()
@@ -314,6 +355,34 @@ static func _estimate_skill_damage(skill_id: String, level_data: Dictionary, con
 			return float(level_data.get("damage", 0.0)) + float(level_data.get("dot_damage", 0.0)) * float(level_data.get("dot_duration", 0.0))
 		"splinter_blast":
 			return float(level_data.get("damage", 0.0))
+		"crystal_nova":
+			return float(level_data.get("damage", 0.0))
+		"frostbite":
+			# A pure DoT/control cast, same as Cold Feet/Ice Vortex above -
+			# its entire damage value is dot_damage x dot_duration, never
+			# just the per-turn tick.
+			return float(level_data.get("dot_damage", 0.0)) * float(level_data.get("dot_duration", 0.0))
+		"freezing_field":
+			# Also a pure damage-over-time cast (on herself, hitting
+			# whoever's in range each tick) - damage x duration, same
+			# reasoning as Cold Feet/Ice Vortex/Frostbite above.
+			return float(level_data.get("damage", 0.0)) * float(level_data.get("duration", 0.0))
+		"ice_shards", "snowball":
+			return float(level_data.get("damage", 0.0))
+		"walrus_punch":
+			# NOT a flat number - Walrus Punch's damage is Tusk's own
+			# actual (already-rolled) Attack damage times this level's
+			# own multiplier (see the design doc's own "do not treat
+			# damage_multiplier as flat damage" note). `hero_damage` is
+			# the same roll a plain Attack candidate would use (see
+			# evaluate_basic_attack()). The 50% collision bonus is
+			# deliberately NOT folded in here - it's conditional on
+			# knockback actually being cut short, which only
+			# _tusk_walrus_punch_modifier() (with real board data, or the
+			# simulation's own proxy) is in a position to judge; this
+			# stays the conservative no-collision baseline, same split
+			# Ice Blast's own execute bonus uses versus its base estimate.
+			return float(context.get("hero_damage", 0.0)) * float(level_data.get("damage_multiplier", 1.0))
 		_:
 			return 0.0
 
@@ -339,6 +408,10 @@ static func _hero_specific_modifier(archetype: String, skill_id: String, level_d
 			return _ancient_apparition_modifier(skill_id, level_data, context)
 		"winter_wyvern":
 			return _winter_wyvern_modifier(skill_id, level_data, context)
+		"crystal_maiden":
+			return _crystal_maiden_modifier(skill_id, level_data, context)
+		"tusk":
+			return _tusk_modifier(skill_id, level_data, context)
 		_:
 			return 0.0
 
@@ -909,6 +982,482 @@ static func _ww_winters_curse_modifier(level_data: Dictionary, context: Dictiona
 ## BASIC_ATTACK_ID/basic_attack_participates().
 static func _ww_basic_attack_modifier(context: Dictionary) -> float:
 	return 25.0 if bool(context.get("arctic_burn_active", false)) else 0.0
+
+
+## Crystal Maiden: ranged, control/burst/AoE, mana-aware. Crystal Nova's
+## generic offensive scoring already covers its primary hit (target
+## value, kill potential - via _estimate_skill_damage()'s own
+## "crystal_nova" case); this only adds its own splash-specific terms
+## once its radius actually exists (level 3+ - see _cm_crystal_nova_
+## modifier()). Frostbite is "offensive" category too (so it gets the
+## same generic kill-potential/target-value terms, fed by its own DoT-
+## totaled _estimate_skill_damage() case) - this layers its control
+## value (stun_turns) and defensive value (hero_hp_ratio) on top (see
+## _cm_frostbite_modifier()). Freezing Field is the one skill here that
+## ISN'T a targeted cast - it's centered on Crystal Maiden's own
+## position, never a selected enemy's (see _cm_freezing_field_
+## modifier()'s own docstring for how that's told apart from a normal
+## AoE in a codebase where every existing AoE skill is either target-
+## centered or "no columns, hit everyone").
+static func _crystal_maiden_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+	match skill_id:
+		"crystal_nova":
+			return _cm_crystal_nova_modifier(level_data, context)
+		"frostbite":
+			return _cm_frostbite_modifier(level_data, context)
+		"freezing_field":
+			return _cm_freezing_field_modifier(level_data, context)
+		BASIC_ATTACK_ID:
+			return _cm_basic_attack_modifier(context)
+		_:
+			return 0.0
+
+
+## Crystal Nova: radius is 0 at levels 1-2 (a single-target nuke - the
+## generic offensive scoring above already covers it in full, so this
+## adds nothing extra), and 1-2 at levels 3-4, at which point every
+## other living target within it takes the same damage too. Target
+## count tiers mirror Winter's Splinter Blast/Ancient Apparition's Ice
+## Blast (see _ww_splinter_blast_modifier()/_aa_ice_blast_modifier());
+## the multi-kill bonus below only counts kills BEYOND the primary
+## target's own (already scored generically via _kill_potential_bonus()),
+## same split those two use. A hero fight only ever has the player as a
+## possible target (see _build_enemy_ai_context()'s own docstring), so
+## this collapses to the "1 target: +5" tier there, same as every other
+## AoE skill's own rival-side simplification.
+static func _cm_crystal_nova_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var radius: int = int(level_data.get("radius", 0))
+	if radius <= 0:
+		return 0.0
+
+	var living_hps: Array = context.get("living_target_hps", [])
+	var total_count: int = living_hps.size()
+
+	var score: float = 0.0
+	if total_count >= 4:
+		score += 65.0
+	elif total_count == 3:
+		score += 45.0
+	elif total_count == 2:
+		score += 25.0
+	elif total_count == 1:
+		score += 5.0
+
+	var damage: float = float(level_data.get("damage", 0.0))
+	var sorted_hps: Array = living_hps.duplicate()
+	sorted_hps.sort()
+	var extra_kills: int = 0
+	for i in range(1, sorted_hps.size()):
+		if damage >= float(sorted_hps[i]) and float(sorted_hps[i]) > 0.0:
+			extra_kills += 1
+	if extra_kills >= 1:
+		score += 35.0 * float(extra_kills)
+
+	return score
+
+
+## Frostbite: control is at least as important as the damage here (per
+## the design doc), so a 2-turn stun scores substantially higher than a
+## 1-turn one, and being in real danger (low hero_hp_ratio - the same
+## signal every defensive skill in this file already keys off, via
+## _evaluate_defensive()) adds its own separate defensive bonus on top,
+## even though Frostbite itself is "offensive" category (so it doesn't
+## get _evaluate_defensive()'s tiers automatically). enemy_count is a
+## small extra nudge for "also outnumbered while hurt" - always 1 in a
+## real hero fight (a no-op there), the simulation's actual living-
+## enemy count otherwise. Recasting on an already-frostbitten target is
+## gated out at the candidacy level instead (see battle.gd's own
+## _enemy_skill_worth_casting()'s "frostbite" case), same as every
+## other already-active check in this file - the simulation doesn't
+## mirror that gate, since its own target is always whichever living
+## enemy is currently lowest-HP (see EnemyHeroManager's own _build_npc_
+## ai_context() docstring), which can be a different one turn to turn.
+static func _cm_frostbite_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	if stun_turns >= 2:
+		score += 40.0
+	elif stun_turns >= 1:
+		score += 20.0
+
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	if hp_ratio < 0.35:
+		score += 35.0
+	elif hp_ratio < 0.50:
+		score += 15.0
+
+	if int(context.get("enemy_count", 1)) >= 2 and hp_ratio < 0.5:
+		score += 10.0
+
+	return score
+
+
+## Freezing Field: the one skill in this file centered on the CASTER's
+## own position rather than a selected enemy's. `target_distance` is
+## battle.gd's already-computed distance from Crystal Maiden's own
+## pos_index to the player (see _build_enemy_ai_context()) - reused
+## here rather than re-derived, and never present in the simulation's
+## own context (no positions there at all - see EnemyHeroManager's own
+## _build_npc_ai_context() docstring), where a missing value defaults to
+## "in range," matching every other AoE skill's own "no columns, hit
+## everyone" simplification there. Out of range in a real fight, this is
+## a low-value cast (see the design doc's own "do not cast merely
+## because it's available" note) - there's nothing else close enough to
+## hit instead (a hero fight only ever has the player as a possible
+## target), so the duration would very likely tick out unused. In range
+## (or in the simulation), this layers the design doc's own multi-target/
+## low-HP/multi-kill tiers on top of the generic kill-potential/"already
+## hurt" terms _evaluate_offensive() already provides (fed by this
+## skill's own damage x duration _estimate_skill_damage() case) - the
+## same split Ice Blast's/Splinter Blast's own modifiers use for their
+## own multi-kill bonus. The survivability penalty is deliberately small
+## and only fires when things are clearly dire (hero_hp_ratio < 30% AND
+## multiple living enemies) - Freezing Field has no invented immunity/
+## stun/slow of its own to lean on here (per the design doc's own "use
+## only mechanics that actually exist" note), so this is a real cost,
+## not a wash.
+static func _cm_freezing_field_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var radius: int = int(level_data.get("radius", 0))
+	var raw_distance: int = int(context.get("target_distance", -1))
+	var in_range: bool = raw_distance < 0 or raw_distance <= radius
+
+	if not in_range:
+		return -35.0
+
+	var living_hps: Array = context.get("living_target_hps", [])
+	var living_max_hps: Array = context.get("living_target_max_hps", living_hps)
+	var hit_count: int = living_hps.size()
+
+	var score: float = 0.0
+	if hit_count >= 4:
+		score += 90.0
+	elif hit_count == 3:
+		score += 60.0
+	elif hit_count == 2:
+		score += 35.0
+	elif hit_count == 1:
+		score += 10.0
+
+	var total_dot: float = float(level_data.get("damage", 0.0)) * float(level_data.get("duration", 0.0))
+	var extra_kills: int = 0
+	var low_hp_count: int = 0
+	for i in range(hit_count):
+		var hp: float = float(living_hps[i])
+		if hp <= 0.0:
+			continue
+		var max_hp: float = float(living_max_hps[i]) if i < living_max_hps.size() else hp
+		if max_hp > 0.0 and hp <= max_hp * 0.3:
+			low_hp_count += 1
+		if total_dot >= hp:
+			extra_kills += 1
+
+	# The primary target's own kill is already scored generically (see
+	# _kill_potential_bonus(), fed by _estimate_skill_damage()'s own
+	# "freezing_field" case) - this only adds for kills BEYOND that one,
+	# same split Torrent's/Ghostship's/Ice Blast's own modifiers use.
+	if extra_kills >= 2:
+		score += 30.0 * float(extra_kills - 1)
+
+	if low_hp_count >= 1:
+		score += 15.0 * float(low_hp_count)
+
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	if hp_ratio < 0.30 and int(context.get("enemy_count", 1)) >= 2:
+		score -= 20.0
+
+	return score
+
+
+## A plain Attack is only worth scoring above its flat baseline for
+## Crystal Maiden when it can finish the target off outright (see
+## basic_attack_participates()'s own docstring for why she opts in at
+## all) - every one of her real skills costs 70-330 mana, so a free kill
+## deserves a real shot at winning over spending any of it. A small extra
+## nudge applies when mana is already scarce (<30% of max), the same
+## "mana efficiency as a small modifier, never a dominant one" role
+## _resource_penalty() already plays for every hero's every skill.
+static func _cm_basic_attack_modifier(context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		score += 50.0
+
+	var max_mana: float = float(context.get("hero_max_mana", 0.0))
+	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:
+		score += 8.0
+
+	return score
+
+
+## Tusk: aggressive, melee, burst/control/positioning. Ice Shards and
+## Snowball are "offensive" category (generic kill-potential/target-
+## value terms, fed by their own flat-damage _estimate_skill_damage()
+## cases); Walrus Punch is "offensive" too (fed by its own hero_damage x
+## damage_multiplier case); Tag Team is "utility" (no damage of its own
+## at all - its entire value is computed here, as an expected-value
+## calculation over the duration, never a flat "add bonus_damage once").
+static func _tusk_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+	match skill_id:
+		"ice_shards":
+			return _tusk_ice_shards_modifier(level_data, context)
+		"snowball":
+			return _tusk_snowball_modifier(level_data, context)
+		"tag_team":
+			return _tusk_tag_team_modifier(level_data, context)
+		"walrus_punch":
+			return _tusk_walrus_punch_modifier(level_data, context)
+		BASIC_ATTACK_ID:
+			return _tusk_basic_attack_modifier(context)
+		_:
+			return 0.0
+
+
+## Ice Shards: movement denial, not a normal AoE nuke - the generic
+## offensive scoring above already covers its own primary hit (target
+## value, kill potential); this only adds for whether the wall it throws
+## up actually matters. `grid_columns` (battle.gd's GRID_COLUMNS, always
+## 0 in the simulation - see EnemyHeroManager's own _build_npc_ai_
+## context() docstring) gates whether real board math is even possible;
+## without it this falls back to the same "more living enemies, more a
+## control effect is worth" proxy Winter's Curse's own sim-side
+## redirect_candidate_count uses. Deliberately does NOT reward
+## blocked_columns just for being a big number (see the design doc's own
+## "do not give Ice Shards a huge score merely because it blocks many
+## columns" instruction) - only for what it actually reaches: the
+## target's own column (frozen in place outright) or the one column
+## needed to safely retreat past it, plus a small bonus for pinning
+## against the far edge too and for Tusk staying close enough to keep
+## following up. The wall never blocks TUSK'S OWN movement (see
+## _resolve_ice_shards_cast()/_cast_enemy_ice_shards() - it walls off
+## columns starting on the CASTER's own column outward, and (mirroring
+## the player's own copy, which never checks it in _hero_move() either)
+## the caster is never gated against their own wall in _hero_move()'s
+## own enemy-side check), so that's not a real cost to weigh here.
+static func _tusk_ice_shards_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var blocked_columns: int = int(level_data.get("blocked_columns", 0))
+	var score: float = 0.0
+
+	var grid_columns: int = int(context.get("grid_columns", 0))
+	if grid_columns > 0:
+		var target_distance: int = int(context.get("target_distance", 0))
+		if blocked_columns > target_distance:
+			# The wall reaches all the way to the target's own column -
+			# frozen in place outright for the duration, same value as a
+			# root landing.
+			score += 50.0
+
+			var caster_pos: int = int(context.get("caster_pos_index", 0))
+			var target_pos: int = int(context.get("target_pos_index", 0))
+			var direction: int = 1 if target_pos >= caster_pos else -1
+			var far_edge_distance: int = (grid_columns - 1 - target_pos) if direction > 0 else target_pos
+			if far_edge_distance <= 0:
+				# Already pinned against the far edge too - nowhere left
+				# to go even once the wall wears off early.
+				score += 20.0
+		elif blocked_columns == target_distance:
+			# Right up against the target's own column - denies the one
+			# step that would have let it retreat to safety this turn.
+			score += 20.0
+
+		if target_distance <= 1:
+			# Tusk himself stays close enough to keep following up next
+			# turn (Snowball/Walrus Punch/a plain Attack) once it wears
+			# off - a wall he can't capitalize on is worth less.
+			score += 10.0
+	else:
+		# No real positions in the simulation - fall back to the same
+		# "more enemies around, more this matters" proxy every other
+		# AoE/control skill in this file already uses there.
+		score += minf(float(int(context.get("enemy_count", 1)) - 1), 3.0) * 10.0
+
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	var target_max_hp: float = float(context.get("target_max_hp", 0.0))
+	if target_max_hp > 0.0 and target_hp / target_max_hp < 0.4:
+		# A badly hurt target has more reason to want to flee next turn -
+		# denying that is worth more than trapping a healthy one that
+		# wasn't going anywhere anyway.
+		score += 15.0
+
+	return score
+
+
+## Snowball: direct offensive/control - the generic offensive scoring
+## above already covers its own damage/kill-potential; this layers
+## control value (stun_turns) and "how much does removing an action
+## matter right now" (hero_hp_ratio, same danger signal Frostbite's own
+## defensive bonus uses) on top. Early-out mirrors Walrus Punch's own
+## below: a target a plain Attack can already kill outright leaves
+## nothing for the stun to prevent, so it's not worth the mana (see the
+## design doc's own "do not waste Snowball simply because it is
+## available" instruction).
+static func _tusk_snowball_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		return -40.0
+
+	var score: float = 0.0
+
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	if stun_turns >= 2:
+		score += 35.0
+	elif stun_turns >= 1:
+		score += 15.0
+
+	var target_max_hp: float = float(context.get("target_max_hp", 0.0))
+	if target_max_hp > 0.0 and target_hp / target_max_hp < 0.35:
+		score += 15.0
+
+	if float(context.get("hero_hp_ratio", 1.0)) < 0.4:
+		score += 20.0
+
+	return score
+
+
+## Tag Team: NOT an instant hit - a temporary buff to Tusk's own plain
+## Attacks, so its whole value has to be the expected bonus damage over
+## however many Attacks he realistically lands during the duration, per
+## the design doc's own "expected_value = bonus_damage x expected_
+## attacks_during_duration" formula - never a flat one-time add the way
+## a real damage skill's _estimate_skill_damage() case would (which is
+## exactly why Tag Team is "utility" category with no such case at all;
+## every point of its value is computed right here). "Already active" is
+## gated at the candidacy level instead (see battle.gd's own
+## _enemy_skill_worth_casting()'s/EnemyHeroManager's own _npc_skill_
+## worth_casting()'s "tag_team" case), same as every other self-buff in
+## this file - so this never has to ask that question itself. The
+## shared _evaluate_utility() term this skill's "utility" category
+## already gets (a flat -15 once hero_hp_ratio < 0.35) covers the design
+## doc's own "lower value when Tusk is low HP" instruction without this
+## needing its own separate copy of that penalty. `target_distance`
+## defaults to 0 (adjacent) rather than "far away" when absent - that's
+## the simulation, where every attack already reaches its target with no
+## travel cost at all (see EnemyHeroManager's own _build_npc_ai_
+## context() docstring, and its "in_attack_range_now"/"in_attack_range_
+## with_arctic_burn_bonus" fields making the same unconditional-true
+## call for Arctic Burn's own copy there).
+static func _tusk_tag_team_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var bonus_damage: float = float(level_data.get("bonus_damage", 0.0))
+	var duration: int = int(level_data.get("duration", 0))
+	var already_adjacent: bool = int(context.get("target_distance", 0)) <= 0
+
+	var expected_attacks: float
+	if already_adjacent:
+		# Roughly one Attack per remaining turn of the buff, capped by
+		# how much HP the target realistically has left to soak them -
+		# no point banking on attacks past its own death.
+		expected_attacks = float(duration)
+		var target_hp: float = float(context.get("target_hp", 0.0))
+		var hero_damage: float = float(context.get("hero_damage", 0.0))
+		if target_hp > 0.0 and hero_damage > 0.0:
+			expected_attacks = minf(expected_attacks, ceil(target_hp / hero_damage))
+	else:
+		# Tusk still needs to close the distance first - a real
+		# possibility (he might well get there next turn), just a
+		# smaller and less certain one than already being adjacent.
+		expected_attacks = maxf(0.0, float(duration) - 1.0) * 0.5
+
+	var expected_value: float = bonus_damage * expected_attacks
+
+	# A flat fraction of the raw expected bonus damage, same spirit as
+	# _evaluate_offensive()'s own damage-based terms, so this lands on a
+	# comparable scale to every other skill's score rather than the raw
+	# (potentially very large) expected_value number itself.
+	return expected_value * 0.35
+
+
+## Walrus Punch: the highest-value skill in Tusk's kit, but not an
+## unconditional "if ready, use it" - the early-out mirrors Snowball's
+## own above (a target a plain Attack can already kill outright makes
+## spending the ultimate's mana/cooldown wasteful, collision/stun
+## flourishes included, per the design doc's own Example A). Otherwise,
+## `base_punch_damage` (Tusk's actual hero_damage x damage_multiplier,
+## the same figure _estimate_skill_damage()'s own "walrus_punch" case
+## already fed into the generic kill-potential term above) determines
+## whether a knockback that gets cut short would ALSO cross the kill
+## threshold via its 50% collision bonus - credited here rather than
+## twice, since the generic term only ever sees the no-collision
+## estimate. `grid_columns` gates real knockback-destination math (see
+## _tusk_ice_shards_modifier()'s own docstring for why); without it
+## (the simulation), collision is approximated as "likely when at least
+## one other living enemy exists to run into," same "no columns, but
+## more enemies still means more" proxy every position-dependent skill
+## in this file falls back to there.
+static func _tusk_walrus_punch_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		return -75.0
+
+	var score: float = 0.0
+	var multiplier: float = float(level_data.get("damage_multiplier", 1.0))
+	var base_punch_damage: float = hero_damage * multiplier
+
+	var knockback: int = int(level_data.get("knockback", 0))
+	var grid_columns: int = int(context.get("grid_columns", 0))
+	var collision: bool = false
+
+	if grid_columns > 0:
+		var target_pos: int = int(context.get("target_pos_index", 0))
+		var direction: int = -1 if bool(context.get("caster_facing_left", false)) else 1
+		var raw_landing: int = target_pos + direction * knockback
+		collision = raw_landing < 0 or raw_landing >= grid_columns
+		var landing: int = clampi(raw_landing, 0, grid_columns - 1)
+
+		if collision:
+			score += 30.0
+		else:
+			var edge_distance: int = mini(landing, grid_columns - 1 - landing)
+			if edge_distance <= 0:
+				# Didn't collide this cast, but lands pinned right against
+				# an edge anyway - a good spot to follow up into.
+				score += 10.0
+	else:
+		collision = int(context.get("enemy_count", 1)) >= 2
+		if collision:
+			score += 25.0
+
+	var punch_damage: float = base_punch_damage * 1.5 if collision else base_punch_damage
+	if target_hp > 0.0 and base_punch_damage < target_hp and punch_damage >= target_hp:
+		# The collision alone is what pushes this over the kill
+		# threshold - the generic kill bonus above (fed by the
+		# no-collision estimate) never sees this case, so it's credited
+		# here instead, same split Ice Blast's own execute bonus uses.
+		score += 50.0
+
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	if stun_turns >= 2:
+		score += 30.0
+	elif stun_turns >= 1:
+		score += 15.0
+
+	return score
+
+
+## A plain Attack is only worth scoring above its flat baseline for Tusk
+## when it can finish the target off outright (see basic_attack_
+## participates()'s own docstring for why he opts in at all) - Walrus
+## Punch/Snowball are both real mana/cooldown investments, so a free
+## kill deserves a real shot at winning over spending either (see the
+## design doc's own Example A). Same small mana-scarcity nudge as
+## Crystal Maiden's own copy.
+static func _tusk_basic_attack_modifier(context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		score += 50.0
+
+	var max_mana: float = float(context.get("hero_max_mana", 0.0))
+	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:
+		score += 8.0
+
+	return score
 
 
 # ------------------------------------------------------------------

@@ -266,7 +266,14 @@ func _populate_skill_buttons() -> void:
 func _on_skill_button_pressed(skill: Dictionary) -> void:
 	_pending_skill = skill
 	skill_name_label.text = skill.get("name", "")
-	skill_desc_label.text = skill.get("description", "")
+
+	# A hero is always level 1 here (pre-recruitment), so level 1's own
+	# numbers are what actually apply - see GameManager.format_skill_
+	# level_stats().
+	var level_data: Dictionary = GameManager.get_skill_level_data(skill, 1)
+	var stats_summary: String = GameManager.format_skill_level_stats(level_data)
+	skill_desc_label.text = skill.get("description", "") + "\n\n" + stats_summary
+
 	skill_desc_panel.visible = true
 
 

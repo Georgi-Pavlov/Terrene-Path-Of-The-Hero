@@ -9,6 +9,12 @@ extends Control
 @onready var mana_value_label: Label = $BarsBox/ManaRow/ManaBar/ManaValueLabel
 @onready var xp_bar: ProgressBar = $BarsBox/XPRow/XPBar
 @onready var xp_value_label: Label = $BarsBox/XPRow/XPBar/XPValueLabel
+@onready var ice_blast_reserve_overlay: ColorRect = $BarsBox/HPRow/HPBar/IceBlastReserveOverlay
+@onready var frost_status_icon: PanelContainer = $BarsBox/HPRow/StatusIconRow/FrostIcon
+@onready var curse_status_icon: PanelContainer = $BarsBox/HPRow/StatusIconRow/CurseIcon
+@onready var root_status_icon: PanelContainer = $BarsBox/HPRow/StatusIconRow/RootIcon
+@onready var ambient_tint_overlay: ColorRect = $AmbientTintOverlay
+@onready var cast_flash_overlay: ColorRect = $CastFlashOverlay
 @onready var skill_buttons_container: HBoxContainer = $SkillsPanel/SkillsMargin/SkillButtons
 @onready var items_grid: GridContainer = $ItemsPanel/ItemsMargin/ItemsVBox/ItemsGrid
 @onready var gold_value_label: Label = $ItemsPanel/ItemsMargin/ItemsVBox/GoldRow/GoldValueLabel
@@ -71,6 +77,25 @@ const GHOSTSHIP_TRAVEL_DURATION := 0.6
 # of skill level - reverted back to the hero's own normal image
 # (_hero_static.image) once it ends (see _end_cold_embrace()).
 const COLD_EMBRACE_IMAGE_PATH := "res://assets/heroes skills/Winter_Wyvern_Cold_Embrace.png"
+
+# Tusk's Snowball (see _resolve_snowball_cast()) shows this art for the
+# hero's portrait while he's charging across the board, reverted back
+# to his own normal image once he lands on the target (see
+# _end_snowball_animation()) - a purely visual flourish, same "instant,
+# already-resolved damage, cosmetic animation on top" split Ghostship's
+# own travel already uses.
+const SNOWBALL_IMAGE_PATH := "res://assets/heroes skills/Tusk_Snowball.png"
+# How long the charge takes to visually cross the screen.
+const SNOWBALL_TRAVEL_DURATION := 0.4
+
+# Tusk's Walrus Punch (see _resolve_walrus_punch_cast()) deliberately
+# flips Snowball's/Ghostship's own "instant, already-resolved outcome,
+# cosmetic animation layered on top" split: the knockback slide plays
+# FIRST, then damage/death/stun are only resolved once it finishes (see
+# _resolve_walrus_punch_damage()) - so a lethal punch still visibly
+# sends the target flying before it drops, instead of it just vanishing
+# on the spot mid-hit.
+const WALRUS_PUNCH_KNOCKBACK_DURATION := 0.35
 
 var _hero_static: Dictionary = {}   # full definition from GameManager (stats, skills, image)
 var _recruited: Dictionary = {}     # saved state from PlayerManager (current hp/mana/xp, chosen skill)
@@ -200,6 +225,50 @@ var _cold_embrace_duration_pending_start: bool = false
 var _winter_curse_target: Dictionary = {}
 var _winter_curse_bonus_damage_pct: float = 0.0
 var _winter_curse_range: int = 0
+
+# ------------------------------------------------------------------
+# Crystal Maiden's ultimate, Freezing Field: a self-cast that deals
+# this level's own damage to every enemy within radius columns of the
+# hero's CURRENT position (re-checked fresh every tick, not fixed at
+# cast time - so it follows him if he moves) at the start of every
+# turn for the duration, same "casting turn doesn't count" pattern as
+# every other buff (see _tick_freezing_field()).
+# ------------------------------------------------------------------
+var _freezing_field_active: bool = false
+var _freezing_field_damage_per_turn: float = 0.0
+var _freezing_field_radius: int = 0
+var _freezing_field_turns_remaining: int = 0
+var _freezing_field_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Tusk's Ice Shards: on cast, deals a straight instant hit to the
+# target, then walls off a line of columns - starting on the hero's OWN
+# column and continuing toward the target, `blocked_columns` of them
+# total - for the duration (see _is_column_ice_shards_blocked(),
+# checked from every plain-movement decision in _enemy_turn()/
+# _enemy_hero_turn()). Fixed at cast time, unlike Freezing Field's own
+# radius - the wall doesn't follow the hero if he moves afterward.
+# Recasting while a previous wall is still up simply replaces it
+# outright - there's nothing to give back, same as Arctic Burn/Winter's
+# Curse.
+# ------------------------------------------------------------------
+var _ice_shards_active: bool = false
+var _ice_shards_blocked_columns: Array[int] = []
+var _ice_shards_turns_remaining: int = 0
+var _ice_shards_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Tusk's Tag Team: a self-cast that adds a flat bonus_damage to the
+# hero's own Attacks (folded into _roll_hero_damage(), same slot
+# Arctic Burn's/Essence Shift's/True Form's own bonus damage use) for
+# the duration - no attack-count cap, unlike Arctic Burn, just a plain
+# turn-based buff. Same "casting turn doesn't count" pattern as every
+# other duration-based buff (see _tick_tag_team()).
+# ------------------------------------------------------------------
+var _tag_team_active: bool = false
+var _tag_team_bonus_damage: float = 0.0
+var _tag_team_turns_remaining: int = 0
+var _tag_team_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
 # Lone Druid's Spirit Bear (summon_spirit_bear): a persistent ally
@@ -475,6 +544,44 @@ var _enemy_cold_embrace_heal_per_turn: float = 0.0
 var _enemy_cold_embrace_turns_remaining: int = 0
 var _enemy_cold_embrace_duration_pending_start: bool = false
 
+# Crystal Maiden's Freezing Field, cast by the rival on herself - mirrors
+# the player's own _activate_freezing_field()/_tick_freezing_field()/
+# _end_freezing_field(): every tick that counts against the duration,
+# whichever of the player/rival is within `radius` columns of the
+# rival's OWN current position takes `damage_per_turn` (re-checked fresh
+# each tick, not fixed at cast time, same as the player's own copy) -
+# see _tick_enemy_freezing_field().
+var _enemy_freezing_field_active: bool = false
+var _enemy_freezing_field_damage_per_turn: float = 0.0
+var _enemy_freezing_field_radius: int = 0
+var _enemy_freezing_field_turns_remaining: int = 0
+var _enemy_freezing_field_duration_pending_start: bool = false
+
+# Tusk's Ice Shards, cast by the rival - mirrors the player's own
+# _resolve_ice_shards_cast()/_tick_ice_shards()/_end_ice_shards(): walls
+# off `blocked_columns` columns, starting on the rival's OWN column and
+# continuing toward the player's, for the duration - see
+# _is_column_enemy_ice_shards_blocked(), checked from _hero_move() so
+# the player can't step into (or act from within) a walled column,
+# mirroring how the player's own _is_column_ice_shards_blocked() gates
+# every enemy's own movement in _enemy_turn()/_enemy_hero_turn(). Never
+# blocks the RIVAL's own movement - same asymmetry the player's own copy
+# already has (see _hero_move(), which never checks its own wall).
+var _enemy_ice_shards_active: bool = false
+var _enemy_ice_shards_blocked_columns: Array[int] = []
+var _enemy_ice_shards_turns_remaining: int = 0
+var _enemy_ice_shards_duration_pending_start: bool = false
+
+# Tusk's Tag Team, cast by the rival on himself - mirrors the player's
+# own _activate_tag_team()/_tick_tag_team()/_end_tag_team(): a flat
+# bonus_damage added to _roll_enemy_hero_damage() for the duration, same
+# "add to the bonus sum" spot Arctic Burn's own bonus_damage already
+# occupies there.
+var _enemy_tag_team_active: bool = false
+var _enemy_tag_team_bonus_damage: float = 0.0
+var _enemy_tag_team_turns_remaining: int = 0
+var _enemy_tag_team_duration_pending_start: bool = false
+
 # ------------------------------------------------------------------
 # What the rival's skills above do TO THE PLAYER. All of this only
 # ever gets set during a hero fight and is reset by
@@ -510,6 +617,15 @@ var _player_entangle_dot_turns_left: int = 0
 # just loses its turn to the player's own Pounce.
 var _player_stun_turns_left: int = 0
 
+# Set alongside _player_stun_turns_left specifically by
+# _cast_enemy_winters_curse() (see that function's own comment on why
+# it collapses onto the shared stun field) - purely cosmetic, so the
+# frost screen tint/status icon can tell "frozen by Winter's Curse"
+# apart from a Torrent/Pounce/Ice Blast/Frostbite stun, all of which
+# also just set the same field. Cleared wherever the stun itself is
+# (a fresh dispel or the stun's own natural countdown reaching 0).
+var _player_winters_curse_active: bool = false
+
 # Curse of Avernus's stacks/DoT on the player, built by the rival's own
 # plain Attacks - the mirror of the same fields _apply_curse_of_avernus_
 # stack() writes onto an enemy Dictionary, just held as battle-local
@@ -544,6 +660,15 @@ var _player_ice_vortex_dot_turns_left: int = 0
 var _player_ice_blast_dot_damage: float = 0.0
 var _player_ice_blast_dot_turns_left: int = 0
 var _player_ice_blast_execute_pct: float = 0.0
+
+# Crystal Maiden's Frostbite, cast by the rival on the player - mirrors
+# the player-side per-enemy frostbite_dot_damage/frostbite_dot_turns_
+# left fields (see _resolve_frostbite_cast()/_tick_frostbite_effects()),
+# just held as battle-local vars since there's only one player to track
+# them on. The stun shares _player_stun_turns_left above, same as
+# Torrent's/Ice Blast's own stun does.
+var _player_frostbite_dot_damage: float = 0.0
+var _player_frostbite_dot_turns_left: int = 0
 
 # ------------------------------------------------------------------
 # Ranged-hero target selection: when true, the enemies in
@@ -649,6 +774,24 @@ var _pending_crystal_nova_level_data: Dictionary = {}
 # actually clicked (_resolve_frostbite_cast()).
 var _pending_frostbite_level_data: Dictionary = {}
 
+# Tusk's Ice Shards, held the same way as every other targeted skill's
+# own pending level data above, from the moment _start_ice_shards_
+# targeting() opens targeting until a target is actually clicked
+# (_resolve_ice_shards_cast()).
+var _pending_ice_shards_level_data: Dictionary = {}
+
+# Tusk's Snowball, held the same way as every other targeted skill's
+# own pending level data above, from the moment _start_snowball_
+# targeting() opens targeting until a target is actually clicked
+# (_resolve_snowball_cast()).
+var _pending_snowball_level_data: Dictionary = {}
+
+# Tusk's ultimate, Walrus Punch, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_walrus_punch_targeting() opens targeting until a target is
+# actually clicked (_resolve_walrus_punch_cast()).
+var _pending_walrus_punch_level_data: Dictionary = {}
+
 const RANGE_ENEMY_ATTACK_RANGE := 3
 const RANGE_ENEMY_FLEE_DISTANCE := 1
 
@@ -674,15 +817,30 @@ const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
 	"mist_coil", "aphotic_shield", "torrent", "x_marks_the_spot", "ghostship",
 	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
 	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
+	"crystal_nova", "frostbite", "freezing_field",
+	"ice_shards", "snowball", "tag_team", "walrus_punch",
 ]
 
-# Reinforcements: if the hero hasn't cleared every enemy within this
-# many turns, one melee and one ranged enemy (picked from the zone's
-# own enemy roster) join the fight. Resets naturally every
-# REINFORCEMENT_INTERVAL turns via the modulo check in _end_turn(), so
-# it can trigger more than once in a long fight.
+# Reinforcements: if the hero hasn't cleared every enemy within
+# REINFORCEMENT_INTERVAL turns of the stage/fight starting, a fresh
+# wave (sized by GameManager.REINFORCEMENT_ENEMY_COUNTS for the current
+# stage, or the FULL stage 3 STAGE_ENEMY_COUNTS during a hero fight -
+# see _spawn_reinforcements()) joins the fight, scaled to that same
+# stage's stats. Every wave after that first one gives the player a
+# shorter REINFORCEMENT_REPEAT_INTERVAL-turn grace period instead - see
+# _next_reinforcement_turn, which tracks the turn count the NEXT wave
+# is due on and advances by REPEAT (not INTERVAL) each time one
+# actually spawns, so it keeps arriving every REPEAT turns for as long
+# as the stage/fight goes on. Both counters reset (_turn_count back to
+# 0, _next_reinforcement_turn back to REINFORCEMENT_INTERVAL) whenever
+# a fresh stage or hero fight starts - see _advance_to_next_stage()/
+# _start_hero_fight() - and stop mattering entirely once the stage
+# clears or the player flees, since there's no more fight for them to
+# fire into.
 const REINFORCEMENT_INTERVAL := 13
+const REINFORCEMENT_REPEAT_INTERVAL := 10
 var _turn_count: int = 0
+var _next_reinforcement_turn: int = REINFORCEMENT_INTERVAL
 
 # Which of the zone's up-to-GameManager.MAX_ZONE_STAGE waves this
 # battle is currently on. Starts at whatever PlayerManager.
@@ -1047,34 +1205,44 @@ func _enemy_count_of_type(type: String) -> int:
 	return count
 
 
-## Called every REINFORCEMENT_INTERVAL turns the fight is still going.
-## Picks one random "mele" and one random "range" definition from the
-## current zone's own enemy roster (whatever's missing is just
-## skipped) and spawns them.
+## Called every REINFORCEMENT_INTERVAL/REINFORCEMENT_REPEAT_INTERVAL
+## turns the current stage/fight isn't cleared yet. Spawns a wave sized
+## by GameManager.get_reinforcement_enemy_counts(_current_stage) - a
+## smaller top-up than that same stage's own opening STAGE_ENEMY_COUNTS
+## - built the exact same way _load_enemies() builds a stage's opening
+## wave (_spawn_stage_enemies(), which bakes in _build_stage_enemy_def()'s
+## hp/damage/gold scaling for _current_stage), so reinforcements always
+## come in at the stats of whatever's currently on the field rather
+## than unscaled base stats.
+## A hero fight is the one exception: rather than the usual smaller
+## top-up, it throws the FULL stage 3 composition (STAGE_ENEMY_COUNTS,
+## not REINFORCEMENT_ENEMY_COUNTS) at the player every time - a boss
+## fight already means business, so its own reinforcements should hit
+## as hard as an entire fresh stage 3 wave rather than a token trickle.
+## _current_stage stays at MAX_ZONE_STAGE throughout a hero fight, same
+## as everywhere else that reads it, so the stat scaling still lines up
+## either way.
 func _spawn_reinforcements() -> void:
 	var zone_data: Dictionary = GameManager.get_selected_zone()
 	var enemy_defs: Array = zone_data.get("enemies", [])
 
-	var mele_def: Dictionary = _pick_random_enemy_def(enemy_defs, "mele")
-	var range_def: Dictionary = _pick_random_enemy_def(enemy_defs, "range")
-
-	if not mele_def.is_empty():
-		_spawn_enemy(mele_def)
-	if not range_def.is_empty():
-		_spawn_enemy(range_def)
-
-	if not mele_def.is_empty() or not range_def.is_empty():
-		_show_message_over_hero("Reinforcements arrived!")
-
-
-func _pick_random_enemy_def(enemy_defs: Array, type: String) -> Dictionary:
-	var matches: Array = []
+	var mele_templates: Array = []
+	var range_templates: Array = []
 	for enemy_def in enemy_defs:
-		if enemy_def.get("type", "") == type:
-			matches.append(enemy_def)
-	if matches.is_empty():
-		return {}
-	return matches[randi() % matches.size()]
+		if enemy_def.get("type", "") == "range":
+			range_templates.append(enemy_def)
+		else:
+			mele_templates.append(enemy_def)
+
+	var counts: Dictionary = GameManager.get_stage_enemy_counts(_current_stage) if _in_hero_fight else GameManager.get_reinforcement_enemy_counts(_current_stage)
+	var mele_count: int = int(counts.get("mele", 0))
+	var range_count: int = int(counts.get("range", 0))
+
+	_spawn_stage_enemies(mele_templates, mele_count)
+	_spawn_stage_enemies(range_templates, range_count)
+
+	if (not mele_templates.is_empty() and mele_count > 0) or (not range_templates.is_empty() and range_count > 0):
+		_show_message_over_hero("Reinforcements arrived!")
 
 
 ## Only items that are actually consumed by use (heal/mana potions)
@@ -1117,8 +1285,14 @@ func _populate_item_grid() -> void:
 			if is_consumable:
 				btn.mouse_filter = Control.MOUSE_FILTER_STOP
 				# Items are locked out for as long as Cold Embrace is
-				# active on the hero (see _cold_embrace_active).
-				btn.disabled = _battle_over or _has_acted_this_turn or _cold_embrace_active
+				# active on the hero (see _cold_embrace_active), or while
+				# he's stunned/frozen (_player_stun_turns_left > 0 - set
+				# by Torrent's/Pounce's/Ice Blast's/Frostbite's/Winter's
+				# Curse's own stun, whether cast by the player or a rival
+				# hero) - a stunned hero loses the turn entirely, same as
+				# a stunned enemy loses its own (see _enemy_turn()'s stun
+				# check), so there's nothing left for him to spend it on.
+				btn.disabled = _battle_over or _has_acted_this_turn or _cold_embrace_active or _player_stun_turns_left > 0
 				btn.pressed.connect(_on_item_pressed.bind(item_id))
 			else:
 				# Equipment is passive, not clickable - but `disabled`
@@ -1140,7 +1314,7 @@ func _refresh_gold_label() -> void:
 
 
 func _on_item_pressed(item_id: String) -> void:
-	if _battle_over or _has_acted_this_turn or _cold_embrace_active:
+	if _battle_over or _has_acted_this_turn or _cold_embrace_active or _player_stun_turns_left > 0:
 		return
 	if not PlayerManager.use_item(item_id):
 		return
@@ -1217,6 +1391,68 @@ func _refresh_bars() -> void:
 	# HP just changed (or at least might have) - re-check Savage
 	# Roar's on/off state against the fresh numbers above.
 	_update_savage_roar_state()
+
+	_refresh_status_effects()
+
+
+## Keeps the "reserved HP" danger-zone marker and the three status
+## badges (frost/curse/root) in sync with whatever's currently on the
+## player - called every time _refresh_bars() is (i.e. constantly), so
+## each one just reflects current state rather than being toggled from
+## every individual cast/tick/dispel site.
+func _refresh_status_effects() -> void:
+	# Ice Blast's execute mechanic (see _tick_player_ice_blast_effects())
+	# reserves execute_pct of the player's OWN max HP as a fixed danger
+	# zone near the bottom of the bar, not a chunk of current HP - so
+	# this is a static width fraction of the bar, not tied to hp_bar's
+	# own value.
+	var reserving: bool = _player_ice_blast_execute_pct > 0.0 and _player_ice_blast_dot_turns_left > 0
+	ice_blast_reserve_overlay.visible = reserving
+	if reserving:
+		ice_blast_reserve_overlay.anchor_right = clampf(_player_ice_blast_execute_pct, 0.0, 1.0)
+
+	var frost_active: bool = _player_ice_blast_dot_turns_left > 0 or _player_frostbite_dot_turns_left > 0 \
+		or _player_cold_feet_dot_turns_left > 0 or _player_ice_vortex_dot_turns_left > 0 \
+		or _player_winters_curse_active
+	_set_status_icon_visible(frost_status_icon, frost_active)
+
+	var curse_active: bool = _player_curse_active or _player_entangle_dot_turns_left > 0
+	_set_status_icon_visible(curse_status_icon, curse_active)
+
+	var root_active: bool = _player_root_turns_left > 0 or _player_silence_turns_left > 0 or _player_stun_turns_left > 0
+	_set_status_icon_visible(root_status_icon, root_active)
+
+	# The frost skills' own ambient reminder - a persistent tint while
+	# any of Winter's Curse/Frostbite/Ice Blast's own effects are still
+	# on the player, fading out the instant they all are (a win, a
+	# flee, or the effect just running out all reach this the same way
+	# - every one of them already ends up back through _refresh_bars()).
+	var target_alpha: float = 0.24 if frost_active else 0.0
+	if not is_equal_approx(ambient_tint_overlay.color.a, target_alpha):
+		var tween := create_tween()
+		tween.tween_property(ambient_tint_overlay, "color:a", target_alpha, 0.35)
+
+
+## Toggles one of the three HP-bar status badges, playing a quick
+## pop-in scale bounce the moment it switches from hidden to shown so
+## a newly-applied effect catches the eye instead of just silently
+## appearing - easy to miss otherwise at this size, tucked next to the
+## HP bar. A no-op re-call while already in the target state (the
+## common case, since this runs on every _refresh_bars()) doesn't
+## replay the bounce.
+func _set_status_icon_visible(icon: PanelContainer, should_be_visible: bool) -> void:
+	if icon.visible == should_be_visible:
+		return
+
+	icon.visible = should_be_visible
+	if not should_be_visible:
+		return
+
+	icon.pivot_offset = icon.size / 2.0
+	icon.scale = Vector2(0.3, 0.3)
+	var tween := create_tween()
+	tween.tween_property(icon, "scale", Vector2(1.25, 1.25), 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(icon, "scale", Vector2.ONE, 0.1)
 
 
 func _populate_skill_buttons() -> void:
@@ -1504,6 +1740,34 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			# Same deferred-spend pattern as every other targeted skill
 			# above - the mana/cooldown/turn spend happens once the
 			# click resolves (_resolve_frostbite_cast), not here.
+			return
+		"freezing_field":
+			_activate_freezing_field(level_data)
+		"ice_shards":
+			if not _start_ice_shards_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_ice_shards_cast), not here.
+			return
+		"snowball":
+			if not _start_snowball_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_snowball_cast), not here.
+			return
+		"tag_team":
+			_activate_tag_team(level_data)
+		"walrus_punch":
+			if not _start_walrus_punch_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_walrus_punch_cast), not here.
 			return
 		_:
 			# No effect implemented yet for other skills - this is the
@@ -1795,7 +2059,7 @@ func _resolve_ghostship_cast(target: Dictionary, level_data: Dictionary) -> void
 	for enemy in hit_targets:
 		_deal_fixed_damage_to_enemy(enemy, damage)
 
-	_play_ghostship_animation(target["pos_index"])
+	_play_ghostship_animation(_hero_pos_index, target["pos_index"])
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -1809,13 +2073,18 @@ func _resolve_ghostship_cast(target: Dictionary, level_data: Dictionary) -> void
 	_mark_turn_used()
 
 
-## Purely cosmetic: spawns the ship art at Kunkka's own column and
-## tweens it across to `target_pos_index`'s, fading itself out once it
-## arrives - mirrors _summon_spirit_bear()'s own texture-loading/sizing
+## Purely cosmetic: spawns the ship art at `start_pos_index` and tweens
+## it across to `target_pos_index`'s, fading itself out once it arrives
+## - mirrors _summon_spirit_bear()'s own texture-loading/sizing
 ## convention, just as a one-shot flight instead of a persistent ally.
 ## No-op (with a console print, same as a missing bear image) if the
-## art asset isn't actually there.
-func _play_ghostship_animation(target_pos_index: int) -> void:
+## art asset isn't actually there. `start_pos_index` is the player's own
+## Kunkka casting on an enemy (_resolve_ghostship_cast() passes
+## _hero_pos_index) or a rival Kunkka casting on the player
+## (_cast_enemy_ghostship() passes the boss's own enemy["pos_index"]
+## instead) - either way this only draws the flight, the damage above
+## has already fully resolved by the time it's even called.
+func _play_ghostship_animation(start_pos_index: int, target_pos_index: int) -> void:
 	if not ResourceLoader.exists(GHOSTSHIP_IMAGE_PATH):
 		print("No Ghostship image found at: ", GHOSTSHIP_IMAGE_PATH)
 		return
@@ -1832,8 +2101,8 @@ func _play_ghostship_animation(target_pos_index: int) -> void:
 	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
 	tex_rect.size = Vector2(target_width, target_height)
 	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tex_rect.flip_h = target_pos_index < _hero_pos_index
-	tex_rect.position = Vector2(_index_to_x(_hero_pos_index), _creature_y())
+	tex_rect.flip_h = target_pos_index < start_pos_index
+	tex_rect.position = Vector2(_index_to_x(start_pos_index), _creature_y())
 	add_child(tex_rect)
 	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
@@ -2283,6 +2552,388 @@ func _apply_tidebringer_cleave(target: Dictionary, attack_damage: float, level_d
 			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
 
 
+# ------------------------------------------------------------------
+# Crystal Maiden's Arcane Aura - a passive, so unlike every cast skill
+# above there's no button/cast/mana/cooldown for it (see
+# _populate_skill_buttons()'s "passive" branch); it just regenerates
+# mana on its own at the start of every hero turn (_apply_arcane_aura_
+# regen(), called from _end_turn()).
+# ------------------------------------------------------------------
+
+## Arcane Aura's level data for whatever level the player has it at
+## right now - {} if it isn't learned at all (level 0), the same
+## "empty means locked" convention every other auto-triggered skill's
+## own _get_*_level_data() helper uses.
+func _get_arcane_aura_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("arcane_aura")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "arcane_aura":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Restores this level's own flat bonus_mana_regen, on top of the
+## hero's own passive mana regen (_apply_passive_hero_regen(), called
+## right after this in _end_turn()) rather than replacing it - once at
+## the very start of every hero turn, regardless of whether the player
+## actually gets to act that turn (e.g. still stunned or encased in
+## Cold Embrace). A no-op while the skill isn't learned.
+func _apply_arcane_aura_regen() -> void:
+	var level_data: Dictionary = _get_arcane_aura_level_data()
+	if level_data.is_empty():
+		return
+
+	restore_mana(float(level_data.get("bonus_mana_regen", 0)))
+
+
+# ------------------------------------------------------------------
+# Crystal Maiden's ultimate, Freezing Field.
+# ------------------------------------------------------------------
+
+## Activates Freezing Field: arms this level's own damage/radius for
+## `level_data.duration` turns. Always "succeeds" - cast on the hero
+## himself, no target or range requirement, same as every other
+## self-cast buff.
+func _activate_freezing_field(level_data: Dictionary) -> void:
+	_freezing_field_active = true
+	_freezing_field_damage_per_turn = float(level_data.get("damage", 0))
+	_freezing_field_radius = int(level_data.get("radius", 0))
+	_freezing_field_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_freezing_field()), same as
+	# every other duration-based buff.
+	_freezing_field_duration_pending_start = true
+
+	_show_message_over_hero("Freezing Field!")
+
+
+## Ticks Freezing Field's duration down once per End Turn, same timing
+## (and same "the casting turn doesn't count" skip) as every other
+## duration-based buff - dealing this level's own damage to every
+## living, targetable enemy within radius columns of the hero's CURRENT
+## position (re-checked fresh here, not fixed at cast time) on every
+## tick that actually counts against the duration.
+func _tick_freezing_field() -> void:
+	if not _freezing_field_active:
+		return
+
+	if _freezing_field_duration_pending_start:
+		_freezing_field_duration_pending_start = false
+		return
+
+	for enemy in _enemies.duplicate():
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= _freezing_field_radius:
+			_deal_fixed_damage_to_enemy(enemy, _freezing_field_damage_per_turn)
+			if _battle_over:
+				return
+
+	_freezing_field_turns_remaining -= 1
+	if _freezing_field_turns_remaining <= 0:
+		_end_freezing_field()
+
+
+## Ends Freezing Field once its duration runs out.
+func _end_freezing_field() -> void:
+	_freezing_field_active = false
+	_freezing_field_damage_per_turn = 0.0
+	_freezing_field_radius = 0
+	_freezing_field_turns_remaining = 0
+	_freezing_field_duration_pending_start = false
+
+	_show_message_over_hero("Freezing Field fades")
+
+
+# ------------------------------------------------------------------
+# Tusk's Ice Shards.
+# ------------------------------------------------------------------
+
+## Resolves an Ice Shards cast on `target`: `level_data.damage` to
+## `target` (still mitigated by its own armor, via _deal_fixed_damage_
+## to_enemy() - same helper every other targeted skill uses), then
+## walls off `level_data.blocked_columns` columns for `level_data.
+## duration` turns - starting on the hero's OWN column and continuing
+## one column at a time toward `target`'s, stopping early if that walk
+## would run off either edge of the board. Recasting while a previous
+## wall is still up simply replaces it outright.
+func _resolve_ice_shards_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+
+	var direction: int = _step_toward(_hero_pos_index, target["pos_index"])
+	if direction == 0:
+		direction = 1
+
+	var blocked_columns: int = int(level_data.get("blocked_columns", 0))
+	var columns: Array[int] = []
+	var col: int = _hero_pos_index
+	for i in range(blocked_columns):
+		if col < 0 or col >= GRID_COLUMNS:
+			break
+		columns.append(col)
+		col += direction
+
+	_ice_shards_active = true
+	_ice_shards_blocked_columns = columns
+	_ice_shards_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_ice_shards()), same as
+	# every other duration-based effect.
+	_ice_shards_duration_pending_start = true
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["ice_shards"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("ice_shards", _skill_cooldowns["ice_shards"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Ticks Ice Shards' duration down once per End Turn, same timing (and
+## same "the casting turn doesn't count" skip) as every other duration-
+## based effect.
+func _tick_ice_shards() -> void:
+	if not _ice_shards_active:
+		return
+
+	if _ice_shards_duration_pending_start:
+		_ice_shards_duration_pending_start = false
+		return
+
+	_ice_shards_turns_remaining -= 1
+	if _ice_shards_turns_remaining <= 0:
+		_end_ice_shards()
+
+
+## Ends Ice Shards once its duration runs out - the walled-off columns
+## reopen to movement immediately.
+func _end_ice_shards() -> void:
+	_ice_shards_active = false
+	_ice_shards_blocked_columns = []
+	_ice_shards_turns_remaining = 0
+	_ice_shards_duration_pending_start = false
+
+
+## Whether `col` is currently walled off by Ice Shards - checked from
+## every PLAIN movement decision in _enemy_turn()/_enemy_hero_turn()
+## (flee, "close in", Winter's Curse's own redirect) so an enemy
+## standing in a blocked column can't move at all and one standing
+## outside it can't step into one, i.e. can't move past it. Deliberately
+## NOT checked against a skill-driven relocation (Pounce's leap, X Marks
+## the Spot's teleport) - the design doc calls those out as still usable
+## while walled in, same as an attack or an item.
+func _is_column_ice_shards_blocked(col: int) -> bool:
+	return _ice_shards_active and col in _ice_shards_blocked_columns
+
+
+# ------------------------------------------------------------------
+# Tusk's Snowball.
+# ------------------------------------------------------------------
+
+## Resolves a Snowball cast on `target`: moves the hero straight onto
+## `target`'s own column - updating his LOGICAL position immediately,
+## same as every other action, so anything checked right after (range,
+## _stage_generation, etc.) already sees him there - then deals
+## `level_data.damage` and stuns it for `level_data.stun_turns` if it
+## survives, same stun mechanism Torrent's/Ice Blast's/Frostbite's own
+## use. The charge itself (portrait swap to SNOWBALL_IMAGE_PATH, a
+## tween sliding his VISUAL position across to match) is purely
+## cosmetic and layered on top afterward, same "instant, already-
+## resolved outcome, cosmetic animation played alongside it" split
+## Ghostship's own travel already uses - see _end_snowball_animation()
+## for the revert.
+func _resolve_snowball_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var start_pos_index: int = _hero_pos_index
+	var target_pos_index: int = target["pos_index"]
+
+	var damage: float = float(level_data.get("damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+	if target.get("current_hp", 0) > 0:
+		target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+
+	_hero_pos_index = target_pos_index
+	# Hero art is drawn facing right by default (see _hero_move()'s own
+	# note on art orientation), so charging left mirrors it to face
+	# that way.
+	hero_image.flip_h = target_pos_index < start_pos_index
+	_set_hero_image(SNOWBALL_IMAGE_PATH)
+
+	var tween := create_tween()
+	tween.tween_property(hero_image, "position:x", _index_to_x(target_pos_index), SNOWBALL_TRAVEL_DURATION)
+	tween.finished.connect(_end_snowball_animation)
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["snowball"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("snowball", _skill_cooldowns["snowball"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Reverts the hero's portrait back to normal and snaps his visual
+## position to match his (already-updated) logical one, once the
+## charge's own travel tween finishes.
+func _end_snowball_animation() -> void:
+	_set_hero_image(_hero_static.get("image", ""))
+	_update_hero_position()
+
+
+# ------------------------------------------------------------------
+# Tusk's Tag Team.
+# ------------------------------------------------------------------
+
+## Activates Tag Team: arms this level's own bonus_damage for
+## `level_data.duration` turns. Always "succeeds" - no target or range
+## requirement to cast it, same as every other self-cast buff.
+func _activate_tag_team(level_data: Dictionary) -> void:
+	_tag_team_active = true
+	_tag_team_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_tag_team_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_tag_team()), same as every
+	# other duration-based buff.
+	_tag_team_duration_pending_start = true
+
+	_show_message_over_hero("Tag Team!")
+
+
+## Ticks Tag Team's duration down once per End Turn, same timing (and
+## same "the casting turn doesn't count" skip) as every other duration-
+## based buff.
+func _tick_tag_team() -> void:
+	if not _tag_team_active:
+		return
+
+	if _tag_team_duration_pending_start:
+		_tag_team_duration_pending_start = false
+		return
+
+	_tag_team_turns_remaining -= 1
+	if _tag_team_turns_remaining <= 0:
+		_end_tag_team()
+
+
+## Ends Tag Team once its duration runs out.
+func _end_tag_team() -> void:
+	_tag_team_active = false
+	_tag_team_bonus_damage = 0.0
+	_tag_team_turns_remaining = 0
+	_tag_team_duration_pending_start = false
+
+	_show_message_over_hero("Tag Team wears off")
+
+
+# ------------------------------------------------------------------
+# Tusk's ultimate, Walrus Punch.
+# ------------------------------------------------------------------
+
+## Resolves a Walrus Punch cast on `target`: rolls the hero's own
+## Attack damage (_roll_hero_damage(), same roll a plain Attack uses)
+## and multiplies it by this level's own damage_multiplier, then works
+## out how far the knockback actually carries - walking one column at a
+## time, away from Tusk's current facing direction (hero_image.flip_h),
+## for up to `level_data.knockback` columns, stopping early at the edge
+## of the board or at the first column another living, targetable enemy
+## already occupies. Coming up short either way ("hits a wall or
+## another obstacle") adds 50% more damage to this same hit before it
+## lands - the critical-hit-styled number _deal_fixed_damage_to_enemy()
+## shows either way (see its own `is_critical` param) is already that
+## boosted total.
+## Unlike every other targeted skill here, the knockback plays out
+## BEFORE damage: `target`'s LOGICAL position updates immediately (same
+## as always), but its VISUAL slide (WALRUS_PUNCH_KNOCKBACK_DURATION)
+## has to actually finish before _resolve_walrus_punch_damage() deals
+## the hit, checks for death, and stuns it if it survives - so a punch
+## that kills still visibly sends its target flying first, instead of
+## it just vanishing on the spot. Skips the tween entirely (resolving
+## instantly) if the target never actually moved - already pinned
+## against something this same turn, so there's nothing to show.
+func _resolve_walrus_punch_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var multiplier: float = float(level_data.get("damage_multiplier", 1.0))
+	var punch_damage: float = _roll_hero_damage() * multiplier
+
+	var knockback_columns: int = int(level_data.get("knockback", 0))
+	var direction: int = -1 if hero_image.flip_h else 1
+	var pos: int = target["pos_index"]
+	var actual_distance: int = 0
+	for i in range(knockback_columns):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if not _get_enemy_at(next_pos).is_empty():
+			break
+		pos = next_pos
+		actual_distance += 1
+
+	var hit_wall: bool = actual_distance < knockback_columns
+	if hit_wall:
+		punch_damage *= 1.5
+
+	if actual_distance > 0 and is_instance_valid(target.get("node")):
+		target["pos_index"] = pos
+		# Same facing convention as _move_enemy() - hero-fight art
+		# faces right natively, every other enemy's faces left.
+		var native_faces_right: bool = target["static"].get("is_hero_fight", false)
+		target["node"].flip_h = (direction < 0) if native_faces_right else (direction > 0)
+
+		var tween := create_tween()
+		tween.tween_property(target["node"], "position:x", _index_to_x(pos), WALRUS_PUNCH_KNOCKBACK_DURATION)
+		tween.finished.connect(_resolve_walrus_punch_damage.bind(target, punch_damage, hit_wall, level_data, generation_before))
+	else:
+		_resolve_walrus_punch_damage(target, punch_damage, hit_wall, level_data, generation_before)
+
+
+## Second half of a Walrus Punch cast, deferred until the knockback
+## slide (see _resolve_walrus_punch_cast()) has actually finished
+## playing: deals the punch's own damage, shows "Wall hit!" if it fell
+## short of its full knockback distance, and - if the target survived -
+## stuns it in place for `level_data.stun_turns`, the same shared
+## stun_turns_left field Torrent's/Ice Blast's/Frostbite's/Snowball's
+## own stun already uses. Bails out first if a stage/hero-fight
+## transition already happened while the slide was playing - the same
+## generation guard every other targeted cast checks before spending
+## anything.
+func _resolve_walrus_punch_damage(target: Dictionary, punch_damage: float, hit_wall: bool, level_data: Dictionary, generation_before: int) -> void:
+	if _stage_generation != generation_before:
+		return
+
+	_deal_fixed_damage_to_enemy(target, punch_damage, true)
+
+	if hit_wall:
+		_show_message_over_hero("Wall hit!")
+
+	if target.get("current_hp", 0) > 0:
+		target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["walrus_punch"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("walrus_punch", _skill_cooldowns["walrus_punch"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
 ## Resolves a Mist Coil cast on Abaddon himself: pays `level_data.
 ## hp_cost` straight off current_hp - no armor mitigation, same as the
 ## Spirit Bear's death penalty (_apply_bear_death_penalty()) - then
@@ -2630,6 +3281,7 @@ func _dispel_all_hero_effects() -> void:
 	_player_entangle_dot_damage = 0.0
 	_player_entangle_dot_turns_left = 0
 	_player_stun_turns_left = 0
+	_player_winters_curse_active = false
 	_player_curse_stacks = 0
 	_player_curse_active = false
 	_player_curse_dot_damage = 0.0
@@ -2642,6 +3294,8 @@ func _dispel_all_hero_effects() -> void:
 	_player_ice_blast_dot_damage = 0.0
 	_player_ice_blast_dot_turns_left = 0
 	_player_ice_blast_execute_pct = 0.0
+	_player_frostbite_dot_damage = 0.0
+	_player_frostbite_dot_turns_left = 0
 
 	_refresh_bars()
 
@@ -3025,12 +3679,15 @@ func _refresh_skill_cooldown_labels() -> void:
 
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
 ## and ticks Essence Shift's, Shadow Dance's, Arctic Burn's, Cold
-## Embrace's, Spirit Link's, True Form's, Aphotic Shield's, and Borrowed
-## Time's durations, plus every
-## enemy's Entangle/Curse of Avernus/Cold Feet/Ice Vortex/Ice Blast
-## root/silence/DoT/stack/execute durations, alongside them - and,
-## during a hero fight, the rival's own mirrored copies of all of the
-## above. Called once per End Turn.
+## Embrace's, Freezing Field's, Ice Shards', Tag Team's, Spirit Link's,
+## True Form's, Aphotic Shield's, and Borrowed Time's durations, plus
+## every
+## enemy's Entangle/Curse of Avernus/Cold Feet/Ice Vortex/Ice Blast/
+## Frostbite root/silence/DoT/stack/execute durations, alongside them -
+## and, during a hero fight, the rival's own mirrored copies of all of
+## the above (including, for a Crystal Maiden rival, her own Freezing
+## Field ticking on herself and Frostbite's DoT ticking on the player).
+## Called once per End Turn.
 func _tick_skill_cooldowns() -> void:
 	for skill_id in _skill_cooldowns.keys():
 		var new_value: int = maxi(0, _skill_cooldowns[skill_id] - 1)
@@ -3041,6 +3698,9 @@ func _tick_skill_cooldowns() -> void:
 	_tick_shadow_dance()
 	_tick_arctic_burn()
 	_tick_cold_embrace()
+	_tick_freezing_field()
+	_tick_ice_shards()
+	_tick_tag_team()
 	_tick_spirit_link()
 	_tick_true_form()
 	_tick_aphotic_shield()
@@ -3051,6 +3711,7 @@ func _tick_skill_cooldowns() -> void:
 	_tick_ice_vortex_effects()
 	_tick_ice_blast_effects()
 	_tick_frostbite_effects()
+	_tick_enemy_passive_regen()
 
 	if _in_hero_fight:
 		for skill_id in _enemy_skill_cooldowns.keys():
@@ -3067,8 +3728,86 @@ func _tick_skill_cooldowns() -> void:
 		_tick_player_cold_feet_effects()
 		_tick_player_ice_vortex_effects()
 		_tick_player_ice_blast_effects()
+		_tick_player_frostbite_effects()
 		_tick_enemy_arctic_burn()
 		_tick_enemy_cold_embrace()
+		_tick_enemy_freezing_field()
+		_tick_enemy_ice_shards()
+		_tick_enemy_tag_team()
+
+
+# ------------------------------------------------------------------
+# Passive HP/mana regen - a small amount every turn for every
+# creature in the fight (the player's own hero, a hero fight's rival
+# boss, and every regular creep), scaled off the same stat each side's
+# HP/mana already derive from (strength for HP, intelligence for
+# mana). Ticks right after status effects/DoT for that same "turn" -
+# _apply_passive_hero_regen() is called from _end_turn() right where
+# Arcane Aura's own regen already is (right after _tick_skill_
+# cooldowns()' DoT tick, before the player's action buttons reopen);
+# _tick_enemy_passive_regen() is called from _tick_skill_cooldowns()
+# itself, alongside every other unconditional enemy-side tick, so a
+# creep's own regen lands between its last action and its next one the
+# same way its DoT ticks already do.
+# ------------------------------------------------------------------
+
+const PASSIVE_HP_REGEN_BASE := 2.0
+const PASSIVE_HP_REGEN_PER_STRENGTH := 0.10
+const PASSIVE_MANA_REGEN_BASE := 1.0
+const PASSIVE_MANA_REGEN_PER_INT := 0.05
+
+
+## The player hero's own passive regen. Reads strength/intelligence
+## straight off _recruited's own stats - the same raw base values
+## _hero_armor()/_hero_max_hp() already read for their own bonus terms
+## - since Essence Shift/True Form never touch strength/intelligence
+## themselves (only derived hp/mana/armor/damage), no extra bonus
+## terms belong here.
+func _apply_passive_hero_regen() -> void:
+	var stats: Dictionary = _recruited.get("stats", {})
+	var strength: float = float(stats.get("strength", 0))
+	var intelligence: float = float(stats.get("intelligence", 0))
+
+	heal(PASSIVE_HP_REGEN_BASE + strength * PASSIVE_HP_REGEN_PER_STRENGTH)
+	restore_mana(PASSIVE_MANA_REGEN_BASE + intelligence * PASSIVE_MANA_REGEN_PER_INT)
+
+
+## The enemy-side mirror, for every living entry in _enemies at once -
+## a regular creep, a hero fight's rival boss, or its summoned Spirit
+## Bear ally. HP regen applies to all three, using whichever stat each
+## kind actually tracks: the boss's real strength (from
+## _enemy_hero_static's own stats, mirroring the player's own read
+## above - a hero-fight enemy_def only ever carries flattened hp/
+## damage/armor, never strength/intelligence, see GameManager.gd's own
+## build_hero_fight_enemy_def()), or a creep's/bear's own
+## current_main_stat_value ONLY when its static main_stat is actually
+## "strength" - an agility/intelligence creep has no tracked strength
+## at all, so it just gets the flat base. Mana regen only applies to
+## the boss: a regular creep's own "mana" field (see GameManager.gd's
+## own creep entries) is never read or spent anywhere in this file, so
+## ticking it would just be dead state - _enemy_current_mana is the
+## boss's own single shared mana pool (there's only ever one boss per
+## fight).
+func _tick_enemy_passive_regen() -> void:
+	for enemy in _enemies.duplicate():
+		var enemy_static: Dictionary = enemy["static"]
+		var is_boss: bool = enemy_static.get("is_hero_fight_boss", false)
+
+		var strength: float = 0.0
+		if is_boss:
+			strength = float(_enemy_hero_static.get("stats", {}).get("strength", 0))
+		elif enemy_static.get("main_stat", "") == "strength":
+			strength = float(enemy.get("current_main_stat_value", 0))
+
+		var hp_regen: float = PASSIVE_HP_REGEN_BASE + strength * PASSIVE_HP_REGEN_PER_STRENGTH
+		var max_hp: float = _enemy_hero_effective_max_hp(enemy) if is_boss else float(enemy_static.get("hp", 1))
+		enemy["current_hp"] = minf(max_hp, enemy["current_hp"] + hp_regen)
+
+		if is_boss:
+			var intelligence: float = float(_enemy_hero_static.get("stats", {}).get("intelligence", 0))
+			var mana_regen: float = PASSIVE_MANA_REGEN_BASE + intelligence * PASSIVE_MANA_REGEN_PER_INT
+			var max_mana: float = _enemy_max_mana + _enemy_essence_shift_bonus.get("mana", 0.0)
+			_enemy_current_mana = minf(max_mana, _enemy_current_mana + mana_regen)
 
 
 # ------------------------------------------------------------------
@@ -3096,6 +3835,7 @@ func _activate_aphotic_shield(level_data: Dictionary) -> void:
 	_player_entangle_dot_damage = 0.0
 	_player_entangle_dot_turns_left = 0
 	_player_stun_turns_left = 0
+	_player_winters_curse_active = false
 	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 	_show_message_over_hero("Shield up!")
@@ -3511,14 +4251,21 @@ func _on_skill_choice_option_pressed(skill: Dictionary) -> void:
 	_pending_level_up_skill_id = skill_id
 
 	var current_level: int = PlayerManager.get_skill_level(skill_id)
+	var target_level: int = 1 if current_level <= 0 else current_level + 1
 	var action_text: String
 	if current_level <= 0:
 		action_text = "Learning this will put it at level 1."
 	else:
-		action_text = "Upgrading this will bring it to level %d." % (current_level + 1)
+		action_text = "Upgrading this will bring it to level %d." % target_level
+
+	# The level being learned/upgraded TO, not the current one - shows
+	# what the player is actually about to get, same reasoning
+	# action_text above already uses.
+	var level_data: Dictionary = GameManager.get_skill_level_data(skill, target_level)
+	var stats_summary: String = GameManager.format_skill_level_stats(level_data)
 
 	skill_choice_desc_name_label.text = skill.get("name", "")
-	skill_choice_desc_label.text = skill.get("description", "") + "\n\n" + action_text
+	skill_choice_desc_label.text = skill.get("description", "") + "\n\n" + stats_summary + "\n\n" + action_text
 
 	# Swap the list popup for the description popup - Cancel brings
 	# the list back rather than closing everything, so the player can
@@ -3588,6 +4335,12 @@ func _is_ranged_hero() -> bool:
 ## so a multi-column move that would otherwise carry them past one
 ## stops right on top of it instead - covering less distance than
 ## their full speed, but landing somewhere they can actually attack.
+## `_is_column_enemy_ice_shards_blocked()` stops the walk one column
+## short of entering a rival-walled one, exactly like it already stops
+## one column short of an occupied one below - a wall blocks movement
+## the same way an enemy standing in the way does, it just isn't a
+## valid landing spot either (unlike an enemy's column, which IS - see
+## the early return right after).
 func _melee_move_target(start: int, direction: int, distance: int) -> int:
 	var pos: int = start
 
@@ -3595,10 +4348,32 @@ func _melee_move_target(start: int, direction: int, distance: int) -> int:
 		var next_pos := pos + direction
 		if next_pos < 0 or next_pos >= GRID_COLUMNS:
 			break
+		if _is_column_enemy_ice_shards_blocked(next_pos):
+			break
 		pos = next_pos
 
 		if not _get_enemy_at(pos).is_empty():
 			return pos
+
+	return pos
+
+
+## A ranged hero's own movement is normally a single unobstructed jump
+## (see _hero_move()) - this only exists so a rival's Ice Shards wall
+## still stops it early, same "can't move into a blocked column" rule
+## _melee_move_target() enforces for a melee one, just without that
+## function's own "stop on top of an enemy" rule (a ranged hero doesn't
+## need to stand ON an enemy's column to fight it).
+func _ranged_move_target(start: int, direction: int, distance: int) -> int:
+	var pos: int = start
+
+	for i in range(distance):
+		var next_pos := pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if _is_column_enemy_ice_shards_blocked(next_pos):
+			break
+		pos = next_pos
 
 	return pos
 
@@ -3615,12 +4390,16 @@ func _hero_move(direction: int) -> void:
 		_show_message_over_hero("Encased in ice!")
 		return
 
+	if _is_column_enemy_ice_shards_blocked(_hero_pos_index):
+		_show_message_over_hero("Frozen in place!")
+		return
+
 	_cancel_targeting()
 
 	var distance: int = _hero_move_distance()
 
 	if _is_ranged_hero():
-		_hero_pos_index = clampi(_hero_pos_index + direction * distance, 0, GRID_COLUMNS - 1)
+		_hero_pos_index = _ranged_move_target(_hero_pos_index, direction, distance)
 	else:
 		_hero_pos_index = _melee_move_target(_hero_pos_index, direction, distance)
 
@@ -4084,6 +4863,86 @@ func _start_frostbite_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
+## Tusk's Ice Shards target picking: unlike every "normal attack range"
+## targeted skill above, this uses the skill's OWN level_data.range
+## field instead of _hero_attack_column_range() - same reasoning as
+## Torrent's own targeting (_start_torrent_targeting()), since Tusk
+## fights at melee range but Ice Shards is thrown well past it. Returns
+## false (and shows a message) if nothing is in range.
+func _start_ice_shards_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 0))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "ice_shards"
+	_pending_ice_shards_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.65, 0.9, 1)
+	return true
+
+
+## Tusk's Snowball target picking: same skill-specific level_data.range
+## reasoning as Ice Shards' own targeting - Tusk fights at melee range,
+## but Snowball charges well past it. Returns false (and shows a
+## message) if nothing is in range.
+func _start_snowball_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 0))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "snowball"
+	_pending_snowball_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.75, 0.95, 1)
+	return true
+
+
+## Tusk's Walrus Punch target picking: strictly melee range (sharing
+## his own column, same as a plain melee Attack - _resolve_melee_
+## attack()) rather than any column-range field, since the design doc
+## calls for "melee range" specifically. Returns false (and shows a
+## message) if nothing shares his column.
+func _start_walrus_punch_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if enemy["pos_index"] == _hero_pos_index:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "walrus_punch"
+	_pending_walrus_punch_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(1, 0.8, 0.4)
+	return true
+
+
 func _cancel_targeting() -> void:
 	for enemy in _valid_targets:
 		if is_instance_valid(enemy["node"]):
@@ -4121,6 +4980,9 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	var winters_curse_level_data: Dictionary = _pending_winters_curse_level_data
 	var crystal_nova_level_data: Dictionary = _pending_crystal_nova_level_data
 	var frostbite_level_data: Dictionary = _pending_frostbite_level_data
+	var ice_shards_level_data: Dictionary = _pending_ice_shards_level_data
+	var snowball_level_data: Dictionary = _pending_snowball_level_data
+	var walrus_punch_level_data: Dictionary = _pending_walrus_punch_level_data
 	_cancel_targeting()
 
 	if purpose == "entangle":
@@ -4149,6 +5011,12 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		_resolve_crystal_nova_cast(enemy, crystal_nova_level_data)
 	elif purpose == "frostbite":
 		_resolve_frostbite_cast(enemy, frostbite_level_data)
+	elif purpose == "ice_shards":
+		_resolve_ice_shards_cast(enemy, ice_shards_level_data)
+	elif purpose == "snowball":
+		_resolve_snowball_cast(enemy, snowball_level_data)
+	elif purpose == "walrus_punch":
+		_resolve_walrus_punch_cast(enemy, walrus_punch_level_data)
 	else:
 		_apply_hero_attack(enemy)
 
@@ -4245,7 +5113,11 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## pool first - same redirection order as the player's copy, just
 ## checked here since every source of damage to an enemy (attacks,
 ## Dark Pact, DoTs) already funnels through this one function.
-func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
+## `is_critical` just forwards to _show_damage_number()'s own bigger-
+## and-golden-with-a-"!" treatment (see Walrus Punch's own
+## _resolve_walrus_punch_cast()) - it has no effect on the damage math
+## itself, only how the number reads.
+func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical: bool = false) -> float:
 	var enemy_armor: float = float(target["static"].get("armor", 0)) + _enemy_hero_bonus_armor(target)
 	var mitigated: float = _apply_armor_reduction(amount, enemy_armor)
 	var is_boss: bool = target["static"].get("is_hero_fight_boss", false)
@@ -4269,7 +5141,7 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
 		var overflow: float = mitigated - absorbed
 		if overflow > 0.0:
 			target["current_hp"] -= overflow
-			_show_damage_number(target["node"], overflow)
+			_show_damage_number(target["node"], overflow, is_critical)
 		if _enemy_aphotic_shield_hp <= 0.0:
 			_end_enemy_aphotic_shield(true)
 		if target["current_hp"] <= 0:
@@ -4279,7 +5151,7 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float) -> float:
 		return mitigated
 
 	target["current_hp"] -= mitigated
-	_show_damage_number(target["node"], mitigated)
+	_show_damage_number(target["node"], mitigated, is_critical)
 
 	if target["current_hp"] <= 0:
 		_kill_enemy(target)
@@ -4317,10 +5189,10 @@ func _is_target_hidden(target: Dictionary) -> bool:
 
 
 ## Rolls a hero attack's damage, adding Essence Shift's ongoing
-## borrowed damage, True Form's bonus damage, and Winter Wyvern's
-## Arctic Burn bonus damage (while each is active) plus (for the single
-## hit that triggers it) Shadow Dance's one-shot `extra_bonus`, before
-## mitigation.
+## borrowed damage, True Form's bonus damage, Winter Wyvern's Arctic
+## Burn bonus damage, and Tusk's Tag Team bonus damage (while each is
+## active) plus (for the single hit that triggers it) Shadow Dance's
+## one-shot `extra_bonus`, before mitigation.
 func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
 	var damage_str: String = str(stats.get("damage", "0-0"))
@@ -4328,25 +5200,31 @@ func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	# Essence Shift's borrowed damage, True Form's bonus damage, and
-	# Arctic Burn's bonus damage (while each is active) apply on top of
-	# both ends of the roll, same as a permanent damage bonus would -
-	# Shadow Dance's bonus (passed in by the caller, only for the
-	# specific hit that triggers it) stacks on top of that the same way.
-	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + _arctic_burn_bonus_damage + extra_bonus - _player_essence_shift_penalty.get("damage", 0.0)
+	# Essence Shift's borrowed damage, True Form's bonus damage, Arctic
+	# Burn's bonus damage, and Tag Team's bonus damage (while each is
+	# active) apply on top of both ends of the roll, same as a permanent
+	# damage bonus would - Shadow Dance's bonus (passed in by the
+	# caller, only for the specific hit that triggers it) stacks on top
+	# of that the same way.
+	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + _arctic_burn_bonus_damage + _tag_team_bonus_damage + extra_bonus - _player_essence_shift_penalty.get("damage", 0.0)
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
 	return randi_range(int(min_dmg), int(max_dmg))
 
 
-func _show_damage_number(target_node: Control, amount: float) -> void:
+## `is_critical` (Walrus Punch's own multiplied hit - see
+## _resolve_walrus_punch_cast()) renders bigger, in gold instead of the
+## usual red, with a trailing "!" - the same "stands out from a normal
+## hit" treatment a critical usually gets, layered on top of the plain
+## damage-number styling below rather than replacing it outright.
+func _show_damage_number(target_node: Control, amount: float, is_critical: bool = false) -> void:
 	var label := Label.new()
-	label.text = str(int(amount))
-	label.add_theme_color_override("font_color", Color(1, 0.15, 0.15, 1))
+	label.text = str(int(amount)) + ("!" if is_critical else "")
+	label.add_theme_color_override("font_color", Color(1, 0.75, 0.1, 1) if is_critical else Color(1, 0.15, 0.15, 1))
 	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 	label.add_theme_constant_override("outline_size", 4)
-	label.add_theme_font_size_override("font_size", 24)
+	label.add_theme_font_size_override("font_size", 36 if is_critical else 24)
 	label.position = target_node.position + Vector2(target_node.size.x / 2.0 - 15, -10)
 	enemies_layer.add_child(label)
 
@@ -4473,6 +5351,7 @@ func _advance_to_next_stage() -> void:
 	_update_hero_position()
 
 	_turn_count = 0
+	_next_reinforcement_turn = REINFORCEMENT_INTERVAL
 	_has_acted_this_turn = false
 
 	_load_enemies()
@@ -4535,6 +5414,7 @@ func _start_hero_fight(hero_static: Dictionary) -> void:
 	_update_hero_position()
 
 	_turn_count = 0
+	_next_reinforcement_turn = REINFORCEMENT_INTERVAL
 	_has_acted_this_turn = false
 
 	for child in enemies_layer.get_children():
@@ -4611,6 +5491,22 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_cold_embrace_turns_remaining = 0
 	_enemy_cold_embrace_duration_pending_start = false
 
+	_enemy_freezing_field_active = false
+	_enemy_freezing_field_damage_per_turn = 0.0
+	_enemy_freezing_field_radius = 0
+	_enemy_freezing_field_turns_remaining = 0
+	_enemy_freezing_field_duration_pending_start = false
+
+	_enemy_ice_shards_active = false
+	_enemy_ice_shards_blocked_columns = []
+	_enemy_ice_shards_turns_remaining = 0
+	_enemy_ice_shards_duration_pending_start = false
+
+	_enemy_tag_team_active = false
+	_enemy_tag_team_bonus_damage = 0.0
+	_enemy_tag_team_turns_remaining = 0
+	_enemy_tag_team_duration_pending_start = false
+
 	var stats: Dictionary = hero_static.get("stats", {})
 	_enemy_max_mana = float(stats.get("mana", 0))
 	_enemy_current_mana = _enemy_max_mana
@@ -4624,6 +5520,7 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_player_entangle_dot_damage = 0.0
 	_player_entangle_dot_turns_left = 0
 	_player_stun_turns_left = 0
+	_player_winters_curse_active = false
 	_player_curse_stacks = 0
 	_player_curse_active = false
 	_player_curse_dot_damage = 0.0
@@ -4636,6 +5533,8 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_player_ice_blast_dot_damage = 0.0
 	_player_ice_blast_dot_turns_left = 0
 	_player_ice_blast_execute_pct = 0.0
+	_player_frostbite_dot_damage = 0.0
+	_player_frostbite_dot_turns_left = 0
 
 
 func _update_stage_label() -> void:
@@ -4656,8 +5555,19 @@ func _update_stage_label() -> void:
 
 ## Locks the action buttons and, after a brief pause so the player can
 ## see the result of their action (damage numbers, messages, etc.),
-## triggers the enemies' turn automatically.
+## triggers the enemies' turn automatically. Bails out first if the
+## action that just called this (an attack or skill cast can kill the
+## last enemy outright, same as a DoT tick can - see _kill_enemy()/
+## _handle_victory()) already resolved the battle: _handle_victory()/
+## _handle_defeat() may already have changed scene by this point (see
+## _finish_zone_victory()), and scheduling a timer into _end_turn()
+## regardless would risk it firing after this node's been removed from
+## the tree entirely, crashing on a null get_tree() the same way an
+## unguarded _end_turn() could (see that function's own _battle_over
+## check right after _tick_skill_cooldowns()).
 func _mark_turn_used() -> void:
+	if _battle_over:
+		return
 	_has_acted_this_turn = true
 	_update_action_buttons()
 	get_tree().create_timer(0.9).timeout.connect(_end_turn)
@@ -4676,27 +5586,53 @@ func _end_turn() -> void:
 		return
 
 	_turn_count += 1
-	if _turn_count % REINFORCEMENT_INTERVAL == 0 and not _enemies.is_empty():
+	if _turn_count >= _next_reinforcement_turn and not _enemies.is_empty():
 		_spawn_reinforcements()
+		_next_reinforcement_turn += REINFORCEMENT_REPEAT_INTERVAL
 
 	_tick_skill_cooldowns()
 
 	# Entangle's damage-over-time ticks inside _tick_skill_cooldowns()
 	# above and can finish the player off outside of the normal
 	# attack/skill/enemy-turn paths already checked earlier in this
-	# function, so it needs its own defeat check.
+	# function, so it needs its own defeat check. The same ticks (or
+	# Ice Blast's execute threshold) can just as easily finish off the
+	# LAST enemy instead - _kill_enemy() already calls _handle_victory()
+	# for that on its own, which can set _battle_over and change scene
+	# outright (see _finish_zone_victory()) - so THIS needs its own
+	# bail-out too: without it, a hero fight the boss just lost to a
+	# DoT tick would fall through to the stun/Cold Embrace check at the
+	# tail of this function and schedule another _end_turn() call via
+	# get_tree().create_timer() - a timer that fires after this node has
+	# already been removed from the tree by that scene change, crashing
+	# on a null get_tree().
+	if _battle_over:
+		return
 	if _recruited.get("current_hp", 0) <= 0:
 		_handle_defeat()
 		return
 
 	if _player_stun_turns_left > 0:
 		_player_stun_turns_left -= 1
+		if _player_stun_turns_left <= 0:
+			_player_winters_curse_active = false
 
 	# The hero's new turn is opening right here - if X Marks the Spot
 	# marked something last turn, this is "his next turn", so he
 	# teleports now, for free (see _resolve_xmarks_teleport() - it
 	# never spends the turn this function is about to reopen below).
 	_resolve_xmarks_teleport()
+
+	# Arcane Aura regenerates mana at the start of every hero turn,
+	# whether or not he actually gets to act on it (see
+	# _apply_arcane_aura_regen()'s own comment) - a no-op while it isn't
+	# learned.
+	_apply_arcane_aura_regen()
+
+	# Passive HP/mana regen (see _apply_passive_hero_regen()) - same
+	# timing as Arcane Aura's own regen just above, on top of it rather
+	# than instead of it.
+	_apply_passive_hero_regen()
 
 	_has_acted_this_turn = false
 	_update_action_buttons()
@@ -4747,6 +5683,15 @@ func _end_turn() -> void:
 ## skipped. Its attack is untouched, though - if it's already within
 ## range/on the hero's column, a root doesn't stop it from swinging.
 ##
+## Tusk's Ice Shards works alongside root rather than replacing it: an
+## enemy standing IN a walled-off column (_is_column_ice_shards_
+## blocked()) is frozen exactly like a rooted one - see `ice_frozen`
+## below, folded into every `not rooted` movement gate the same way -
+## and one standing outside the wall simply can't step INTO a blocked
+## column, checked against each individual destination right before the
+## _move_enemy() call that would land it there. Attacking, casting a
+## skill, and using an item are all untouched either way, same as root.
+##
 ## Winter's Curse overrides all of the above for whichever OTHER
 ## enemies currently fall within its own curse_range of its frozen
 ## target (see _is_winters_curse_active()): they ignore the hero (and
@@ -4781,7 +5726,7 @@ func _enemy_turn() -> void:
 		var enemy_type: String = enemy_static.get("type", "")
 		var enemy_damage: float = float(enemy_static.get("damage", 0))
 		var hero_hidden: bool = _is_hero_hidden()
-		var rooted: bool = _is_enemy_rooted(enemy)
+		var rooted: bool = _is_enemy_rooted(enemy) or _is_column_ice_shards_blocked(enemy["pos_index"])
 
 		if curse_active and not is_same(enemy, curse_target) and _distance(enemy["pos_index"], curse_target_pos) <= _winter_curse_range:
 			# Cursed: this enemy drops the hero/bear entirely for this
@@ -4789,19 +5734,24 @@ func _enemy_turn() -> void:
 			# it (for bonus damage) if already within its own normal
 			# attack reach of the target, otherwise closing in on it one
 			# step at a time, same movement rules (including staying put
-			# while rooted) as it would use against the hero.
+			# while rooted or ice-frozen) as it would use against the
+			# hero.
 			if enemy_type == "range":
 				if _distance(enemy["pos_index"], curse_target_pos) <= RANGE_ENEMY_ATTACK_RANGE:
 					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
 				elif not rooted:
 					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
-					_move_enemy(enemy, enemy["pos_index"] + step)
+					var next_pos: int = enemy["pos_index"] + step
+					if not _is_column_ice_shards_blocked(next_pos):
+						_move_enemy(enemy, next_pos)
 			elif enemy_type == "mele":
 				if enemy["pos_index"] == curse_target_pos:
 					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
 				elif not rooted:
 					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
-					_move_enemy(enemy, enemy["pos_index"] + step)
+					var next_pos: int = enemy["pos_index"] + step
+					if not _is_column_ice_shards_blocked(next_pos):
+						_move_enemy(enemy, next_pos)
 			continue
 
 		if enemy_type == "range":
@@ -4811,9 +5761,13 @@ func _enemy_turn() -> void:
 				# TOO CLOSE to the hero: move away. Attacking is next
 				# turn's business, even if the flee step happens to
 				# land back in range. Doesn't apply while he's
-				# invisible (nothing visible to flee from) or while
-				# rooted (can't move at all).
-				_move_enemy(enemy, _get_flee_position(enemy))
+				# invisible (nothing visible to flee from), rooted, or
+				# ice-frozen (can't move at all either way) - and not at
+				# all if the flee spot itself is walled off, same as any
+				# other blocked destination.
+				var flee_pos: int = _get_flee_position(enemy)
+				if not _is_column_ice_shards_blocked(flee_pos):
+					_move_enemy(enemy, flee_pos)
 				continue
 
 			var attacked: bool = false
@@ -4833,12 +5787,14 @@ func _enemy_turn() -> void:
 				# whichever threat is nearer - but while the hero is
 				# hidden, the bear is the only thing worth chasing at
 				# all, so stand still if it's not around either. A
-				# rooted enemy skips this whole branch and just stays
-				# put regardless.
+				# rooted (or ice-frozen) enemy skips this whole branch
+				# and just stays put regardless.
 				var target_pos: int = _nearest_threat_pos(enemy["pos_index"], hero_hidden)
 				if target_pos != -1:
 					var step: int = _step_toward(enemy["pos_index"], target_pos)
-					_move_enemy(enemy, enemy["pos_index"] + step)
+					var next_pos: int = enemy["pos_index"] + step
+					if not _is_column_ice_shards_blocked(next_pos):
+						_move_enemy(enemy, next_pos)
 
 		elif enemy_type == "mele":
 			var attacked: bool = false
@@ -4853,7 +5809,9 @@ func _enemy_turn() -> void:
 				var target_pos: int = _nearest_threat_pos(enemy["pos_index"], hero_hidden)
 				if target_pos != -1:
 					var step: int = _step_toward(enemy["pos_index"], target_pos)
-					_move_enemy(enemy, enemy["pos_index"] + step)
+					var next_pos: int = enemy["pos_index"] + step
+					if not _is_column_ice_shards_blocked(next_pos):
+						_move_enemy(enemy, next_pos)
 
 
 ## Whichever "threat" - the hero, or the Spirit Bear if one is
@@ -4919,7 +5877,11 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 	var enemy_type: String = enemy["static"].get("type", "")
 	var hero_distance: int = _distance(enemy["pos_index"], _hero_pos_index)
 	var hero_hidden: bool = _is_hero_hidden()
-	var rooted: bool = _is_enemy_rooted(enemy)
+	# Ice Shards (the player's own, cast on this rival's turn) freezes
+	# movement exactly like a root does - see _enemy_turn()'s own
+	# comment for the full reasoning - so it's folded into the same
+	# `rooted` flag rather than tracked separately here.
+	var rooted: bool = _is_enemy_rooted(enemy) or _is_column_ice_shards_blocked(enemy["pos_index"])
 
 	# Potion, skill, or basic attack - in that priority, one action per
 	# turn, exactly mirroring EnemyHeroManager's own simulated turn
@@ -4942,7 +5904,9 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 
 	if enemy_type == "range":
 		if not hero_hidden and not rooted and hero_distance <= RANGE_ENEMY_FLEE_DISTANCE:
-			_move_enemy(enemy, _get_flee_position(enemy))
+			var flee_pos: int = _get_flee_position(enemy)
+			if not _is_column_ice_shards_blocked(flee_pos):
+				_move_enemy(enemy, flee_pos)
 			return
 
 		if hero_distance <= RANGE_ENEMY_ATTACK_RANGE and not hero_hidden:
@@ -4956,7 +5920,9 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 	if not hero_hidden and not rooted:
 		var step: int = _step_toward(enemy["pos_index"], _hero_pos_index)
 		if step != 0:
-			_move_enemy(enemy, enemy["pos_index"] + step)
+			var next_pos: int = enemy["pos_index"] + step
+			if not _is_column_ice_shards_blocked(next_pos):
+				_move_enemy(enemy, next_pos)
 
 
 ## Heals the boss for the Health Potion's own flat value (same item
@@ -5031,7 +5997,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 ## range.
 func _roll_enemy_hero_damage(enemy: Dictionary, extra_bonus: float = 0.0) -> float:
 	var base_damage: float = float(enemy["static"].get("damage", 0))
-	var bonus: float = _enemy_essence_shift_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + _enemy_arctic_burn_bonus_damage + extra_bonus
+	var bonus: float = _enemy_essence_shift_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + _enemy_arctic_burn_bonus_damage + _enemy_tag_team_bonus_damage + extra_bonus
 	return maxf(0.0, base_damage + bonus)
 
 
@@ -5116,6 +6082,21 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			return not _enemy_arctic_burn_active
 		"cold_embrace":
 			return not _enemy_cold_embrace_active
+		"freezing_field":
+			return not _enemy_freezing_field_active
+		"frostbite":
+			# Recasting on an already-frostbitten player just resets the
+			# same level's own DoT back to full - no extra total damage
+			# over just letting it run out, same "no benefit from
+			# resetting your own DoT" reasoning as Cold Feet/Ice Vortex
+			# above (there's only one possible target in a hero fight, so
+			# unlike the simulation's own copy - which always targets
+			# whichever living enemy is currently lowest-HP and so can't
+			# rely on a single flag like this - recasting here can only
+			# ever land on the same, already-frozen player).
+			return _player_frostbite_dot_turns_left <= 0
+		"tag_team":
+			return not _enemy_tag_team_active
 		_:
 			return true
 
@@ -5253,6 +6234,23 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int)
 ##     redirect onto the frozen target the way the simulation's other
 ##     living creeps can (see EnemyHeroManager's own _build_npc_ai_
 ##     context() for the real multi-enemy version of both fields).
+##   - target_distance: also doubles as Crystal Maiden's own Freezing
+##     Field range check (see EnemySkillAI's own _cm_freezing_field_
+##     modifier()) - Freezing Field is centered on HERSELF, not the
+##     player, but in a hero fight `hero_distance` (the rival's distance
+##     to the player) and "the player's distance to the rival" are the
+##     same number, so there's no separate field to compute.
+##   - caster_pos_index/target_pos_index/grid_columns/caster_facing_left:
+##     for Tusk's own Ice Shards (whether its wall actually reaches the
+##     player's column, and how close to either board edge that leaves
+##     them) and Walrus Punch (working out the knockback's actual
+##     landing column, the same walk _cast_enemy_walrus_punch() itself
+##     does, just to SCORE it beforehand rather than to resolve it) -
+##     see EnemySkillAI's own _tusk_ice_shards_modifier()/_tusk_walrus_
+##     punch_modifier(). Never present in the simulation (no positions
+##     there at all - see EnemyHeroManager's own _build_npc_ai_context()
+##     docstring), where `grid_columns` defaults to 0 and both modifiers
+##     fall back to their own no-columns proxy instead.
 func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distance: int) -> Dictionary:
 	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 	var current_hp: float = float(enemy.get("current_hp", 0.0))
@@ -5290,6 +6288,10 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 		"has_harmful_debuff": _enemy_has_harmful_debuff(enemy),
 		"redirect_candidate_count": 0,
 		"avg_enemy_damage": 0.0,
+		"caster_pos_index": enemy["pos_index"],
+		"target_pos_index": _hero_pos_index,
+		"grid_columns": GRID_COLUMNS,
+		"caster_facing_left": bool(enemy["node"].flip_h),
 	}
 
 
@@ -5375,7 +6377,7 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 		"x_marks_the_spot":
 			_cast_enemy_xmarks()
 		"ghostship":
-			_cast_enemy_ghostship(level_data)
+			_cast_enemy_ghostship(enemy, level_data)
 		"cold_feet":
 			_cast_enemy_cold_feet(level_data)
 		"ice_vortex":
@@ -5392,6 +6394,20 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 			_cast_enemy_cold_embrace(level_data)
 		"winter's_curse":
 			_cast_enemy_winters_curse(level_data)
+		"crystal_nova":
+			_cast_enemy_crystal_nova(level_data)
+		"frostbite":
+			_cast_enemy_frostbite(level_data)
+		"freezing_field":
+			_cast_enemy_freezing_field(level_data)
+		"ice_shards":
+			_cast_enemy_ice_shards(enemy, level_data)
+		"snowball":
+			_cast_enemy_snowball(enemy, level_data)
+		"tag_team":
+			_cast_enemy_tag_team(level_data)
+		"walrus_punch":
+			_cast_enemy_walrus_punch(enemy, level_data)
 
 	# Shadow Dance only breaks from casting ANOTHER skill (or
 	# attacking, handled separately in _resolve_enemy_hero_attack()),
@@ -5400,7 +6416,102 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 	if _enemy_shadow_dance_active and skill_id != "shadow_dance":
 		_end_enemy_shadow_dance()
 
+	# After Shadow Dance's own break above, so the caster's modulate is
+	# already back to opaque before the flash reads/writes it.
+	_play_enemy_cast_feedback(enemy, skill)
+
 	_refresh_bars()
+
+
+# ------------------------------------------------------------------
+# Enemy hero skill cast feedback - a scale/brightness pulse on the
+# caster, a floating cast-name banner over it, a frost screen tint for
+# Winter's Curse/Frostbite/Ice Blast specifically (their own lingering
+# "ambient reminder" while still active lives in _refresh_status_
+# effects() instead, since that has to persist past this one moment),
+# and extra weight (a bigger pulse plus a screen shake) for ultimates.
+# All driven from _cast_enemy_skill() so every enemy hero skill gets
+# this for free.
+# ------------------------------------------------------------------
+
+const FROST_TINT_SKILL_IDS := ["winter's_curse", "frostbite", "ice_blast"]
+const FROST_TINT_COLOR := Color(0.55, 0.85, 1.0)
+
+
+func _play_enemy_cast_feedback(enemy: Dictionary, skill: Dictionary) -> void:
+	var node: TextureRect = enemy["node"]
+	var is_ultimate: bool = skill.get("type", "") == "ultimate"
+
+	_pulse_caster_sprite(node, is_ultimate)
+	_show_message_over_enemy(node, skill.get("name", ""))
+
+	if skill.get("id", "") in FROST_TINT_SKILL_IDS:
+		_flash_screen_tint(FROST_TINT_COLOR, 0.32 if is_ultimate else 0.2, 0.5)
+
+	if is_ultimate:
+		_shake_screen()
+
+
+## A quick scale-up + brightness flash on `node`, back to normal -
+## reads as "this caster just did something," bigger and brighter for
+## an ultimate than a standard cast.
+func _pulse_caster_sprite(node: TextureRect, big: bool) -> void:
+	node.pivot_offset = node.size / 2.0
+	var peak_scale: float = 1.28 if big else 1.12
+	var base_modulate: Color = node.modulate
+	var flash_modulate: Color = Color(1.6, 1.6, 1.6, base_modulate.a)
+
+	var tween := create_tween()
+	tween.tween_property(node, "scale", Vector2(peak_scale, peak_scale), 0.12).set_trans(Tween.TRANS_SINE)
+	tween.parallel().tween_property(node, "modulate", flash_modulate, 0.12)
+	tween.tween_property(node, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_SINE)
+	tween.parallel().tween_property(node, "modulate", base_modulate, 0.18)
+
+
+## Same floating/fading style as _show_message_over_hero(), just over
+## `target_node` instead of always the player's own hero - so a rival's
+## cast reads as something THEY did, not something that just happened
+## to the player.
+func _show_message_over_enemy(target_node: Control, text: String) -> void:
+	if text == "":
+		return
+
+	var label := Label.new()
+	label.text = text
+	label.add_theme_color_override("font_color", Color(1, 0.85, 0.3, 1))
+	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	label.add_theme_constant_override("outline_size", 4)
+	label.add_theme_font_size_override("font_size", 18)
+	label.position = target_node.position + Vector2(target_node.size.x / 2.0 - 60, -10)
+	enemies_layer.add_child(label)
+
+	var tween := create_tween()
+	tween.tween_property(label, "position:y", label.position.y - 40, 0.8)
+	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.8)
+	tween.finished.connect(label.queue_free)
+
+
+## A brief full-screen color flash (fade in, fade out) on
+## cast_flash_overlay - separate from ambient_tint_overlay's own
+## persistent tint (see _refresh_status_effects()) so the two never
+## fight over the same tween.
+func _flash_screen_tint(color: Color, peak_alpha: float, duration: float) -> void:
+	cast_flash_overlay.color = Color(color.r, color.g, color.b, 0.0)
+
+	var tween := create_tween()
+	tween.tween_property(cast_flash_overlay, "color:a", peak_alpha, duration * 0.3)
+	tween.tween_property(cast_flash_overlay, "color:a", 0.0, duration * 0.7)
+
+
+## A short, small random-jitter shake of the whole battle view - the
+## "impact weight" cue for an enemy hero's ultimate.
+func _shake_screen() -> void:
+	var base_position: Vector2 = position
+	var tween := create_tween()
+	for i in range(5):
+		var offset := Vector2(randf_range(-6.0, 6.0), randf_range(-6.0, 6.0))
+		tween.tween_property(self, "position", base_position + offset, 0.03)
+	tween.tween_property(self, "position", base_position, 0.03)
 
 
 ## Dark Pact only ever has one possible target here (there's no other
@@ -5937,12 +7048,15 @@ func _cast_enemy_xmarks() -> void:
 # Mist Coil/Torrent already use - there's no bear-on-the-path concept
 # for the rival AI to consider either, matching how it never targets
 # the bear in the first place (see _enemy_hero_turn()'s own doc
-# comment). No visual flourish here either - _play_ghostship_
-# animation() is purely cosmetic and only the player's own copy plays it.
+# comment). Still plays the same _play_ghostship_animation() visual
+# flourish as the player's own copy, just sailing from the boss's own
+# column (enemy["pos_index"]) to the player's (_hero_pos_index) instead
+# of the other way around.
 # ------------------------------------------------------------------
 
-func _cast_enemy_ghostship(level_data: Dictionary) -> void:
+func _cast_enemy_ghostship(enemy: Dictionary, level_data: Dictionary) -> void:
 	apply_damage(float(level_data.get("damage", 0)))
+	_play_ghostship_animation(enemy["pos_index"], _hero_pos_index)
 
 
 # ------------------------------------------------------------------
@@ -6248,13 +7362,17 @@ func _cast_enemy_splinter_blast(level_data: Dictionary) -> void:
 # ------------------------------------------------------------------
 # Winter Wyvern's Cold Embrace, cast by the rival on themselves -
 # mirrors the player's own _activate_cold_embrace()/_dispel_all_hero_
-# effects()/_tick_cold_embrace()/_end_cold_embrace(). Damage immunity is
-# enforced in _deal_fixed_damage_to_enemy() (checked before Borrowed
-# Time/Aphotic Shield, same as the player's own apply_damage() checks
-# Cold Embrace before anything else); the full action lockout (no move,
-# attack, OR skill cast - stricter than the player's own copy, which can
-# still cast something else while encased) is enforced at the very top
-# of _enemy_hero_turn().
+# effects()/_tick_cold_embrace()/_end_cold_embrace(), including swapping
+# the boss's own node texture to COLD_EMBRACE_IMAGE_PATH (and back once
+# it ends) the same way the player's portrait swaps - see
+# _activate_enemy_true_form()/_end_enemy_true_form() for the identical
+# pattern already used for True Form's own bear portrait. Damage
+# immunity is enforced in _deal_fixed_damage_to_enemy() (checked before
+# Borrowed Time/Aphotic Shield, same as the player's own apply_damage()
+# checks Cold Embrace before anything else); the full action lockout (no
+# move, attack, OR skill cast - stricter than the player's own copy,
+# which can still cast something else while encased) is enforced at the
+# very top of _enemy_hero_turn().
 # ------------------------------------------------------------------
 
 func _cast_enemy_cold_embrace(level_data: Dictionary) -> void:
@@ -6265,6 +7383,10 @@ func _cast_enemy_cold_embrace(level_data: Dictionary) -> void:
 	_enemy_cold_embrace_turns_remaining = int(level_data.get("duration", 0))
 	_enemy_cold_embrace_duration_pending_start = true
 	_show_message_over_hero("Encased in ice!")
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if not boss.is_empty() and ResourceLoader.exists(COLD_EMBRACE_IMAGE_PATH) and is_instance_valid(boss["node"]):
+		boss["node"].texture = load(COLD_EMBRACE_IMAGE_PATH)
 
 
 ## Dispels every other effect currently on the rival, good or bad, right
@@ -6315,6 +7437,13 @@ func _end_enemy_cold_embrace() -> void:
 	_enemy_cold_embrace_turns_remaining = 0
 	_enemy_cold_embrace_duration_pending_start = false
 
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty() or not is_instance_valid(boss["node"]):
+		return
+	var original_image: String = str(boss["static"].get("image", ""))
+	if original_image != "" and ResourceLoader.exists(original_image):
+		boss["node"].texture = load(original_image)
+
 
 # ------------------------------------------------------------------
 # Winter Wyvern's ultimate, Winter's Curse, cast by the rival - mirrors
@@ -6334,7 +7463,255 @@ func _end_enemy_cold_embrace() -> void:
 
 func _cast_enemy_winters_curse(level_data: Dictionary) -> void:
 	_player_stun_turns_left = int(level_data.get("duration", 0))
+	_player_winters_curse_active = true
 	_show_message_over_hero("Winter's Curse!")
+
+
+# ------------------------------------------------------------------
+# Crystal Maiden's Crystal Nova/Frostbite, cast by the rival on the
+# player - mirror the player's own _resolve_crystal_nova_cast()/
+# _resolve_frostbite_cast(). Simplification versus those player-facing
+# copies: there's only one possible target in a hero fight (the player),
+# so Crystal Nova's own "every other enemy within radius of the primary
+# target" splash has nothing else to reach - same "AoE skill with only
+# one possible target" simplification Dark Pact/Splinter Blast/Ice
+# Vortex already use for a rival.
+# ------------------------------------------------------------------
+
+func _cast_enemy_crystal_nova(level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+	_show_message_over_hero("Crystal Nova!")
+
+
+func _cast_enemy_frostbite(level_data: Dictionary) -> void:
+	_player_frostbite_dot_damage = float(level_data.get("dot_damage", 0))
+	_player_frostbite_dot_turns_left = int(level_data.get("dot_duration", 0))
+	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
+	_show_message_over_hero("Frostbite!")
+
+
+func _tick_player_frostbite_effects() -> void:
+	if _player_frostbite_dot_turns_left <= 0:
+		return
+	_player_frostbite_dot_turns_left -= 1
+	if _player_frostbite_dot_damage > 0.0:
+		apply_damage(_player_frostbite_dot_damage)
+
+
+# ------------------------------------------------------------------
+# Crystal Maiden's ultimate, Freezing Field, cast by the rival on
+# herself - mirrors the player's own _activate_freezing_field()/_tick_
+# freezing_field()/_end_freezing_field(). Damage is applied straight to
+# the player via apply_damage() (which already checks the player's own
+# Cold Embrace immunity, same as every other rival hit) rather than
+# _deal_fixed_damage_to_enemy() (an enemy-side helper, for damage FROM
+# the player), the same split every other "rival hits the player" cast
+# above already uses.
+# ------------------------------------------------------------------
+
+func _cast_enemy_freezing_field(level_data: Dictionary) -> void:
+	_enemy_freezing_field_active = true
+	_enemy_freezing_field_damage_per_turn = float(level_data.get("damage", 0))
+	_enemy_freezing_field_radius = int(level_data.get("radius", 0))
+	_enemy_freezing_field_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_freezing_field_duration_pending_start = true
+	_show_message_over_hero("Freezing Field!")
+
+
+## Ticks Freezing Field's duration down once per End Turn, same timing
+## (and same "the casting turn doesn't count" skip) as every other
+## duration-based buff - dealing this level's own damage to the player
+## whenever they're within radius columns of the rival's CURRENT
+## position (re-checked fresh here, not fixed at cast time, mirroring
+## the player's own _tick_freezing_field()). There's only one possible
+## target in a hero fight, so this collapses to a single conditional hit
+## rather than a loop over multiple enemies.
+func _tick_enemy_freezing_field() -> void:
+	if not _enemy_freezing_field_active:
+		return
+
+	if _enemy_freezing_field_duration_pending_start:
+		_enemy_freezing_field_duration_pending_start = false
+		return
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if not boss.is_empty() and _distance(boss["pos_index"], _hero_pos_index) <= _enemy_freezing_field_radius:
+		apply_damage(_enemy_freezing_field_damage_per_turn)
+
+	_enemy_freezing_field_turns_remaining -= 1
+	if _enemy_freezing_field_turns_remaining <= 0:
+		_end_enemy_freezing_field()
+
+
+func _end_enemy_freezing_field() -> void:
+	_enemy_freezing_field_active = false
+	_enemy_freezing_field_damage_per_turn = 0.0
+	_enemy_freezing_field_radius = 0
+	_enemy_freezing_field_turns_remaining = 0
+	_enemy_freezing_field_duration_pending_start = false
+
+
+# ------------------------------------------------------------------
+# Tusk's Ice Shards, cast by the rival on the player - mirrors the
+# player's own _resolve_ice_shards_cast()/_tick_ice_shards()/_end_ice_
+# shards(). Walls off `blocked_columns` columns starting on the rival's
+# OWN column and continuing toward the player's, same directional walk
+# the player's own copy uses, just from the other side.
+# ------------------------------------------------------------------
+
+func _cast_enemy_ice_shards(enemy: Dictionary, level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+
+	var direction: int = _step_toward(enemy["pos_index"], _hero_pos_index)
+	if direction == 0:
+		direction = 1
+
+	var blocked_columns: int = int(level_data.get("blocked_columns", 0))
+	var columns: Array[int] = []
+	var col: int = enemy["pos_index"]
+	for i in range(blocked_columns):
+		if col < 0 or col >= GRID_COLUMNS:
+			break
+		columns.append(col)
+		col += direction
+
+	_enemy_ice_shards_active = true
+	_enemy_ice_shards_blocked_columns = columns
+	_enemy_ice_shards_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_ice_shards_duration_pending_start = true
+	_show_message_over_hero("Ice Shards!")
+
+
+func _tick_enemy_ice_shards() -> void:
+	if not _enemy_ice_shards_active:
+		return
+
+	if _enemy_ice_shards_duration_pending_start:
+		_enemy_ice_shards_duration_pending_start = false
+		return
+
+	_enemy_ice_shards_turns_remaining -= 1
+	if _enemy_ice_shards_turns_remaining <= 0:
+		_end_enemy_ice_shards()
+
+
+func _end_enemy_ice_shards() -> void:
+	_enemy_ice_shards_active = false
+	_enemy_ice_shards_blocked_columns = []
+	_enemy_ice_shards_turns_remaining = 0
+	_enemy_ice_shards_duration_pending_start = false
+
+
+## Whether `col` is currently walled off by the RIVAL's own Ice Shards -
+## checked from _hero_move() (and the movement helpers it delegates to)
+## so the player can't move at all while standing in one, and can't step
+## into one from outside it, mirroring the player's own _is_column_ice_
+## shards_blocked() (which does the same to every enemy's own movement).
+## Attacking, casting a skill, and using an item are all untouched
+## either way, same as the player's own copy.
+func _is_column_enemy_ice_shards_blocked(col: int) -> bool:
+	return _enemy_ice_shards_active and col in _enemy_ice_shards_blocked_columns
+
+
+# ------------------------------------------------------------------
+# Tusk's Snowball, cast by the rival on the player - mirrors the
+# player's own _resolve_snowball_cast(): moves the rival straight onto
+# the player's own column, dealing damage and stunning on impact.
+# ------------------------------------------------------------------
+
+func _cast_enemy_snowball(enemy: Dictionary, level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
+
+	_move_enemy(enemy, _hero_pos_index)
+	_show_message_over_hero("Snowball!")
+
+
+# ------------------------------------------------------------------
+# Tusk's Tag Team, cast by the rival on himself - mirrors the player's
+# own _activate_tag_team()/_tick_tag_team()/_end_tag_team(): a flat
+# bonus_damage added to _roll_enemy_hero_damage() for the duration.
+# ------------------------------------------------------------------
+
+func _cast_enemy_tag_team(level_data: Dictionary) -> void:
+	_enemy_tag_team_active = true
+	_enemy_tag_team_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_enemy_tag_team_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_tag_team_duration_pending_start = true
+	_show_message_over_hero("Tag Team!")
+
+
+func _tick_enemy_tag_team() -> void:
+	if not _enemy_tag_team_active:
+		return
+
+	if _enemy_tag_team_duration_pending_start:
+		_enemy_tag_team_duration_pending_start = false
+		return
+
+	_enemy_tag_team_turns_remaining -= 1
+	if _enemy_tag_team_turns_remaining <= 0:
+		_end_enemy_tag_team()
+
+
+func _end_enemy_tag_team() -> void:
+	_enemy_tag_team_active = false
+	_enemy_tag_team_bonus_damage = 0.0
+	_enemy_tag_team_turns_remaining = 0
+	_enemy_tag_team_duration_pending_start = false
+
+
+# ------------------------------------------------------------------
+# Tusk's ultimate, Walrus Punch, cast by the rival on the player -
+# mirrors the player's own _resolve_walrus_punch_cast(): rolls the
+# rival's own Attack damage (_roll_enemy_hero_damage(), already folding
+# in Tag Team's bonus while active) times this level's own
+# damage_multiplier, then works out how far the knockback actually
+# carries - walking one column at a time, away from the rival's current
+# facing (its node's own flip_h, the enemy-side mirror of the player's
+# own hero_image.flip_h), for up to `knockback` columns, stopping early
+# at the edge of the board or at the first column another living,
+# targetable enemy already occupies (a reinforcement creep, during a
+# hero fight that's gone on long enough to spawn one - see
+# _spawn_reinforcements()'s own "hero fights still get reinforcements"
+# note). Coming up short either way adds 50% more damage before it
+# lands, then stuns the player in place if they survive.
+# ------------------------------------------------------------------
+
+func _cast_enemy_walrus_punch(enemy: Dictionary, level_data: Dictionary) -> void:
+	var multiplier: float = float(level_data.get("damage_multiplier", 1.0))
+	var punch_damage: float = _roll_enemy_hero_damage(enemy) * multiplier
+
+	var knockback_columns: int = int(level_data.get("knockback", 0))
+	var direction: int = -1 if enemy["node"].flip_h else 1
+	var pos: int = _hero_pos_index
+	var actual_distance: int = 0
+	for i in range(knockback_columns):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if not _get_enemy_at(next_pos).is_empty():
+			break
+		pos = next_pos
+		actual_distance += 1
+
+	var hit_wall: bool = actual_distance < knockback_columns
+	if hit_wall:
+		punch_damage *= 1.5
+
+	apply_damage(punch_damage)
+
+	if hit_wall:
+		_show_message_over_hero("Wall hit!")
+
+	if _recruited.get("current_hp", 0) > 0:
+		_hero_pos_index = pos
+		# Same facing convention as _hero_move()'s own copy - faces the
+		# direction it just got knocked in, rather than staying turned
+		# toward the boss that just punched it.
+		hero_image.flip_h = direction < 0
+		_update_hero_position()
+		_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 
 
 ## Moves an enemy to `new_pos` (clamped on-board) and syncs its node's

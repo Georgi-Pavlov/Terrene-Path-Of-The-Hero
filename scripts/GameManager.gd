@@ -77,6 +77,45 @@ func get_skill_level_data(skill: Dictionary, level: int) -> Dictionary:
 	return {"cooldown": skill.get("cooldown", 0)}
 
 
+## Turns one level's worth of a skill's raw mechanical fields (damage,
+## mana_cost, cooldown, dot_damage, stun_turns, radius, ... - the exact
+## set varies per skill, see get_skill_level_data()) into a human-
+## readable, one-stat-per-line summary, e.g. "Damage: 100\nMana Cost:
+## 50\nCooldown: 5". Used wherever a skill's description is shown for
+## the player to pick from (zone.gd's starting-skill picker, battle.gd's
+## learn/upgrade popup) so the numbers behind the flavor text are
+## visible before committing. Field order follows however each skill's
+## own "levels" entry was written (Dictionary keys preserve insertion
+## order in GDScript), which is already the sensible reading order
+## every skill definition above was authored in. A "_pct" suffixed key
+## is shown as a percentage of its raw 0..1 fraction instead, with
+## "Pct" dropped from the label.
+func format_skill_level_stats(level_data: Dictionary) -> String:
+	var lines: PackedStringArray = []
+	for key in level_data.keys():
+		var raw_value = level_data[key]
+		if str(key).ends_with("_pct"):
+			var label: String = str(key).trim_suffix("_pct").capitalize()
+			lines.append("%s: %d%%" % [label, roundi(float(raw_value) * 100.0)])
+		else:
+			lines.append("%s: %s" % [str(key).capitalize(), _format_skill_stat_value(raw_value)])
+	return "\n".join(lines)
+
+
+## A whole-number float (the overwhelming majority of skill level
+## fields - GDScript dictionary literals like {"damage": 100} still
+## store 100 as a float) prints as "100", not "100.0"; a genuinely
+## fractional one (e.g. a 0.75 damage_multiplier not caught by the
+## "_pct" convention above) keeps one decimal place. Anything else
+## (int, String) just stringifies as-is.
+func _format_skill_stat_value(raw_value) -> String:
+	if typeof(raw_value) == TYPE_FLOAT:
+		if is_equal_approx(raw_value, roundf(raw_value)):
+			return str(int(raw_value))
+		return "%.1f" % raw_value
+	return str(raw_value)
+
+
 # ------------------------------------------------------------------
 # Derived stats: strength/agility/intelligence are the only stats
 # that grow directly from level_up. Everything below is calculated
@@ -165,6 +204,19 @@ const STAGE_ENEMY_COUNTS: Dictionary = {
 	3: {"mele": 5, "range": 2},
 }
 
+# How many melee/ranged enemies a reinforcement wave spawns - battle.gd's
+# _spawn_reinforcements(), triggered every REINFORCEMENT_INTERVAL turns
+# the current stage/fight is still going. Deliberately smaller than that
+# same stage's own STAGE_ENEMY_COUNTS above (a late top-up, not a second
+# full wave), but built the same way - see _build_stage_enemy_def() -
+# using whichever stage is CURRENTLY loaded when reinforcements arrive,
+# so they come in scaled to match everything else already on the field.
+const REINFORCEMENT_ENEMY_COUNTS: Dictionary = {
+	1: {"mele": 2, "range": 1},
+	2: {"mele": 2, "range": 2},
+	3: {"mele": 3, "range": 2},
+}
+
 # hp/damage bonus each stage adds ON TOP OF the enemy's base stats -
 # and, like gold below, it's cumulative: each stage contributes its
 # own increment on top of whatever the previous stage already added
@@ -188,6 +240,10 @@ const STAGE_GOLD_BONUS_PER_STAGE: Dictionary = {
 
 func get_stage_enemy_counts(stage: int) -> Dictionary:
 	return STAGE_ENEMY_COUNTS.get(stage, STAGE_ENEMY_COUNTS[1])
+
+
+func get_reinforcement_enemy_counts(stage: int) -> Dictionary:
+	return REINFORCEMENT_ENEMY_COUNTS.get(stage, REINFORCEMENT_ENEMY_COUNTS[1])
 
 
 ## Total hp/damage bonus for `stage`, built by summing every stage's
@@ -1039,18 +1095,25 @@ var zones: Dictionary = {
 					{
 						"id": "arcane_aura",
 						"name": "Arcane Aura",
-						"type": "standard",
-						"description": "Passive: grants mana regeneration bonus.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: adds a flat bonus to the hero's own passive mana regeneration every turn.",
+						"levels": [
+							{"bonus_mana_regen": 1},
+							{"bonus_mana_regen": 2},
+							{"bonus_mana_regen": 3},
+							{"bonus_mana_regen": 4}
+						]
 					},
 					{
 						"id": "freezing_field",
 						"name": "Freezing Field",
 						"type": "ultimate",
-						"description": "Ultimate: spawns random icy explosions around her heavily slowing and damaging enemies.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: cast on herself, dealing damage to every enemy within a radius of her own position at the start of each turn for the duration.",
+						"levels": [
+							{"damage": 90, "duration": 3, "radius": 2, "mana_cost": 200, "cooldown": 8},
+							{"damage": 130, "duration": 3, "radius": 2, "mana_cost": 260, "cooldown": 9},
+							{"damage": 185, "duration": 4, "radius": 3, "mana_cost": 330, "cooldown": 10}
+						]
 					},
 				],
 				"level_up": {
@@ -1083,33 +1146,48 @@ var zones: Dictionary = {
 						"id": "ice_shards",
 						"name": "Ice Shards",
 						"type": "standard",
-						"description": "Launches a ball of frozen energy that creates a barrier blocking paths and dealing damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Launches a ball of frozen energy at an enemy within range, dealing damage to it and freezing a line of columns - starting on Tusk's own column and continuing toward the target - for the duration. Enemies already inside a frozen column can't move at all, and none can move into one; they can still attack in range, cast skills, and use items.",
+						"levels": [
+							{"damage": 70, "blocked_columns": 2, "duration": 2, "range": 4, "mana_cost": 70, "cooldown": 4},
+							{"damage": 110, "blocked_columns": 3, "duration": 2, "range": 4, "mana_cost": 95, "cooldown": 4},
+							{"damage": 150, "blocked_columns": 3, "duration": 3, "range": 4, "mana_cost": 120, "cooldown": 5},
+							{"damage": 200, "blocked_columns": 4, "duration": 3, "range": 4, "mana_cost": 150, "cooldown": 5}
+						]
 					},
 					{
 						"id": "snowball",
 						"name": "Snowball",
 						"type": "standard",
-						"description": "Rolls into a snowball, to charge enemies and stun them on impact.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Rolls into a snowball and charges an enemy within range, dealing damage and stunning it on impact.",
+						"levels": [
+							{"damage": 80, "stun_turns": 1, "range": 2, "mana_cost": 90, "cooldown": 5},
+							{"damage": 120, "stun_turns": 1, "range": 2, "mana_cost": 115, "cooldown": 5},
+							{"damage": 170, "stun_turns": 2, "range": 3, "mana_cost": 145, "cooldown": 6},
+							{"damage": 230, "stun_turns": 2, "range": 3, "mana_cost": 175, "cooldown": 6}
+						]
 					},
 					{
 						"id": "tag_team",
 						"name": "Tag Team",
 						"type": "standard",
-						"description": "Passive: Creates a frozen aura around Tusk that slows enemies and adds bonus physical attack damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Adds bonus damage to the hero's own Attacks for the duration.",
+						"levels": [
+							{"bonus_damage": 30, "duration": 3, "mana_cost": 60, "cooldown": 5},
+							{"bonus_damage": 50, "duration": 3, "mana_cost": 80, "cooldown": 5},
+							{"bonus_damage": 75, "duration": 4, "mana_cost": 105, "cooldown": 6},
+							{"bonus_damage": 105, "duration": 4, "mana_cost": 130, "cooldown": 6}
+						]
 					},
 					{
 						"id": "walrus_punch",
 						"name": "Walrus Punch",
 						"type": "ultimate",
-						"description": "Ultimate: Tusk's signature knockout punch, critical striking the target.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: a critical-strike punch on an enemy at melee range, dealing a multiple of the hero's own Attack damage and knocking it back. If the knockback is cut short by the edge of the board or another enemy in the way, it takes 50% bonus damage on top for slamming into it - then it's stunned in place either way.",
+						"levels": [
+							{"damage_multiplier": 2.0, "knockback": 2, "stun_turns": 1, "mana_cost": 150, "cooldown": 8},
+							{"damage_multiplier": 2.5, "knockback": 3, "stun_turns": 1, "mana_cost": 200, "cooldown": 9},
+							{"damage_multiplier": 3.0, "knockback": 4, "stun_turns": 2, "mana_cost": 250, "cooldown": 10}
+						]
 					},
 				],
 				"level_up": {
