@@ -65,6 +65,12 @@ func _ready() -> void:
 	_refresh_stats_panel()
 	_maybe_show_queued_events()
 
+	if TutorialManager.is_active and TutorialManager.current_stage == 2:
+		TutorialManager.show_popup(
+			"Head to the Shop and restock before going anywhere else.",
+			func(): get_tree().change_scene_to_file("res://scenes/Shop.tscn")
+		)
+
 func _style_legend_dots() -> void:
 	var ready_style := StyleBoxFlat.new()
 	ready_style.set_corner_radius_all(5)

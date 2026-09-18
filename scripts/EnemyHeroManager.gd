@@ -265,30 +265,34 @@ const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
 # Every ACTIVE skill across Slark, Lone Druid, Abaddon, Kunkka, Ancient
-# Apparition, Winter Wyvern, Crystal Maiden, and Tusk, the only eight
-# heroes with any simulated skill logic today - anything else a hero
-# knows just never gets cast here. This is the full candidate pool
+# Apparition, Winter Wyvern, Crystal Maiden, Tusk, Treant Protector, and
+# Timbersaw, the only ten heroes with any simulated skill logic today -
+# anything else a hero knows just never gets cast here. This is the full candidate pool
 # _pick_ready_skill() checks for cooldown/worth-casting/mana before
 # handing survivors to EnemySkillAI to score and pick from - no longer
 # a priority order (see EnemySkillAI.HERO_TIE_BREAK for each hero's own
 # tie-break fallback order, only consulted when two skills' scores are
 # too close to call outright).
 # Savage Roar (Lone Druid's passive), Curse of Avernus and Borrowed
-# Time (both Abaddon's), Tidebringer (Kunkka's), and Arcane Aura
-# (Crystal Maiden's) aren't in this list - none of them are ever "cast"
-# or scored: Savage Roar and Borrowed Time turn themselves on/off
-# automatically off the hero's own HP%, same as the player's own copies
-# - see _update_npc_savage_roar_state()/_maybe_auto_activate_npc_
-# borrowed_time() - Curse of Avernus/Tidebringer only ever build off the
-# hero's own plain Attacks - see _apply_npc_curse_of_avernus_stack()/
-# _maybe_consume_npc_tidebringer_stack() - and Arcane Aura just
-# regenerates mana passively; there's nowhere in this sim's own mana
-# bookkeeping for it to hook into yet (see _get_npc_combat_stats()/
+# Time (both Abaddon's), Tidebringer (Kunkka's), Arcane Aura (Crystal
+# Maiden's), and Reactive Armor (Timbersaw's) aren't in this list - none
+# of them are ever "cast" or scored: Savage Roar and Borrowed Time turn
+# themselves on/off automatically off the hero's own HP%, same as the
+# player's own copies - see _update_npc_savage_roar_state()/_maybe_
+# auto_activate_npc_borrowed_time() - Curse of Avernus/Tidebringer only
+# ever build off the hero's own plain Attacks - see _apply_npc_curse_of_
+# avernus_stack()/_maybe_consume_npc_tidebringer_stack() - Arcane Aura
+# just regenerates mana passively; there's nowhere in this sim's own
+# mana bookkeeping for it to hook into yet (see _get_npc_combat_stats()/
 # _npc_estimate_damage() for where a future hook would go), so for now
 # a simulated Crystal Maiden simply doesn't regenerate mana beyond
 # whatever NEW_SIM_MANA_RESTORE_PCT already grants at the start of a
 # fresh attempt - same "no benefit invented that doesn't already exist"
-# rule this whole file follows elsewhere.
+# rule this whole file follows elsewhere - and Reactive Armor stacks
+# itself automatically off incoming retaliation damage, mirroring
+# battle.gd's own apply_damage()/_deal_fixed_damage_to_enemy() hook -
+# see this file's own _apply_npc_reactive_armor_stack(), called from
+# _run_stage_fight()'s own retaliation loop.
 # X Marks the Spot (Kunkka's own other skill) isn't here for a
 # different reason: it's purely a positioning tool (mark now, teleport
 # onto the target next turn, no damage) with nothing else to it, and
@@ -310,7 +314,15 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # no real destination to walk out, so its sim copy never adds the 50%
 # collision bonus at all (see _tusk_walrus_punch_modifier()'s own
 # sim-side proxy for how the AI still accounts for the POSSIBILITY of
-# one without the actual cast ever guaranteeing it).
+# one without the actual cast ever guaranteeing it). Treant Protector's
+# Nature's Guise mirrors Shadow Dance's own sim copy exactly (see this
+# file's "nature's_guise" cases below and in _npc_skill_worth_casting()/
+# the retaliation-loop guard) - invisibility skips enemy retaliation for
+# the turn, and the Attack that breaks it roots whichever enemy it hits
+# instead of adding bonus damage. Overgrowth is a self-centered AoE with
+# nothing to center it on here, so - like Ice Blast/Splinter Blast - it
+# falls back to rooting and DoTing every living enemy at once rather
+# than just whichever ones would really be within radius.
 # Ghostship (Kunkka's ultimate) IS in this list, unlike X Marks the
 # Spot - its whole "everyone the ship's path crosses" concept has no
 # columns to work out a path along here, so it falls back to the same
@@ -324,6 +336,15 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # redirects every OTHER living enemy's own retaliation onto its frozen
 # target instead of the hero (see _cast_skill()'s own "splinter_blast"/
 # "winter's_curse" cases and _run_stage_fight()'s own retaliation loop).
+# Timbersaw's own Whirling Death (self-centered) and Timber Chain (a
+# targeted "hits everything between caster and target" line) both use
+# the exact same "no columns, hit everyone" fallback Ghostship's own sim
+# copy already established - there's no meaningful difference between
+# "centered on the caster" and "a line toward a target" once there are
+# no columns to tell them apart on. Chakram, his ultimate, is a second
+# self-tracked persistent-AoE state (mirroring Crystal Maiden's own
+# Freezing Field sim copy) that also just hits every living enemy each
+# tick it's active, for the same reason.
 const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"dark_pact", "pounce", "essence_shift", "shadow_dance",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
@@ -332,6 +353,8 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
 	"crystal_nova", "frostbite", "freezing_field",
 	"ice_shards", "snowball", "tag_team", "walrus_punch",
+	"nature's_guise", "leech_seed", "living_armor", "overgrowth",
+	"whirling_death", "timber_chain", "chakram",
 ]
 
 # How many full turns a target can go without being hit by the hero's
@@ -802,6 +825,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_aphotic_shield(state["aphotic_shield"])
 		_tick_npc_borrowed_time(state["borrowed_time"])
 		_tick_npc_tag_team(state["tag_team"])
+		_tick_npc_natures_guise(state["nature's_guise"])
 		_tick_npc_entangle_effects(enemies)
 		_tick_npc_curse_of_avernus_effects(enemies, turn_index)
 		_tick_npc_cold_feet_effects(enemies)
@@ -809,12 +833,28 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_ice_blast_effects(enemies)
 		_tick_npc_frostbite_effects(enemies)
 		_tick_npc_freezing_field(state["freezing_field"], enemies)
+		_tick_npc_overgrowth_effects(enemies)
+		_tick_npc_chakram(state["chakram"], enemies)
 		var kills: Dictionary = _collect_npc_kills(enemies, counted_dead)
 		xp_gained += kills["xp"]
 		gold_gained += kills["gold"]
 
 		var effective_max_hp: float = _npc_effective_max_hp(max_hp, state)
 		current_hp = _tick_npc_cold_embrace(state["cold_embrace"], current_hp, effective_max_hp)
+		current_hp = _tick_npc_living_armor(state["living_armor"], current_hp, effective_max_hp)
+		# Unlike every other DoT ticked above, Leech Seed's own healing
+		# half goes to the CASTER (this hero), not the enemy it damages -
+		# see _tick_npc_leech_seed_effects()'s own docstring - so it needs
+		# current_hp/effective_max_hp the same way Cold Embrace's/Living
+		# Armor's own ticks just above do.
+		current_hp = _tick_npc_leech_seed_effects(enemies, current_hp, effective_max_hp)
+		# Timbersaw's Reactive Armor: healing (per stack) is its own tick
+		# here, same "current_hp in, current_hp out" shape as Cold
+		# Embrace's/Living Armor's own ticks just above; the armor half
+		# is read live from _npc_reactive_armor_bonus_armor() wherever
+		# effective_armor is computed instead (see this function's own
+		# retaliation-loop call site below).
+		current_hp = _tick_npc_reactive_armor(state["reactive_armor"], hero_id, hero_static, current_hp, effective_max_hp)
 		_update_npc_savage_roar_state(hero_id, hero_static, state["savage_roar"], current_hp, effective_max_hp)
 
 		var living: Array = _living_enemies(enemies)
@@ -853,6 +893,11 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 			else:
 				var target: Dictionary = _lowest_hp_enemy(living)
 				var shadow_bonus: float = state["shadow_dance"]["bonus_damage"] if state["shadow_dance"]["active"] else 0.0
+				# Same idea for Nature's Guise, just with a root on the
+				# target instead of bonus damage - captured now, before the
+				# attack (and possibly _end_npc_natures_guise()) below can
+				# change what state["nature's_guise"]["active"] reads.
+				var attacking_from_natures_guise: bool = state["nature's_guise"]["active"]
 				var tidebringer_level_data: Dictionary = _maybe_consume_npc_tidebringer_stack(hero_id, hero_static, state)
 				var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
 				var dmg: float = _npc_roll_damage(damage_range, state, shadow_bonus + tidebringer_bonus)
@@ -865,12 +910,24 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				current_hp = minf(effective_max_hp, current_hp + _npc_spirit_link_lifesteal(state["spirit_link"], mitigated))
 				acted_with = "attack"
 
-		# Shadow Dance only breaks from attacking or casting ANOTHER
-		# skill, never from a cast/recast of Shadow Dance itself and
-		# never from drinking a potion - exactly mirroring
-		# battle.gd's _on_skill_pressed()/_apply_hero_attack().
+				if attacking_from_natures_guise:
+					if target.get("current_hp", 0) > 0:
+						target["root_turns_left"] = int(state["nature's_guise"]["root_turns"])
+					_end_npc_natures_guise(state["nature's_guise"])
+
+		# Shadow Dance/Nature's Guise only break from attacking or casting
+		# ANOTHER skill, never from a cast/recast of themselves and never
+		# from drinking a potion - exactly mirroring battle.gd's own
+		# _on_skill_pressed()/_apply_hero_attack(). Nature's Guise's own
+		# break (a successful stealth Attack) already happened above, right
+		# where its root gets applied, but ending it again here is harmless
+		# (_end_npc_natures_guise() is a no-op once it's already inactive)
+		# and still correctly covers the "broke by casting another skill"
+		# case this shared check exists for.
 		if state["shadow_dance"]["active"] and acted_with != "" and acted_with != "shadow_dance":
 			_end_npc_shadow_dance(state["shadow_dance"])
+		if state["nature's_guise"]["active"] and acted_with != "" and acted_with != "nature's_guise":
+			_end_npc_natures_guise(state["nature's_guise"])
 
 		kills = _collect_npc_kills(enemies, counted_dead)
 		xp_gained += kills["xp"]
@@ -903,8 +960,9 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				break
 
 		# --- Enemies retaliate, skipping anyone Pounce just stunned,
-		# while Shadow Dance is hiding the hero entirely (mirrors
-		# battle.gd's _is_hero_hidden() check in _enemy_turn()), or while
+		# while Shadow Dance or Nature's Guise is hiding the hero entirely
+		# (mirrors battle.gd's _is_hero_hidden() check in _enemy_turn()),
+		# or while
 		# Cold Embrace makes the hero fully immune (mirrors battle.gd's
 		# own _deal_fixed_damage_to_enemy() check - skipping this whole
 		# block is equivalent, since nothing else in this sim can damage
@@ -918,8 +976,13 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# partway through this same loop once its turn comes up, so
 		# every enemy this pass needs to see the same answer regardless
 		# of iteration order. ---
-		if not state["shadow_dance"]["active"] and not state["cold_embrace"]["active"]:
-			var effective_armor: float = _npc_effective_armor(base_armor, state)
+		if not state["shadow_dance"]["active"] and not state["cold_embrace"]["active"] and not state["nature's_guise"]["active"]:
+			# Timbersaw's Reactive Armor bonus is added on top of the base
+			# armor here, at the single call site, rather than inside
+			# _npc_effective_armor() itself (which has no hero_id/hero_
+			# static to look its own level data up with) - see
+			# _npc_reactive_armor_bonus_armor()'s own docstring.
+			var effective_armor: float = _npc_effective_armor(base_armor, state) + _npc_reactive_armor_bonus_armor(hero_id, hero_static, state)
 			var curse_target: Dictionary = state["winters_curse"].get("target_ref", {})
 			var curse_active: bool = not curse_target.is_empty() and int(curse_target.get("stun_turns_left", 0)) > 0
 			var curse_multiplier: float = 1.0 + float(state["winters_curse"].get("bonus_damage_pct", 0.0))
@@ -939,6 +1002,14 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				var reduced: float = _apply_armor_reduction(enemy_damage, effective_armor)
 				reduced *= (1.0 - float(state["savage_roar"].get("damage_reduction_pct", 0.0)))
 				current_hp = _apply_reduced_damage_to_npc(hero_id, hero_static, state, cooldowns, current_hp, effective_max_hp, reduced, living)
+				# Reactive Armor stacks off this hit landing - added only
+				# after `effective_armor` above already read the stack
+				# count for this whole retaliation pass, so the stack this
+				# hit just earned reduces a FUTURE turn's armor, not this
+				# one, mirroring battle.gd's own apply_damage(). A no-op
+				# for every hero but Timbersaw (see _apply_npc_reactive_
+				# armor_stack()'s own "not learned" check).
+				_apply_npc_reactive_armor_stack(state["reactive_armor"], hero_id, hero_static)
 				if current_hp <= 0:
 					break
 
@@ -982,6 +1053,10 @@ func _new_npc_combat_state() -> Dictionary:
 		"winters_curse": {"target_ref": {}, "bonus_damage_pct": 0.0},
 		"freezing_field": {"active": false, "damage_per_turn": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"tag_team": {"active": false, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"nature's_guise": {"active": false, "root_turns": 0, "turns_remaining": 0, "duration_pending_start": false},
+		"living_armor": {"active": false, "bonus_armor": 0.0, "bonus_hp_regen": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"chakram": {"active": false, "damage_per_turn": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"reactive_armor": {"stack_turns": []},
 	}
 
 
@@ -1174,6 +1249,49 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			_apply_damage_to_enemy(punch_target, punch_dmg)
 			if punch_target["current_hp"] > 0:
 				punch_target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
+		"nature's_guise":
+			_activate_npc_natures_guise(state["nature's_guise"], level_data)
+		"leech_seed":
+			var leech_target: Dictionary = _lowest_hp_enemy(living)
+			leech_target["leech_seed_dot_damage"] = float(level_data.get("dot_damage", 0))
+			leech_target["leech_seed_heal_per_turn"] = float(level_data.get("heal_per_turn", 0))
+			leech_target["leech_seed_dot_turns_left"] = int(level_data.get("duration", 0))
+		"living_armor":
+			_activate_npc_living_armor(state["living_armor"], level_data)
+		"overgrowth":
+			# Self-centered AoE with nothing to center it on here (see
+			# KNOWN_ACTIVE_SKILL_IDS's own comment above) - roots and DoTs
+			# every living enemy at once, same "no columns, hit everyone"
+			# fallback Ice Blast's/Splinter Blast's own sim copies use.
+			var overgrowth_dot_damage: float = float(level_data.get("dot_damage", 0))
+			var overgrowth_root_duration: int = int(level_data.get("root_duration", 0))
+			for enemy in living:
+				enemy["root_turns_left"] = overgrowth_root_duration
+				enemy["overgrowth_dot_damage"] = overgrowth_dot_damage
+				enemy["overgrowth_dot_turns_left"] = overgrowth_root_duration
+		"whirling_death":
+			# Self-centered AoE, same "no columns, hit everyone" fallback
+			# as Overgrowth's own case just above.
+			var whirling_damage: float = float(level_data.get("damage", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, whirling_damage)
+		"timber_chain":
+			# A targeted "hits everything between caster and target" line,
+			# same "no columns, hit everyone" fallback Ghostship's own sim
+			# copy already uses (see KNOWN_ACTIVE_SKILL_IDS's own comment
+			# above) - there's no meaningful difference between "centered
+			# on the caster" and "a line toward a target" once there are
+			# no columns to tell them apart on.
+			var chain_damage: float = float(level_data.get("damage", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, chain_damage)
+		"chakram":
+			# Initial AoE: same "no columns, hit everyone" fallback as
+			# Whirling Death's own case above.
+			var chakram_cast_damage: float = float(level_data.get("cast_damage", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, chakram_cast_damage)
+			_activate_npc_chakram(state["chakram"], level_data)
 
 
 func _get_npc_skill_level_data(hero_id: String, hero_static: Dictionary, skill_id: String) -> Dictionary:
@@ -1220,6 +1338,10 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 			return not state["freezing_field"]["active"]
 		"tag_team":
 			return not state["tag_team"]["active"]
+		"nature's_guise":
+			return not state["nature's_guise"]["active"]
+		"living_armor":
+			return not state["living_armor"]["active"]
 		_:
 			return true
 
@@ -1337,6 +1459,9 @@ func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp:
 		"has_harmful_debuff": false,
 		"redirect_candidate_count": maxi(living.size() - 1, 0),
 		"avg_enemy_damage": avg_enemy_damage,
+		"reactive_armor_stacks": state["reactive_armor"]["stack_turns"].size(),
+		"reactive_armor_max_stacks": int(_get_npc_reactive_armor_level_data(hero_id, hero_static).get("max_stacks", 0)),
+		"target_is_hero": false,
 	}
 
 
@@ -1784,6 +1909,240 @@ func _end_npc_tag_team(tt: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
+# Treant Protector's Nature's Guise - mirrors battle.gd's own
+# _activate_natures_guise()/_tick_natures_guise()/_end_natures_guise(),
+# and this file's own _activate_npc_shadow_dance()/_tick_npc_shadow_
+# dance()/_end_npc_shadow_dance() (functionally the same invisibility -
+# see this file's own retaliation-loop guard and the Attack branch's own
+# "attacking_from_natures_guise" case in _run_stage_fight()).
+# ------------------------------------------------------------------
+
+func _activate_npc_natures_guise(ng: Dictionary, level_data: Dictionary) -> void:
+	ng["active"] = true
+	ng["root_turns"] = int(level_data.get("root_turns", 0))
+	ng["turns_remaining"] = int(level_data.get("duration", 0))
+	ng["duration_pending_start"] = true
+
+
+func _tick_npc_natures_guise(ng: Dictionary) -> void:
+	if not ng["active"]:
+		return
+	if ng["duration_pending_start"]:
+		ng["duration_pending_start"] = false
+		return
+	ng["turns_remaining"] -= 1
+	if ng["turns_remaining"] <= 0:
+		_end_npc_natures_guise(ng)
+
+
+func _end_npc_natures_guise(ng: Dictionary) -> void:
+	ng["active"] = false
+	ng["root_turns"] = 0
+	ng["turns_remaining"] = 0
+	ng["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Treant Protector's Living Armor - mirrors battle.gd's own _activate_
+# living_armor()/_tick_living_armor()/_end_living_armor(): bonus_armor
+# folds into _npc_effective_armor() (the same slot Spirit Link's own
+# bonus armor already shares there), bonus_hp_regen heals the hero every
+# tick. Unlike the player's own copy, there's no baseline passive regen
+# in this sim to stack on top of (see KNOWN_ACTIVE_SKILL_IDS's own
+# comment on Arcane Aura for why - nothing here regenerates HP/mana on
+# its own beyond NEW_SIM_HP_RESTORE_PCT/NEW_SIM_MANA_RESTORE_PCT at the
+# start of a fresh attempt), so this is simply its own full heal amount,
+# same "no benefit invented that doesn't already exist" rule.
+# ------------------------------------------------------------------
+
+func _activate_npc_living_armor(la: Dictionary, level_data: Dictionary) -> void:
+	la["active"] = true
+	la["bonus_armor"] = float(level_data.get("bonus_armor", 0))
+	la["bonus_hp_regen"] = float(level_data.get("bonus_hp_regen", 0))
+	la["turns_remaining"] = int(level_data.get("duration", 0))
+	la["duration_pending_start"] = true
+
+
+func _tick_npc_living_armor(la: Dictionary, current_hp: float, effective_max_hp: float) -> float:
+	if not la["active"]:
+		return current_hp
+	if la["duration_pending_start"]:
+		la["duration_pending_start"] = false
+		return current_hp
+
+	current_hp = minf(effective_max_hp, current_hp + float(la["bonus_hp_regen"]))
+	la["turns_remaining"] -= 1
+	if la["turns_remaining"] <= 0:
+		_end_npc_living_armor(la)
+	return current_hp
+
+
+func _end_npc_living_armor(la: Dictionary) -> void:
+	la["active"] = false
+	la["bonus_armor"] = 0.0
+	la["bonus_hp_regen"] = 0.0
+	la["turns_remaining"] = 0
+	la["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Treant Protector's Leech Seed - mirrors _tick_npc_cold_feet_effects()'/
+# _tick_npc_frostbite_effects()'s own DoT tick, just against Leech
+# Seed's own dedicated per-enemy fields, PLUS - unlike every other DoT
+# in this file - healing the CASTER (this hero) back for the same
+# amount each tick, mirroring battle.gd's own _tick_enemy_turn_start_
+# effects()'s "leech_seed" case (which heals whichever hero cast it, not
+# the target). Takes/returns current_hp the same way _tick_npc_cold_
+# embrace()/_tick_npc_living_armor() do, since it can change it.
+# ------------------------------------------------------------------
+
+func _tick_npc_leech_seed_effects(enemies: Array, current_hp: float, effective_max_hp: float) -> float:
+	for enemy in enemies:
+		if enemy.get("leech_seed_dot_turns_left", 0) > 0:
+			enemy["leech_seed_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("leech_seed_dot_damage", 0))
+			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, dot_damage)
+			var heal_amount: float = float(enemy.get("leech_seed_heal_per_turn", 0))
+			if heal_amount > 0.0:
+				current_hp = minf(effective_max_hp, current_hp + heal_amount)
+	return current_hp
+
+
+# ------------------------------------------------------------------
+# Treant Protector's ultimate, Overgrowth - mirrors _tick_npc_ice_blast_
+# effects()'s own DoT tick (minus its execute check), just against
+# Overgrowth's own dedicated per-enemy fields. The root itself needs no
+# separate tick here - it shares root_turns_left, the same generic
+# per-enemy field Entangle's own root already decrements in _tick_npc_
+# entangle_effects().
+# ------------------------------------------------------------------
+
+func _tick_npc_overgrowth_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("overgrowth_dot_turns_left", 0) > 0:
+			enemy["overgrowth_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("overgrowth_dot_damage", 0))
+			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, dot_damage)
+
+
+# ------------------------------------------------------------------
+# Timbersaw's ultimate, Chakram - mirrors battle.gd's own _chakram
+# field/_resolve_chakram_cast()/_tick_chakram()/_despawn_chakram(),
+# simplified the same way Crystal Maiden's own Freezing Field sim copy
+# is: no fixed position to plant at here (no columns at all - see
+# KNOWN_ACTIVE_SKILL_IDS's own comment above), so every tick that counts
+# against the duration hits every still-living enemy instead of just
+# whichever ones would really be within radius of wherever it landed.
+# ------------------------------------------------------------------
+
+func _activate_npc_chakram(ck: Dictionary, level_data: Dictionary) -> void:
+	ck["active"] = true
+	ck["damage_per_turn"] = float(level_data.get("damage_per_turn", 0))
+	ck["turns_remaining"] = int(level_data.get("duration", 0))
+	ck["duration_pending_start"] = true
+
+
+func _tick_npc_chakram(ck: Dictionary, enemies: Array) -> void:
+	if not ck["active"]:
+		return
+	if ck["duration_pending_start"]:
+		ck["duration_pending_start"] = false
+		return
+
+	var damage: float = float(ck["damage_per_turn"])
+	if damage > 0.0:
+		for enemy in enemies:
+			if enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, damage)
+
+	ck["turns_remaining"] -= 1
+	if ck["turns_remaining"] <= 0:
+		_end_npc_chakram(ck)
+
+
+func _end_npc_chakram(ck: Dictionary) -> void:
+	ck["active"] = false
+	ck["damage_per_turn"] = 0.0
+	ck["turns_remaining"] = 0
+	ck["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Timbersaw's Reactive Armor (passive) - mirrors battle.gd's own
+# _reactive_armor_stack_turns/_get_reactive_armor_level_data()/_apply_
+# reactive_armor_stack()/_tick_reactive_armor_stacks()/_apply_reactive_
+# armor_regen(). `_npc_reactive_armor_bonus_armor()` is read at the
+# single _npc_effective_armor() call site in _run_stage_fight()'s own
+# retaliation loop instead of folded into that shared helper itself,
+# since (unlike _npc_effective_armor(base_armor, state)) it needs
+# hero_id/hero_static to look its own skill level up with - the same
+# reasoning _npc_reactive_armor_bonus_armor()'s own single caller
+# already follows.
+# ------------------------------------------------------------------
+
+func _get_npc_reactive_armor_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "reactive_armor")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "reactive_armor")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _npc_reactive_armor_bonus_armor(hero_id: String, hero_static: Dictionary, state: Dictionary) -> float:
+	var stack_turns: Array = state["reactive_armor"]["stack_turns"]
+	if stack_turns.is_empty():
+		return 0.0
+	var level_data: Dictionary = _get_npc_reactive_armor_level_data(hero_id, hero_static)
+	if level_data.is_empty():
+		return 0.0
+	return stack_turns.size() * float(level_data.get("bonus_armor_per_stack", 0.0))
+
+
+## Called from _run_stage_fight()'s own retaliation loop every time a
+## hit actually lands on the hero. Adds one stack with this level's own
+## full duration; if that would exceed max_stacks, the oldest stack
+## (soonest to expire) is dropped first so the count never exceeds the
+## cap. A no-op while the skill isn't learned.
+func _apply_npc_reactive_armor_stack(state: Dictionary, hero_id: String, hero_static: Dictionary) -> void:
+	var level_data: Dictionary = _get_npc_reactive_armor_level_data(hero_id, hero_static)
+	if level_data.is_empty():
+		return
+
+	var stack_turns: Array = state["stack_turns"]
+	var max_stacks: int = int(level_data.get("max_stacks", 0))
+	if stack_turns.size() >= max_stacks:
+		stack_turns.pop_front()
+	stack_turns.append(int(level_data.get("duration", 0)))
+
+
+## Ticks every active stack's own remaining-turns counter down by one,
+## once per turn, dropping any that reach zero - independently of each
+## other, same as battle.gd's own _tick_reactive_armor_stacks() - then
+## heals current_hp for this level's own bonus_hp_regen_per_stack times
+## however many stacks are STILL up after that. Takes/returns current_hp
+## the same way _tick_npc_cold_embrace()/_tick_npc_living_armor() do.
+func _tick_npc_reactive_armor(state: Dictionary, hero_id: String, hero_static: Dictionary, current_hp: float, effective_max_hp: float) -> float:
+	var stack_turns: Array = state["stack_turns"]
+	for i in range(stack_turns.size()):
+		stack_turns[i] -= 1
+	state["stack_turns"] = stack_turns.filter(func(turns_left): return turns_left > 0)
+
+	if state["stack_turns"].is_empty():
+		return current_hp
+
+	var level_data: Dictionary = _get_npc_reactive_armor_level_data(hero_id, hero_static)
+	if level_data.is_empty():
+		return current_hp
+
+	var heal_amount: float = state["stack_turns"].size() * float(level_data.get("bonus_hp_regen_per_stack", 0.0))
+	return minf(effective_max_hp, current_hp + heal_amount)
+
+
+# ------------------------------------------------------------------
 # Lone Druid's Spirit Link - mirrors battle.gd's _activate_spirit_link/
 # _tick_spirit_link/_end_spirit_link/_apply_spirit_link_lifesteal.
 # ------------------------------------------------------------------
@@ -2165,7 +2524,7 @@ func _npc_effective_max_hp(max_hp: float, state: Dictionary) -> float:
 ## Base armor plus Essence Shift's borrowed armor plus Spirit Link's
 ## flat bonus while each is active - mirrors battle.gd's _hero_armor().
 func _npc_effective_armor(base_armor: float, state: Dictionary) -> float:
-	return base_armor + state["essence_shift"]["bonus"].get("armor", 0.0) + state["spirit_link"]["bonus_armor"]
+	return base_armor + state["essence_shift"]["bonus"].get("armor", 0.0) + state["spirit_link"]["bonus_armor"] + state["living_armor"]["bonus_armor"]
 
 
 ## Rolls damage from `damage_range`, adding Essence Shift's ongoing

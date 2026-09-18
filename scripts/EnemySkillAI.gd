@@ -39,9 +39,10 @@ class_name EnemySkillAI
 # _kunkka_modifier()), since a Tidebringer-empowered Attack can
 # genuinely be the better play than any of Kunkka's real skills.
 #
-# Eight heroes have real AI logic today: Slark, Lone Druid, Abaddon,
-# Kunkka, Ancient Apparition, Winter Wyvern, Crystal Maiden, and Tusk -
-# see resolve_hero_archetype() for how a hero_static maps to one of them,
+# Ten heroes have real AI logic today: Slark, Lone Druid, Abaddon,
+# Kunkka, Ancient Apparition, Winter Wyvern, Crystal Maiden, Tusk,
+# Treant Protector, and Timbersaw - see resolve_hero_archetype() for how
+# a hero_static maps to one of them,
 # and each one's own _*_modifier() function below for its personality.
 # Ancient Apparition's Ice Blast in particular models an "execute"
 # mechanic (a target dies outright once its HP drops to or below a
@@ -72,6 +73,36 @@ class_name EnemySkillAI
 # Curse's own redirect_candidate_count). Walrus Punch's own damage is
 # Tusk's actual (rolled) Attack damage times a multiplier, not a flat
 # number - see its own "walrus_punch" case in _estimate_skill_damage().
+# Treant Protector's Nature's Guise is "defensive" category, exactly
+# like Slark's own Shadow Dance (functionally the same invisibility) -
+# in the simulation it relies ENTIRELY on that shared category term, no
+# hero-specific modifier on top at all, same as Shadow Dance's own
+# _slark_modifier() case (there isn't one); only in a real hero fight,
+# with real positions, does _tp_natures_guise_modifier() add its own
+# stealth-engage/root-setup value on top (see that function's own
+# "target_distance" gate). Overgrowth is a second self-cast AoE
+# ultimate, same "centered on the caster" shape as Crystal Maiden's own
+# Freezing Field - see _tp_overgrowth_modifier().
+# Timbersaw's Whirling Death is ALSO self-cast/self-centered (like
+# Freezing Field/Overgrowth), but Timber Chain and Chakram are both
+# TARGET-centered - see _timbersaw_chakram_modifier()'s own docstring
+# for why Chakram in particular is scored differently from a self-
+# centered AoE despite both ending up reading the same `living_target_
+# hps`/`target_distance` context fields in a hero fight (there's only
+# ever the one player to hit either way - see _build_enemy_ai_
+# context()'s own docstring). Reactive Armor is passive and, like Arcane
+# Aura, deliberately never appears in SKILL_INFO/HERO_TIE_BREAK/
+# _estimate_skill_damage - its own stacks still feed every one of
+# Timbersaw's active skills through the context's own "reactive_armor_
+# stacks"/"reactive_armor_max_stacks" fields (see _timbersaw_modifier()'s
+# own docstring), just never as a scored candidate of its own. Whirling
+# Death's own "pure damage"/primary-attribute-reduction flavor text
+# isn't backed by any real mechanic in this project (see battle.gd's own
+# _cast_enemy_whirling_death() docstring) - same "documented but not
+# implemented" gap Dark Pact's own silence effect already has - so
+# _timbersaw_whirling_death_modifier() only ever adds a small flat
+# qualitative bonus for "a hero was hit" (context's own "target_is_hero"
+# field), never a real stat-based number.
 # ============================================================
 
 const DEBUG_AI := false
@@ -111,6 +142,13 @@ const SKILL_INFO := {
 	"snowball": {"category": "offensive", "base_score": 50.0},
 	"tag_team": {"category": "utility", "base_score": 35.0},
 	"walrus_punch": {"category": "offensive", "base_score": 65.0},
+	"nature's_guise": {"category": "defensive", "base_score": 40.0},
+	"leech_seed": {"category": "offensive", "base_score": 45.0},
+	"living_armor": {"category": "defensive", "base_score": 35.0},
+	"overgrowth": {"category": "offensive", "base_score": 65.0},
+	"whirling_death": {"category": "offensive", "base_score": 45.0},
+	"timber_chain": {"category": "offensive", "base_score": 50.0},
+	"chakram": {"category": "offensive", "base_score": 70.0},
 }
 
 # A plain Attack's own pseudo skill id - never a real skill, but scored
@@ -139,6 +177,8 @@ const HERO_TIE_BREAK := {
 	"winter_wyvern": ["winter's_curse", "splinter_blast", "cold_embrace", "arctic_burn"],
 	"crystal_maiden": ["freezing_field", "frostbite", "crystal_nova"],
 	"tusk": ["walrus_punch", "snowball", "ice_shards", "tag_team"],
+	"treant_protector": ["overgrowth", "leech_seed", "nature's_guise", "living_armor"],
+	"timbersaw": ["chakram", "timber_chain", "whirling_death"],
 }
 
 # Scores within this many points of the top score are treated as
@@ -177,6 +217,10 @@ static func resolve_hero_archetype(hero_static: Dictionary) -> String:
 		return "crystal_maiden"
 	if "walrus_punch" in skill_ids:
 		return "tusk"
+	if "overgrowth" in skill_ids:
+		return "treant_protector"
+	if "chakram" in skill_ids:
+		return "timbersaw"
 	return ""
 
 
@@ -222,9 +266,16 @@ static func evaluate_skill(skill_id: String, level_data: Dictionary, context: Di
 ## Walrus Punch in particular is an expensive ultimate that a cheap
 ## plain Attack can already make redundant against a low-HP target (see
 ## _tusk_basic_attack_modifier()/_tusk_walrus_punch_modifier()'s own
-## early-out).
+## early-out). Treant Protector opts in for the same reason as Snowball/
+## Overgrowth's own early-outs (see _tp_leech_seed_modifier()/_tp_
+## overgrowth_modifier()) - a free kill beats spending mana/cooldown for
+## the same result. Timbersaw opts in too - Chakram in particular is a
+## very expensive ultimate (200-350 mana) that a cheap plain Attack can
+## already make redundant (see the design doc's own "one enemy at 20 HP
+## should almost never justify a 350-mana ultimate" instruction and
+## _timbersaw_chakram_modifier()'s own early-out).
 static func basic_attack_participates(archetype: String) -> bool:
-	return archetype == "kunkka" or archetype == "winter_wyvern" or archetype == "crystal_maiden" or archetype == "tusk"
+	return archetype == "kunkka" or archetype == "winter_wyvern" or archetype == "crystal_maiden" or archetype == "tusk" or archetype == "treant_protector" or archetype == "timbersaw"
 
 
 ## The score for a plain Attack, for a hero basic_attack_participates()
@@ -383,6 +434,26 @@ static func _estimate_skill_damage(skill_id: String, level_data: Dictionary, con
 			# stays the conservative no-collision baseline, same split
 			# Ice Blast's own execute bonus uses versus its base estimate.
 			return float(context.get("hero_damage", 0.0)) * float(level_data.get("damage_multiplier", 1.0))
+		"leech_seed":
+			# A pure DoT/sustain cast, same as Cold Feet/Ice Vortex/
+			# Frostbite above - its entire damage value is dot_damage x
+			# duration, never just the per-turn tick.
+			return float(level_data.get("dot_damage", 0.0)) * float(level_data.get("duration", 0.0))
+		"overgrowth":
+			# Also a pure damage-over-time cast (on herself... himself,
+			# hitting whoever's in range each tick) - dot_damage x
+			# root_duration, same reasoning as Freezing Field's own case.
+			return float(level_data.get("dot_damage", 0.0)) * float(level_data.get("root_duration", 0.0))
+		"whirling_death", "timber_chain":
+			return float(level_data.get("damage", 0.0))
+		"chakram":
+			# Only the initial cast_damage - the persistent damage_per_
+			# turn ticks are estimated separately (and much more
+			# conservatively - see the design doc's own "do not
+			# automatically assume every enemy stays inside the radius
+			# for the full duration" instruction), in _timbersaw_chakram_
+			# modifier() rather than here.
+			return float(level_data.get("cast_damage", 0.0))
 		_:
 			return 0.0
 
@@ -412,6 +483,10 @@ static func _hero_specific_modifier(archetype: String, skill_id: String, level_d
 			return _crystal_maiden_modifier(skill_id, level_data, context)
 		"tusk":
 			return _tusk_modifier(skill_id, level_data, context)
+		"treant_protector":
+			return _treant_modifier(skill_id, level_data, context)
+		"timbersaw":
+			return _timbersaw_modifier(skill_id, level_data, context)
 		_:
 			return 0.0
 
@@ -1446,6 +1521,542 @@ static func _tusk_walrus_punch_modifier(level_data: Dictionary, context: Diction
 ## design doc's own Example A). Same small mana-scarcity nudge as
 ## Crystal Maiden's own copy.
 static func _tusk_basic_attack_modifier(context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		score += 50.0
+
+	var max_mana: float = float(context.get("hero_max_mana", 0.0))
+	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:
+		score += 8.0
+
+	return score
+
+
+## Treant Protector: durable, melee, control/sustain, opportunistic.
+## Nature's Guise is "defensive" category (see SKILL_INFO) - in the
+## simulation that's its ENTIRE score, no case here at all (matching
+## Shadow Dance's own precedent); in a real hero fight, _tp_natures_
+## guise_modifier() adds its own stealth-engage/root-setup value on top.
+## Leech Seed and Overgrowth are both "offensive" (fed by their own
+## dot_damage x duration _estimate_skill_damage() cases, for the shared
+## kill-potential/target-value terms); this layers Leech Seed's own
+## Treant-condition-scaled healing value, and Overgrowth's own multi-
+## target root/DoT tiers (self-centered, same shape as Crystal Maiden's
+## own Freezing Field), on top. Living Armor is "defensive" too (the
+## shared HP-ratio tiers already cover most of the design doc's own
+## "lower priority at high HP" instruction); this adds its own expected
+## healing/armor value.
+static func _treant_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+	match skill_id:
+		"nature's_guise":
+			return _tp_natures_guise_modifier(level_data, context)
+		"leech_seed":
+			return _tp_leech_seed_modifier(level_data, context)
+		"living_armor":
+			return _tp_living_armor_modifier(level_data, context)
+		"overgrowth":
+			return _tp_overgrowth_modifier(level_data, context)
+		BASIC_ATTACK_ID:
+			return _tp_basic_attack_modifier(context)
+		_:
+			return 0.0
+
+
+## Nature's Guise: setup/engage/defensive positioning, never a damage
+## skill in its own right - the root only ever comes from a SUCCESSFUL
+## stealth Attack next turn, never guaranteed just from casting this
+## (see the design doc's own "do not assume the root will always
+## happen" instruction), so its whole value here is an EXPECTED one:
+## target_value + expected_root_value, gated by whether Treant has a
+## realistic shot at actually landing that Attack before the
+## invisibility runs out. `target_distance` is absent in the simulation
+## (no positions there - see EnemyHeroManager's own _build_npc_ai_
+## context() docstring); this returns a flat 0 in that case rather than
+## guessing, leaving the shared "defensive" category term (hero_hp_
+## ratio tiers) as this skill's entire simulated value, exactly mirroring
+## Shadow Dance's own precedent (no hero-specific case for it at all).
+static func _tp_natures_guise_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var raw_distance: int = int(context.get("target_distance", -1))
+	if raw_distance < 0:
+		return 0.0
+
+	if raw_distance <= 0:
+		# Already standing right next to a valuable target - vanishing
+		# first only delays the Attack that matters, it doesn't set up
+		# anything Treant doesn't already have (see the design doc's own
+		# "already in a good melee position" waste case).
+		return -30.0
+
+	var duration: int = int(level_data.get("duration", 0))
+	if raw_distance > duration:
+		# Can't realistically close the distance (roughly one column a
+		# turn, the same pace every other melee hero in this file
+		# assumes when no more precise move-speed figure is available)
+		# before the invisibility runs out - a setup with nothing left
+		# to set up (see the design doc's own "cannot realistically
+		# reach a useful target" waste case).
+		return -15.0
+
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	var target_max_hp: float = float(context.get("target_max_hp", 0.0))
+	var target_value: float = ((1.0 - target_hp / target_max_hp) * 10.0) if target_max_hp > 0.0 else 0.0
+
+	# The closer the opportunity already is relative to how long the
+	# invisibility lasts, the more confidently the root's own value can
+	# be counted - a distant, uncertain approach counts for less than an
+	# almost-guaranteed one, never the full amount either way.
+	var proximity_factor: float = clampf(1.0 - float(raw_distance - 1) / float(maxi(duration, 1)), 0.2, 1.0)
+	var root_turns: int = int(level_data.get("root_turns", 0))
+	var expected_root_value: float = float(root_turns) * 12.0 * proximity_factor
+
+	var score: float = target_value + expected_root_value
+
+	if float(context.get("hero_hp_ratio", 1.0)) < 0.4:
+		# Also doubles as an escape/reposition, on top of whatever engage
+		# value the stealth Attack itself has - the shared defensive
+		# HP-ratio tiers already cover the base "Treant is threatened"
+		# case, this is specifically for the "and this also lets him
+		# reposition out of it" angle.
+		score += 15.0
+
+	return score
+
+
+## Leech Seed: offensive AND sustain. The generic offensive scoring
+## above already covers target value/kill potential (fed by dot_damage x
+## duration - see _estimate_skill_damage()'s own "leech_seed" case);
+## this adds the healing half, scaled by how close Treant already is to
+## needing it (0 extra value at full HP, per the design doc's own "do
+## not automatically use Leech Seed simply because Treant is damaged"
+## instruction - kill potential/target value alone can still justify it
+## at full HP). Early-out mirrors Snowball's/Walrus Punch's own below: a
+## target a plain Attack can already kill outright leaves nothing for a
+## multi-turn DoT to finish first, so it's not worth the mana (see the
+## design doc's own Basic Attack example).
+static func _tp_leech_seed_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		return -45.0
+
+	var heal_per_turn: float = float(level_data.get("heal_per_turn", 0.0))
+	var duration: int = int(level_data.get("duration", 0))
+	var expected_healing: float = heal_per_turn * float(duration)
+
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	var missing_hp_pct: float = clampf(1.0 - hp_ratio, 0.0, 1.0)
+	var score: float = expected_healing * missing_hp_pct * 0.35
+
+	if int(context.get("enemy_count", 1)) >= 2:
+		# A small extra nudge for "also engaged with more than one
+		# threat" - the same outnumbered signal _evaluate_defensive()
+		# uses elsewhere, feeding this skill's own sustain-urgency value
+		# instead of a flat defensive tier.
+		score += 8.0
+
+	return score
+
+
+## Living Armor: preventive, not automatic - the shared "defensive"
+## category already provides the bulk of the design doc's own high/low
+## priority tiers (hero_hp_ratio-based, including the explicit "healthy
+## -> penalty" that stops it from being cast just because it's
+## available); this adds its own expected-healing and armor-specific
+## value on top, plus a penalty when Treant isn't close enough to combat
+## for either to matter yet.
+static func _tp_living_armor_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var bonus_hp_regen: float = float(level_data.get("bonus_hp_regen", 0.0))
+	var duration: int = int(level_data.get("duration", 0))
+	var expected_healing: float = bonus_hp_regen * float(duration)
+
+	var score: float = expected_healing * 0.25
+
+	var bonus_armor: float = float(level_data.get("bonus_armor", 0.0))
+	var enemy_count: int = int(context.get("enemy_count", 1))
+	# More attackers around means the armor mitigates more total hits
+	# over the buff's duration - the same "outnumbered" signal
+	# _evaluate_defensive() already uses, just feeding this skill's own
+	# armor-specific value instead of a flat HP-ratio tier.
+	score += bonus_armor * float(mini(enemy_count, 4)) * 1.5
+
+	var raw_distance: int = int(context.get("target_distance", -1))
+	if raw_distance >= 0 and raw_distance > 2:
+		# Not about to be in melee combat any time soon - the armor/regen
+		# has nothing to mitigate yet, and may well expire before it
+		# does (see the design doc's own "not currently threatened"/
+		# "mostly wasted because the fight is likely to end soon" cases).
+		score -= 15.0
+
+	return score
+
+
+## Overgrowth: Treant's primary AoE control + damage ultimate, SELF-
+## CENTERED like Crystal Maiden's own Freezing Field - never a selected
+## enemy's position (see _cm_freezing_field_modifier()'s own docstring
+## for why `target_distance` is reused here rather than re-derived: it's
+## battle.gd's already-computed distance from Treant's own pos_index to
+## the player). Out of radius in a real fight, this is a low-value cast,
+## same reasoning as Freezing Field's own early-out. In range (or the
+## simulation, where a missing value defaults to "in range" - every
+## other AoE skill's own "no columns, hit everyone" simplification),
+## this layers the design doc's own multi-target/low-HP/multi-kill tiers
+## on top of the generic kill-potential/"already hurt" terms
+## _evaluate_offensive() already provides, PLUS its own root-control
+## value scaled by duration and target count - movement denial only,
+## deliberately never scored as a stun (per the design doc's own
+## explicit "rooting does NOT prevent attacks/skills/items" instruction
+## - Overgrowth's root shares the same generic root_turns_left field
+## Entangle's own does, which every attack/skill/item check already
+## ignores). The early-out mirrors Leech Seed's/Snowball's/Walrus
+## Punch's own: a single target a plain Attack can already kill outright
+## isn't worth an ultimate's mana/cooldown, but ONLY when just one enemy
+## is actually affected - a multi-target opportunity is never penalized
+## this way, per the design doc's own "if the ultimate can affect 3-4
+## enemies... the multi-target value can justify its high mana cost".
+static func _tp_overgrowth_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var radius: int = int(level_data.get("radius", 0))
+	var raw_distance: int = int(context.get("target_distance", -1))
+	var in_range: bool = raw_distance < 0 or raw_distance <= radius
+
+	if not in_range:
+		return -35.0
+
+	var living_hps: Array = context.get("living_target_hps", [])
+	var living_max_hps: Array = context.get("living_target_max_hps", living_hps)
+	var hit_count: int = living_hps.size()
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if hit_count <= 1 and target_hp > 0.0 and hero_damage >= target_hp:
+		return -70.0
+
+	var score: float = 0.0
+	if hit_count >= 4:
+		score += 90.0
+	elif hit_count == 3:
+		score += 60.0
+	elif hit_count == 2:
+		score += 35.0
+	elif hit_count == 1:
+		score += 10.0
+
+	var root_duration: int = int(level_data.get("root_duration", 0))
+	var total_dot: float = float(level_data.get("dot_damage", 0.0)) * float(root_duration)
+	var extra_kills: int = 0
+	var low_hp_count: int = 0
+	for i in range(hit_count):
+		var hp: float = float(living_hps[i])
+		if hp <= 0.0:
+			continue
+		var max_hp: float = float(living_max_hps[i]) if i < living_max_hps.size() else hp
+		if max_hp > 0.0 and hp <= max_hp * 0.3:
+			low_hp_count += 1
+		if total_dot >= hp:
+			extra_kills += 1
+
+	# The primary target's own kill is already scored generically (see
+	# _kill_potential_bonus(), fed by _estimate_skill_damage()'s own
+	# "overgrowth" case) - this only adds for kills BEYOND that one, same
+	# split Torrent's/Ghostship's/Ice Blast's/Freezing Field's own
+	# modifiers use.
+	if extra_kills >= 2:
+		score += 30.0 * float(extra_kills - 1)
+
+	if low_hp_count >= 1:
+		score += 15.0 * float(low_hp_count)
+
+	# Root control value: pure movement denial, scaled by duration and by
+	# how many enemies are actually affected - never scored as a stun
+	# (see this function's own docstring).
+	score += float(root_duration) * float(hit_count) * 3.0
+
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	if hp_ratio < 0.30 and int(context.get("enemy_count", 1)) >= 2:
+		# Too vulnerable to bank on surviving long enough to exploit the
+		# control - Overgrowth has no invented immunity of its own to
+		# lean on here, so a bad HP situation is a real cost.
+		score -= 20.0
+
+	return score
+
+
+## A plain Attack is only worth scoring above its flat baseline for
+## Treant Protector when it can finish the target off outright (see
+## basic_attack_participates()'s own docstring for why he opts in at
+## all) - every one of his real skills is a real mana/cooldown
+## investment, so a free kill deserves a real shot at winning over
+## spending any of them (see the design doc's own Basic Attack example).
+## Same small mana-scarcity nudge as every other hero's own copy here.
+static func _tp_basic_attack_modifier(context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		score += 50.0
+
+	var max_mana: float = float(context.get("hero_max_mana", 0.0))
+	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:
+		score += 8.0
+
+	return score
+
+
+## Timbersaw: aggressive, durable, melee, AoE-focused. Whirling Death and
+## Timber Chain are both "offensive" category (generic kill-potential/
+## target-value terms, fed by their own flat-damage _estimate_skill_
+## damage() cases); Chakram is "offensive" too (fed by its own
+## cast_damage-only case - its persistent damage_per_turn ticks are
+## deliberately kept OUT of that generic estimate, since they're never a
+## guaranteed hit the way a cast's own initial damage is - see this
+## function's own _timbersaw_chakram_modifier()). Reactive Armor's
+## current stacks (context's own "reactive_armor_stacks"/"reactive_
+## armor_max_stacks" fields - see battle.gd's/EnemyHeroManager's own
+## _build_enemy_ai_context()/_build_npc_ai_context() docstrings) feed
+## into how comfortable Timbersaw is staying in the fight, per the design
+## doc's own "modify the survival calculation, not override it"
+## instruction - see _timbersaw_sustain_factor()'s own docstring for how
+## that's actually worked out.
+static func _timbersaw_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+	match skill_id:
+		"whirling_death":
+			return _timbersaw_whirling_death_modifier(level_data, context)
+		"timber_chain":
+			return _timbersaw_timber_chain_modifier(level_data, context)
+		"chakram":
+			return _timbersaw_chakram_modifier(level_data, context)
+		BASIC_ATTACK_ID:
+			return _timbersaw_basic_attack_modifier(context)
+		_:
+			return 0.0
+
+
+## How much Reactive Armor is currently cushioning Timbersaw, as a 0..1
+## fraction of its own cap (0 with the skill unlearned or no stacks up) -
+## shared by every one of his own modifiers below that needs to lean
+## into (or shy away from) staying in a fight, rather than each
+## reimplementing the same ratio.
+static func _timbersaw_sustain_factor(context: Dictionary) -> float:
+	var max_stacks: int = int(context.get("reactive_armor_max_stacks", 0))
+	if max_stacks <= 0:
+		return 0.0
+	return clampf(float(context.get("reactive_armor_stacks", 0)) / float(max_stacks), 0.0, 1.0)
+
+
+## Whirling Death: self-centered, never a targeted cast - the AI has to
+## evaluate however many enemies are ALREADY within radius of Timbersaw's
+## own current position, never an arbitrary chosen location (see
+## _cm_freezing_field_modifier()'s own docstring for the same "reuse
+## target_distance as the self-centered range check" reasoning this
+## mirrors). The generic offensive scoring above already covers the
+## primary target's own value/kill potential (fed by the flat-damage
+## _estimate_skill_damage() case); this adds the shared AoE multi-target
+## tiers (see _aa_ice_blast_modifier()'s own tiers, reused verbatim
+## rather than inventing a new curve - per the design doc's own "do not
+## use arbitrary bonuses if the shared evaluator already has an AoE
+## scoring helper" instruction) plus this skill's own extra-kill/hero-hit
+## terms. `sustain_factor` makes a crowded fight a little MORE appealing
+## rather than less once Timbersaw has real Reactive Armor stacks banked
+## up, per the design doc's own "he can reasonably receive a lower
+## penalty for remaining in close combat" instruction - never enough on
+## its own to matter without real AoE value already present (it only
+## ever applies alongside an actual hit_count>=2 bonus above).
+static func _timbersaw_whirling_death_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var radius: int = int(level_data.get("radius", 0))
+	var raw_distance: int = int(context.get("target_distance", -1))
+	var in_range: bool = raw_distance < 0 or raw_distance <= radius
+
+	if not in_range:
+		return -35.0
+
+	var living_hps: Array = context.get("living_target_hps", [])
+	var hit_count: int = living_hps.size()
+
+	var score: float = 0.0
+	if hit_count >= 4:
+		score += 80.0
+	elif hit_count == 3:
+		score += 55.0
+	elif hit_count == 2:
+		score += 30.0
+	elif hit_count == 1:
+		score += 10.0
+
+	var damage: float = float(level_data.get("damage", 0.0))
+	var extra_kills: int = 0
+	for i in range(1, living_hps.size()):
+		if damage >= float(living_hps[i]) and float(living_hps[i]) > 0.0:
+			extra_kills += 1
+	if extra_kills >= 1:
+		score += 35.0 * float(extra_kills)
+
+	if bool(context.get("target_is_hero", false)):
+		# Whirling Death's own primary-attribute reduction - purely
+		# qualitative (see this file's own header comment on why: no
+		# real stat-reduction mechanic exists anywhere in this project
+		# to calculate a real number from).
+		score += 10.0
+
+	if hit_count >= 2 and _timbersaw_sustain_factor(context) > 0.5:
+		score += 10.0
+
+	return score
+
+
+## Timber Chain: BOTH an offensive skill and a positioning/escape tool -
+## the generic offensive scoring above already covers the marked
+## target's own value/kill potential; this adds the path-damage value
+## (every enemy the chain crosses takes the same hit, so more of them
+## matters a lot - same AoE tiers Whirling Death's own modifier uses,
+## reused rather than inventing a second curve) plus movement value.
+## Deliberately has NO "a plain Attack could already kill this" early-out
+## the way Snowball's/Leech Seed's/Chakram's own do - per the design
+## doc's own explicit instruction, Timber Chain must be allowed to score
+## highly purely for a meaningful escape, "even when its damage is low"
+## and "do not require the target itself to be low HP". `grid_columns`
+## gates whether real escape/engage math is even possible (never present
+## in the simulation - see EnemyHeroManager's own _build_npc_ai_
+## context() docstring - where every attack already reaches its target
+## with no travel cost at all, so there's nothing here for movement value
+## to compute).
+static func _timbersaw_timber_chain_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var living_hps: Array = context.get("living_target_hps", [])
+	var path_targets: int = living_hps.size()
+
+	var score: float = 0.0
+	if path_targets >= 4:
+		score += 65.0
+	elif path_targets == 3:
+		score += 45.0
+	elif path_targets == 2:
+		score += 25.0
+	elif path_targets == 1:
+		score += 5.0
+
+	var damage: float = float(level_data.get("damage", 0.0))
+	var extra_kills: int = 0
+	for i in range(1, living_hps.size()):
+		if damage >= float(living_hps[i]) and float(living_hps[i]) > 0.0:
+			extra_kills += 1
+	if extra_kills >= 1:
+		score += 30.0 * float(extra_kills)
+
+	var grid_columns: int = int(context.get("grid_columns", 0))
+	if grid_columns > 0:
+		var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+		# More banked Reactive Armor stacks means Timbersaw is already
+		# more cushioned, so the threshold for reading this as a real
+		# emergency is a little more forgiving - modifies the threshold,
+		# never removes the emergency case outright (see the design
+		# doc's own "modify the survival calculation, not override it"
+		# instruction).
+		var escape_threshold: float = 0.35 - (_timbersaw_sustain_factor(context) * 0.12)
+		if hp_ratio < escape_threshold:
+			# The pull itself moves Timbersaw off wherever he's currently
+			# under threat, regardless of the target's own HP - see this
+			# function's own docstring for why there's no low-HP
+			# requirement gating this.
+			score += 35.0
+		else:
+			var target_distance: int = int(context.get("target_distance", 0))
+			if target_distance >= 2:
+				# A real, meaningful reposition even outside an
+				# emergency - closing genuine distance onto a target
+				# worth reaching is itself valuable positioning, not
+				# just incidental movement.
+				score += 12.0
+
+	return score
+
+
+## Chakram: TARGET-centered, unlike Whirling Death - never evaluated as
+## if it were a self-centered AoE (see this file's own header comment).
+## Its own `range` field (a real targeting requirement, gated by
+## EnemySkillRange before this is ever a candidate) already keeps this
+## from firing at an unreachable target, so - unlike Freezing Field's/
+## Overgrowth's/Whirling Death's own self-centered "is the caster's own
+## radius even reaching anything" gate - there's no separate range check
+## to repeat here. The early-out mirrors Leech Seed's/Snowball's own: a
+## single affected target a plain Attack can already kill outright isn't
+## worth an expensive ultimate's mana/cooldown, but ONLY when just one
+## enemy is actually affected - per the design doc's own explicit "if 3
+## enemies are affected... the multi-target value can justify its high
+## mana cost" instruction, a real multi-target opportunity is never
+## penalized this way. Initial AoE reuses the same multi-target tiers
+## Whirling Death's/Ice Blast's own modifiers already use; persistent
+## damage is deliberately discounted rather than assumed at full uptime
+## (see the design doc's own "do not automatically assume every enemy
+## stays inside the radius for the full duration" instruction) - a
+## target already standing right next to Timbersaw (target_distance <=
+## 0, the closest proxy this context offers for "already engaged, likely
+## to still be here next turn") gets a much higher expected-uptime
+## estimate than one that isn't.
+static func _timbersaw_chakram_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	var living_hps: Array = context.get("living_target_hps", [])
+	var living_max_hps: Array = context.get("living_target_max_hps", living_hps)
+	var hit_count: int = living_hps.size()
+
+	if hit_count <= 1 and target_hp > 0.0 and hero_damage >= target_hp:
+		return -90.0
+
+	var score: float = 0.0
+	if hit_count >= 3:
+		score += 70.0
+	elif hit_count == 2:
+		score += 40.0
+	elif hit_count == 1:
+		score += 10.0
+
+	var cast_damage: float = float(level_data.get("cast_damage", 0.0))
+	var extra_initial_kills: int = 0
+	for i in range(1, living_hps.size()):
+		if cast_damage >= float(living_hps[i]) and float(living_hps[i]) > 0.0:
+			extra_initial_kills += 1
+	if extra_initial_kills >= 1:
+		score += 35.0 * float(extra_initial_kills)
+
+	var duration: int = int(level_data.get("duration", 0))
+	var damage_per_turn: float = float(level_data.get("damage_per_turn", 0.0))
+	var target_distance: int = int(context.get("target_distance", 0))
+	var expected_uptime_pct: float = 0.9 if target_distance <= 0 else 0.5
+	var persistent_damage: float = damage_per_turn * float(duration) * expected_uptime_pct
+	score += persistent_damage * 0.12 * float(hit_count)
+
+	# Persistent (future) kills - distinguished from the initial-AoE
+	# extra_initial_kills above, which are immediate: a target that
+	# survives the cast but is expected to die to the lingering damage
+	# still contributes real value here, at a smaller weight than an
+	# immediate kill gets (see the design doc's own "immediate kills
+	# should receive higher urgency" instruction).
+	var persistent_kills: int = 0
+	for i in range(hit_count):
+		var hp: float = float(living_hps[i])
+		if hp <= 0.0:
+			continue
+		var after_cast: float = hp - cast_damage
+		if after_cast <= 0.0:
+			continue
+		if after_cast - persistent_damage <= 0.0:
+			persistent_kills += 1
+	if persistent_kills >= 1:
+		score += 20.0 * float(persistent_kills)
+
+	return score
+
+
+## A plain Attack is only worth scoring above its flat baseline for
+## Timbersaw when it can finish the target off outright (see
+## basic_attack_participates()'s own docstring for why he opts in at
+## all) - Chakram in particular is a very expensive ultimate, so a free
+## kill deserves a real shot at winning over spending it (see the design
+## doc's own Basic Attack example). Same small mana-scarcity nudge as
+## every other hero's own copy here.
+static func _timbersaw_basic_attack_modifier(context: Dictionary) -> float:
 	var score: float = 0.0
 
 	var hero_damage: float = float(context.get("hero_damage", 0.0))

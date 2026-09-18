@@ -67,24 +67,50 @@ class_name EnemySkillRange
 #     Entangle/Mist Coil do, just against a hero whose own type is
 #     always "mele" (see GameManager's own Tusk entry), where that
 #     fallback is always 0 anyway.
+#   - Leech Seed (Treant Protector's): a targeted cast with its own
+#     per-level `range` field (a constant 2 per the design doc), same
+#     "distance <= radius" comparison as Cold Feet's/Ice Shards'/
+#     Snowball's own.
+#   - Whirling Death (Timbersaw's): an AoE centered on the caster, same
+#     shape as Dark Pact's own - in range whenever the player is within
+#     the skill's own `radius` field. It has no `range` field of its
+#     own, so the generic fallback chain battle.gd's own
+#     _enemy_skill_in_range() already uses (range, then radius, then
+#     distance) correctly falls through to `radius` here, exactly like
+#     Dark Pact's own case.
+#   - Timber Chain/Chakram (both Timbersaw's): targeted casts with their
+#     own per-level `range` field, same "distance <= radius" comparison
+#     as Cold Feet's/Leech Seed's own. Chakram ALSO has its own `radius`
+#     field (the AoE size once it's already landed - see EnemySkillAI's
+#     own _timbersaw_chakram_modifier()), but that's never what gates
+#     whether the cast itself is reachable - the generic fallback chain
+#     always prefers `range` first when a skill has both, same
+#     "targeting range, not AoE radius" distinction Torrent's own
+#     level-4 splash radius already needs.
 # Ice Blast is deliberately NOT range-checked at all (not in
 # RANGE_CHECKED_SKILL_IDS below) - it "targets any enemy on the field,"
 # with no range limit, mirroring the player's own _start_ice_blast_
 # targeting()'s complete lack of a distance filter.
 # Every other known skill (Essence Shift, Shadow Dance, Spirit Link,
 # True Form, Summon Spirit Bear, Aphotic Shield, Arctic Burn, Cold
-# Embrace, Crystal Maiden's own Freezing Field, and Tusk's own Tag Team)
-# is a self-buff/summon with no target to range-check, so this always
-# reports those as in range - Freezing Field in particular is centered
-# on the caster's OWN position (see EnemySkillAI's own _cm_freezing_
-# field_modifier()), never a selected enemy's, so there's nothing here
-# to check range against in the first place, exactly like every other
-# self-cast skill in this list; Tag Team is simpler still - just a
-# temporary buff to Tusk's own future Attacks, with no target of its
-# own to reach at cast time at all.
+# Embrace, Crystal Maiden's own Freezing Field, Tusk's own Tag Team, and
+# Treant Protector's own Nature's Guise/Living Armor/Overgrowth) is a
+# self-buff/summon/AoE with no target to range-check, so this always
+# reports those as in range - Freezing Field/Overgrowth in particular
+# are centered on the caster's OWN position (see EnemySkillAI's own
+# _cm_freezing_field_modifier()/_tp_overgrowth_modifier()), never a
+# selected enemy's, so there's nothing here to check range against in
+# the first place, exactly like every other self-cast skill in this
+# list; Tag Team/Nature's Guise/Living Armor are simpler still - no
+# target of their own to reach at cast time at all (Nature's Guise's own
+# "attack from stealth" follow-up reuses the player's normal Attack
+# range/targeting, not a skill-cast range check here). Timbersaw's own
+# Reactive Armor is passive and never even reaches this file - see
+# battle.gd's ENEMY_KNOWN_SKILL_IDS/EnemyHeroManager's own
+# KNOWN_ACTIVE_SKILL_IDS, neither of which lists it.
 # ============================================================
 
-const RANGE_CHECKED_SKILL_IDS: Array[String] = ["dark_pact", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch"]
+const RANGE_CHECKED_SKILL_IDS: Array[String] = ["dark_pact", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch", "leech_seed", "whirling_death", "timber_chain", "chakram"]
 
 
 ## True if `skill_id` needs a range check at all before being cast -
@@ -105,7 +131,7 @@ static func requires_range_check(skill_id: String) -> bool:
 ## requires_range_check().
 static func is_in_range(skill_id: String, distance: int, radius: int, attack_range: int) -> bool:
 	match skill_id:
-		"dark_pact", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "ice_shards", "snowball":
+		"dark_pact", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "ice_shards", "snowball", "leech_seed", "whirling_death", "timber_chain", "chakram":
 			return distance <= radius
 		"entangle", "mist_coil", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "walrus_punch":
 			return distance <= attack_range

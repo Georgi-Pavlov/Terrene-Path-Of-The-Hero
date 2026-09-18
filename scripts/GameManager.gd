@@ -1281,33 +1281,48 @@ var zones: Dictionary = {
 						"id": "nature's_guise",
 						"name": "Nature's Guise",
 						"type": "standard",
-						"description": "Grants the ability to walk through trees, gaining bonus movement.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Turns the hero invisible - enemies can't target or chase him while it holds, and he moves 2 columns per move instead of 1. Ends early the moment he attacks or casts another skill; attacking from stealth also roots the target in place (it can still do everything else).",
+						"levels": [
+							{"duration": 3, "root_turns": 1, "mana_cost": 60, "cooldown": 5},
+							{"duration": 3, "root_turns": 1, "mana_cost": 75, "cooldown": 5},
+							{"duration": 4, "root_turns": 2, "mana_cost": 95, "cooldown": 6},
+							{"duration": 4, "root_turns": 2, "mana_cost": 115, "cooldown": 6}
+						]
 					},
 					{
 						"id": "leech_seed",
 						"name": "Leech Seed",
 						"type": "standard",
-						"description": "Plants a seed in an enemy, draining health to heal himself.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Plants a seed in an enemy within range, dealing damage over time for the duration - the hero heals for his own amount every one of those same turns.",
+						"levels": [
+							{"dot_damage": 25, "heal_per_turn": 15, "duration": 3, "range": 2, "mana_cost": 70, "cooldown": 5},
+							{"dot_damage": 40, "heal_per_turn": 25, "duration": 3, "range": 2, "mana_cost": 90, "cooldown": 5},
+							{"dot_damage": 55, "heal_per_turn": 35, "duration": 4, "range": 2, "mana_cost": 115, "cooldown": 6},
+							{"dot_damage": 75, "heal_per_turn": 50, "duration": 4, "range": 2, "mana_cost": 145, "cooldown": 6}
+						]
 					},
 					{
 						"id": "living_armor",
 						"name": "Living Armor",
 						"type": "standard",
-						"description": "Gives himself bonus armor and health regeneration.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Cast on himself, granting bonus armor and bonus HP regeneration every turn for the duration.",
+						"levels": [
+							{"bonus_armor": 3, "bonus_hp_regen": 2, "duration": 4, "mana_cost": 60, "cooldown": 5},
+							{"bonus_armor": 5, "bonus_hp_regen": 3, "duration": 5, "mana_cost": 80, "cooldown": 5},
+							{"bonus_armor": 7, "bonus_hp_regen": 4, "duration": 6, "mana_cost": 100, "cooldown": 6},
+							{"bonus_armor": 9, "bonus_hp_regen": 5, "duration": 7, "mana_cost": 120, "cooldown": 6}
+						]
 					},
 					{
 						"id": "overgrowth",
 						"name": "Overgrowth",
 						"type": "ultimate",
-						"description": "Ultimate: entangles all nearby enemy units in roots, stopping them from moving or attacking and dealing damage over time.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: roots every enemy within radius of the hero in place - they can't move, but can still attack and cast skills - and deals damage over time to each of them for the same duration.",
+						"levels": [
+							{"dot_damage": 50, "root_duration": 2, "radius": 1, "mana_cost": 180, "cooldown": 9},
+							{"dot_damage": 80, "root_duration": 3, "radius": 2, "mana_cost": 240, "cooldown": 10},
+							{"dot_damage": 120, "root_duration": 3, "radius": 2, "mana_cost": 300, "cooldown": 11}
+						]
 					},
 				],
 				"level_up": {
@@ -1341,32 +1356,47 @@ var zones: Dictionary = {
 						"name": "Whirling Death",
 						"type": "standard",
 						"description": "Deals pure damage and destroys surrounding trees, reducing enemy primary attributes if a hero is hit.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"levels": [
+							{"damage": 100, "radius": 1, "mana_cost": 70, "cooldown": 4},
+							{"damage": 150, "radius": 1, "mana_cost": 90, "cooldown": 4},
+							{"damage": 200, "radius": 2, "mana_cost": 115, "cooldown": 5},
+							{"damage": 260, "radius": 2, "mana_cost": 140, "cooldown": 5}
+						]
 					},
 					{
 						"id": "timber_chain",
 						"name": "Timber Chain",
 						"type": "standard",
-						"description": "Fires a chain to pull Timbersaw toward the furthest enemy it hits, damaging enemies along the path.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Marks an enemy within range and chains toward it, dealing damage to every enemy caught in the path and to the marked enemy itself.",
+						"levels": [
+							{"damage": 70, "range": 3, "mana_cost": 60, "cooldown": 4},
+							{"damage": 95, "range": 3, "mana_cost": 80, "cooldown": 4},
+							{"damage": 130, "range": 4, "mana_cost": 105, "cooldown": 5},
+							{"damage": 185, "range": 5, "mana_cost": 130, "cooldown": 5}
+						]
 					},
 					{
 						"id": "reactive_armor",
 						"name": "Reactive Armor",
-						"type": "standard",
-						"description": "Passive: grants stackable bonus armor and health regeneration when attacked.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: every hit taken adds a stack of bonus armor and health regeneration, up to a max, each stack fading after its own duration.",
+						"levels": [
+							{"bonus_armor_per_stack": 0.8, "bonus_hp_regen_per_stack": 3, "max_stacks": 5, "duration": 4},
+							{"bonus_armor_per_stack": 1.1, "bonus_hp_regen_per_stack": 4, "max_stacks": 6, "duration": 4},
+							{"bonus_armor_per_stack": 1.4, "bonus_hp_regen_per_stack": 5, "max_stacks": 7, "duration": 5},
+							{"bonus_armor_per_stack": 1.7, "bonus_hp_regen_per_stack": 6, "max_stacks": 8, "duration": 5}
+						]
 					},
 					{
 						"id": "chakram",
 						"name": "Chakram",
 						"type": "ultimate",
-						"description": "Ultimate: launches a saw blade that spins in place, dealing pure damage to enemies based on missing health.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: marks a target within range, striking it and every enemy around it, then leaves the chakram planted there, dealing damage to everything in range of it each turn for the duration.",
+						"levels": [
+							{"cast_damage": 150, "damage_per_turn": 80, "duration": 2, "radius": 1, "range": 5, "mana_cost": 200, "cooldown": 10},
+							{"cast_damage": 225, "damage_per_turn": 120, "duration": 3, "radius": 1, "range": 6, "mana_cost": 275, "cooldown": 11},
+							{"cast_damage": 325, "damage_per_turn": 170, "duration": 3, "radius": 2, "range": 7, "mana_cost": 350, "cooldown": 12}
+						]
 					},
 				],
 				"level_up": {
@@ -2259,8 +2289,8 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 # full item catalog (including ones not sold yet, like the stat
 # boosts) doesn't have to be filtered down at runtime.
 
-const SHOP_ITEM_IDS: Array[String] = ["health", "mana", "gauntlets_of_strength", "mantle_of_intelligence", 
-"slippers_of_agility", "circlet", "blades_of_attack"]
+const SHOP_ITEM_IDS: Array[String] = ["health", "mana", "gauntlets_of_strength", "mantle_of_intelligence",
+"slippers_of_agility", "circlet", "blades_of_attack", "cleaver", "morbid_mask", "broadsword", "claymore"]
 const SHOP_STOCK_PER_ITEM: int = 3
 
 
@@ -2334,6 +2364,42 @@ var items: Dictionary = {
 		"stat": ["strength", "agility", "intelligence"],
 		"value": 1.5,
 		"cost": 155
+	},
+	"cleaver": {
+		"id": "cleaver",
+		"name": "Cleaver",
+		"image": "res://assets/items/cleaver.png",
+		"description": "Passive: Attacks cleave for 30% Cleave Damage to enemies within 1 column on either side. No other stats.",
+		"effect": "passive",
+		"cost": 850
+	},
+	"morbid_mask": {
+		"id": "morbid_mask",
+		"name": "Morbid Mask",
+		"image": "res://assets/items/morbid mask.png",
+		"description": "Passive: Heals for 10% of the damage dealt by your Attacks. No other stats.",
+		"effect": "passive",
+		"cost": 700
+	},
+	"broadsword": {
+		"id": "broadsword",
+		"name": "Broadsword",
+		"image": "res://assets/items/broadsword.png",
+		"description": "Add +15 damage",
+		"effect": "stat",
+		"stat": "damage",
+		"value": 15,
+		"cost": 1000
+	},
+	"claymore": {
+		"id": "claymore",
+		"name": "Claymore",
+		"image": "res://assets/items/claymore.png",
+		"description": "Add +20 damage",
+		"effect": "stat",
+		"stat": "damage",
+		"value": 20,
+		"cost": 1350
 	},
 }
 

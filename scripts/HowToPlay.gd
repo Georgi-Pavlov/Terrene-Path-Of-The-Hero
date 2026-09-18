@@ -31,3 +31,33 @@ If your HP reaches zero, your run ends - your best XP is saved as a high score b
 func _ready() -> void:
 	$TextPanel/Margin/ScrollContainer/ExplanationLabel.text = EXPLANATION_TEXT
 	$BackButton.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/PostLogin.tscn"))
+	$TutorialButton.pressed.connect(func(): TutorialManager.start_tutorial())
+	_style_tutorial_button()
+
+
+## Gives the Tutorial button the same warm, glowing treatment every
+## forced button during the tutorial itself uses (see TutorialManager.
+## make_glow_style()/start_glow_pulse()) - a slowly pulsing shadow
+## rather than a static highlight, so it stands out from the wall of
+## text next to it and keeps catching the eye instead of blending in
+## once the player's looked at it once.
+func _style_tutorial_button() -> void:
+	var button: Button = $TutorialButton
+
+	var normal_style: StyleBoxFlat = TutorialManager.make_glow_style()
+
+	var hover_style: StyleBoxFlat = normal_style.duplicate()
+	hover_style.bg_color = Color(0.5, 0.35, 0.08, 1.0)
+	hover_style.shadow_size = 14
+
+	var pressed_style: StyleBoxFlat = normal_style.duplicate()
+	pressed_style.bg_color = Color(0.22, 0.14, 0.03, 1.0)
+
+	button.add_theme_stylebox_override("normal", normal_style)
+	button.add_theme_stylebox_override("hover", hover_style)
+	button.add_theme_stylebox_override("pressed", pressed_style)
+	button.add_theme_font_size_override("font_size", 20)
+	button.add_theme_color_override("font_color", Color(1, 0.95, 0.8, 1))
+	button.add_theme_color_override("font_hover_color", Color(1, 1, 0.9, 1))
+
+	TutorialManager.start_glow_pulse(normal_style, self)

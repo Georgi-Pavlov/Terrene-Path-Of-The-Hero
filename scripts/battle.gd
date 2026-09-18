@@ -72,6 +72,11 @@ const GHOSTSHIP_IMAGE_PATH := "res://assets/heroes skills/Kunkka_Ghostship.png"
 # to visually cross the screen.
 const GHOSTSHIP_TRAVEL_DURATION := 0.6
 
+# Timbersaw's Chakram (see _resolve_chakram_cast()) always uses this
+# art, regardless of skill level - drawn at half the usual creature
+# height, since it's a planted marker rather than a combatant.
+const CHAKRAM_IMAGE_PATH := "res://assets/heroes skills/Timbersaw_Chakram.png"
+
 # Winter Wyvern's Cold Embrace (see _activate_cold_embrace()) always
 # uses this art for the hero's portrait while it's active, regardless
 # of skill level - reverted back to the hero's own normal image
@@ -171,6 +176,58 @@ var _shadow_dance_turns_remaining: int = 0
 var _shadow_dance_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
+# Treant Protector's Nature's Guise: functionally the same invisibility
+# as Slark's own Shadow Dance - folded into the very same _is_hero_
+# hidden() check, so every "enemies can't target or chase a hidden
+# hero" rule in _enemy_turn() already applies here for free - just with
+# a different payoff for the Attack that breaks it: instead of bonus
+# damage, the target gets rooted (root_turns_left, the same shared
+# per-enemy field Entangle's own root uses and _tick_enemy_turn_start_
+# effects() already ticks down - it can still attack/cast/use items while rooted,
+# same as any other rooted enemy) for _natures_guise_root_turns turns.
+# Casting any OTHER skill still just ends it early with no root, same
+# as Shadow Dance's own "no bonus damage" rule for that case. While
+# active, the hero also moves a flat +1 column further per move (see
+# _hero_move_distance()) - moving unseen covers more ground.
+# ------------------------------------------------------------------
+var _natures_guise_active: bool = false
+var _natures_guise_root_turns: int = 0
+var _natures_guise_turns_remaining: int = 0
+var _natures_guise_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Treant Protector's Living Armor: a self-cast that adds a flat
+# bonus_armor (folded into _hero_armor(), same slot Spirit Link's own
+# bonus armor uses) plus a flat bonus_hp_regen healed every turn on top
+# of the hero's own baseline passive regen (_apply_passive_hero_regen()
+# - same "bonus stacks on top of the baseline" relationship Arcane
+# Aura's own regen already has) for the duration. Same "casting turn
+# doesn't count" pattern as every other duration-based buff (see
+# _tick_living_armor()).
+# ------------------------------------------------------------------
+var _living_armor_active: bool = false
+var _living_armor_bonus_armor: float = 0.0
+var _living_armor_bonus_hp_regen: float = 0.0
+var _living_armor_turns_remaining: int = 0
+var _living_armor_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Timbersaw's Reactive Armor: a passive - no cast, no cooldown/mana
+# spend of its own. Every hit the hero takes (see apply_damage())
+# earns one stack, each with its OWN independent turns-remaining
+# counter (unlike every other duration-based buff above, which only
+# ever tracks one shared timer for the whole effect) so stacks fall
+# off individually rather than all at once. Gaining a stack past this
+# level's own max_stacks drops the oldest one first, same as it being
+# replaced. Folds bonus_armor_per_stack * stack count into _hero_armor()
+# (same slot Living Armor's/Spirit Link's own bonus armor use) and
+# heals bonus_hp_regen_per_stack * stack count every hero turn
+# (_apply_reactive_armor_regen(), same timing/stacking relationship as
+# Arcane Aura's/the baseline passive regen).
+# ------------------------------------------------------------------
+var _reactive_armor_stack_turns: Array[int] = []
+
+# ------------------------------------------------------------------
 # Winter Wyvern's Arctic Burn: while active, the hero's plain Attacks
 # get a flat bonus_damage (folded into _roll_hero_damage(), same slot
 # Essence Shift's/Shadow Dance's/True Form's own bonus damage use) and
@@ -239,6 +296,21 @@ var _freezing_field_damage_per_turn: float = 0.0
 var _freezing_field_radius: int = 0
 var _freezing_field_turns_remaining: int = 0
 var _freezing_field_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Timbersaw's ultimate, Chakram: a targeted cast that deals this
+# level's own cast_damage to the target and every enemy within radius
+# columns of the target's position AT CAST TIME, then plants a marker
+# there - fixed at that snapshot, unlike Freezing Field's own
+# hero-centered radius above, which re-checks the hero's current
+# position every tick - dealing damage_per_turn to every enemy within
+# radius columns of that FIXED spot at the start of every turn for the
+# duration (same "casting turn doesn't count" pattern as every other
+# duration-based buff). Empty dictionary means no chakram is currently
+# planted; see _resolve_chakram_cast()/_tick_chakram()/
+# _despawn_chakram().
+# ------------------------------------------------------------------
+var _chakram: Dictionary = {}
 
 # ------------------------------------------------------------------
 # Tusk's Ice Shards: on cast, deals a straight instant hit to the
@@ -582,6 +654,59 @@ var _enemy_tag_team_bonus_damage: float = 0.0
 var _enemy_tag_team_turns_remaining: int = 0
 var _enemy_tag_team_duration_pending_start: bool = false
 
+# Treant Protector's Nature's Guise, cast by the rival on himself -
+# mirrors the player's own _activate_natures_guise()/_tick_natures_
+# guise()/_end_natures_guise(): folded into _is_target_hidden() (the
+# enemy-side mirror of the player's own _is_hero_hidden()) so the
+# player can't target/select the hidden boss, same as Shadow Dance's own
+# copy - see _is_target_hidden()/_update_enemy_hero_visibility(). The
+# Attack that breaks it roots the player instead of dealing bonus damage
+# - see _resolve_enemy_hero_attack()'s own "attacking_from_enemy_
+# natures_guise" capture.
+var _enemy_natures_guise_active: bool = false
+var _enemy_natures_guise_root_turns: int = 0
+var _enemy_natures_guise_turns_remaining: int = 0
+var _enemy_natures_guise_duration_pending_start: bool = false
+
+# Treant Protector's Living Armor, cast by the rival on himself - mirrors
+# the player's own _activate_living_armor()/_tick_living_armor()/
+# _end_living_armor(): bonus_armor folds into _enemy_hero_bonus_armor()
+# (the same slot Essence Shift's/Spirit Link's own bonus armor already
+# share there), bonus_hp_regen heals the rival on top of his own
+# baseline passive regen (_tick_enemy_passive_regen()) every tick - see
+# _tick_enemy_living_armor().
+var _enemy_living_armor_active: bool = false
+var _enemy_living_armor_bonus_armor: float = 0.0
+var _enemy_living_armor_bonus_hp_regen: float = 0.0
+var _enemy_living_armor_turns_remaining: int = 0
+var _enemy_living_armor_duration_pending_start: bool = false
+
+# Timbersaw's Reactive Armor, on the rival - mirrors the player's own
+# _reactive_armor_stack_turns/_apply_reactive_armor_stack()/_tick_
+# reactive_armor_stacks()/_apply_reactive_armor_regen(): each entry is
+# one stack's own remaining-turns counter, ticking down independently
+# (unlike every other duration-based buff in this file, which only ever
+# tracks one shared timer). Stacked from _deal_fixed_damage_to_enemy()
+# every time a hit actually lands on the boss, folded into _enemy_hero_
+# bonus_armor() for the armor half and healed via _apply_enemy_reactive_
+# armor_regen() for the regen half - see _apply_enemy_reactive_armor_
+# stack().
+var _enemy_reactive_armor_stack_turns: Array[int] = []
+
+# Timbersaw's ultimate, Chakram, on the rival - mirrors the player's own
+# _chakram field/_resolve_chakram_cast()/_tick_chakram()/_despawn_
+# chakram(): a targeted cast that deals this level's own cast_damage to
+# the player (the only possible initial-AoE target in a hero fight - see
+# _cast_enemy_chakram()'s own "no cleave" simplification every other
+# rival AoE already uses), then plants the chakram at the player's
+# CURRENT position at that moment (never re-checked against where the
+# player moves to afterward), dealing damage_per_turn to the player
+# every tick they're still within radius columns of that fixed spot, for
+# the duration. Empty dictionary means no chakram is currently planted;
+# see _cast_enemy_chakram()/_tick_enemy_chakram()/_despawn_enemy_
+# chakram().
+var _enemy_chakram: Dictionary = {}
+
 # ------------------------------------------------------------------
 # What the rival's skills above do TO THE PLAYER. All of this only
 # ever gets set during a hero fight and is reset by
@@ -600,11 +725,10 @@ var _enemy_tag_team_duration_pending_start: bool = false
 var _player_essence_shift_penalty: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 # Entangle's root/silence/damage-over-time, cast by the rival on the
-# player - the mirror of _apply_root()/_tick_entangle_effects(), just
-# aimed at the player instead of an enemy. Root blocks _hero_move();
-# silence blocks _on_skill_pressed(); the DoT ticks alongside
-# everything else in _tick_skill_cooldowns() (via
-# _tick_player_entangle_effects()).
+# player - the mirror of _apply_root(), just aimed at the player
+# instead of an enemy. Root blocks _hero_move(); silence blocks
+# _on_skill_pressed(); the DoT ticks at the start of the player's own
+# turn, alongside everything else in _tick_player_turn_start_effects().
 var _player_root_turns_left: int = 0
 var _player_silence_turns_left: int = 0
 var _player_entangle_dot_damage: float = 0.0
@@ -654,21 +778,44 @@ var _player_ice_vortex_dot_turns_left: int = 0
 # Ancient Apparition's Ice Blast, cast by the rival on the player -
 # mirrors the player-side per-enemy ice_blast_dot_damage/ice_blast_dot_
 # turns_left/ice_blast_execute_pct fields (see _resolve_ice_blast_
-# cast()/_tick_ice_blast_effects()), just held as battle-local vars
-# since there's only one player to track them on. The stun shares
-# _player_stun_turns_left above, same as Torrent's own stun does.
+# cast()), just held as battle-local vars since there's only one player
+# to track them on. The stun shares _player_stun_turns_left above, same
+# as Torrent's own stun does.
 var _player_ice_blast_dot_damage: float = 0.0
 var _player_ice_blast_dot_turns_left: int = 0
 var _player_ice_blast_execute_pct: float = 0.0
 
 # Crystal Maiden's Frostbite, cast by the rival on the player - mirrors
 # the player-side per-enemy frostbite_dot_damage/frostbite_dot_turns_
-# left fields (see _resolve_frostbite_cast()/_tick_frostbite_effects()),
-# just held as battle-local vars since there's only one player to track
-# them on. The stun shares _player_stun_turns_left above, same as
-# Torrent's/Ice Blast's own stun does.
+# left fields (see _resolve_frostbite_cast()), just held as battle-local
+# vars since there's only one player to track them on. The stun shares
+# _player_stun_turns_left above, same as Torrent's/Ice Blast's own stun
+# does.
 var _player_frostbite_dot_damage: float = 0.0
 var _player_frostbite_dot_turns_left: int = 0
+
+# Treant Protector's Leech Seed, cast by the rival on the player -
+# mirrors the player-side per-enemy leech_seed_dot_damage/leech_seed_
+# heal_per_turn/leech_seed_dot_turns_left fields (see _resolve_leech_
+# seed_cast()), just held as battle-local vars since there's only one
+# player to track them on. Unlike every other DoT here, the healing half
+# goes to the CASTER (the rival), not the player - see _tick_player_
+# turn_start_effects()'s own "leech_seed" case, which heals the boss
+# directly (via _get_hero_fight_boss()) each tick instead.
+var _player_leech_seed_dot_damage: float = 0.0
+var _player_leech_seed_heal_per_turn: float = 0.0
+var _player_leech_seed_dot_turns_left: int = 0
+
+# Treant Protector's ultimate, Overgrowth, cast by the rival - mirrors
+# the player-side per-enemy overgrowth_dot_damage/overgrowth_dot_turns_
+# left fields (see _activate_overgrowth()), just held as battle-local
+# vars since there's only one player to track them on. The root shares
+# _player_root_turns_left above, the same field Entangle's own root
+# already uses - Overgrowth's own "can't move, can still attack/cast/
+# use items" rule is exactly what that field already means everywhere
+# it's checked (_hero_move()), so there's nothing extra to enforce here.
+var _player_overgrowth_dot_damage: float = 0.0
+var _player_overgrowth_dot_turns_left: int = 0
 
 # ------------------------------------------------------------------
 # Ranged-hero target selection: when true, the enemies in
@@ -725,6 +872,18 @@ var _pending_xmarks_stage_generation: int = -1
 # targeting() opens targeting until a target is actually clicked
 # (_resolve_ghostship_cast()).
 var _pending_ghostship_level_data: Dictionary = {}
+
+# Timbersaw's Timber Chain, held the same way as every other targeted
+# skill's own pending level data above, from the moment _start_timber_
+# chain_targeting() opens targeting until a target is actually clicked
+# (_resolve_timber_chain_cast()).
+var _pending_timber_chain_level_data: Dictionary = {}
+
+# Timbersaw's Chakram, held the same way as every other targeted
+# skill's own pending level data above, from the moment _start_chakram_
+# targeting() opens targeting until a target is actually clicked
+# (_resolve_chakram_cast()).
+var _pending_chakram_level_data: Dictionary = {}
 
 # Ancient Apparition's Cold Feet, held the same way as every other
 # targeted skill's own pending level data above, from the moment
@@ -792,6 +951,12 @@ var _pending_snowball_level_data: Dictionary = {}
 # actually clicked (_resolve_walrus_punch_cast()).
 var _pending_walrus_punch_level_data: Dictionary = {}
 
+# Treant Protector's Leech Seed, held the same way as every other
+# targeted skill's own pending level data above, from the moment
+# _start_leech_seed_targeting() opens targeting until a target is
+# actually clicked (_resolve_leech_seed_cast()).
+var _pending_leech_seed_level_data: Dictionary = {}
+
 const RANGE_ENEMY_ATTACK_RANGE := 3
 const RANGE_ENEMY_FLEE_DISTANCE := 1
 
@@ -819,6 +984,8 @@ const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
 	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
 	"crystal_nova", "frostbite", "freezing_field",
 	"ice_shards", "snowball", "tag_team", "walrus_punch",
+	"nature's_guise", "leech_seed", "living_armor", "overgrowth",
+	"whirling_death", "timber_chain", "chakram",
 ]
 
 # Reinforcements: if the hero hasn't cleared every enemy within
@@ -891,6 +1058,13 @@ func _ready() -> void:
 	_hero_static = GameManager.get_hero_by_id(_recruited["id"])
 	_current_stage = PlayerManager.get_zone_start_stage(GameManager.selected_zone)
 
+	# Tutorial stages 2 and 3 are manufactured mid-run scenarios (see
+	# TutorialManager.start_stage2()/start_stage3()) rather than a real
+	# zone-cleared state, so they override the stage computed above
+	# directly.
+	if TutorialManager.is_active and (TutorialManager.current_stage == 2 or TutorialManager.current_stage == 3):
+		_current_stage = 3
+
 	# Every player battle attempt (not just full zone clears - fleeing
 	# after a partial clear still counts) also ticks the background
 	# simulation for every other hero in the game, so their world
@@ -908,6 +1082,13 @@ func _ready() -> void:
 	_load_enemies()
 	_update_stage_label()
 	_update_action_buttons()
+
+	if TutorialManager.is_active and TutorialManager.current_stage == 1:
+		_advance_tutorial_stage1_step("move_to_torrent_range")
+	elif TutorialManager.is_active and TutorialManager.current_stage == 2:
+		_start_tutorial_stage2_battle()
+	elif TutorialManager.is_active and TutorialManager.current_stage == 3:
+		_start_tutorial_stage3_battle()
 
 
 func _load_battle_background() -> void:
@@ -965,10 +1146,12 @@ func _hero_max_hp() -> float:
 ## Hero's total armor: base stat from GameManager plus any permanent
 ## bonus picked up from items (mirrors how damage bonus is combined
 ## in _roll_hero_damage), plus any armor currently borrowed via
-## Essence Shift, plus Spirit Link's flat bonus while it's active.
+## Essence Shift, plus Spirit Link's flat bonus, Living Armor's own
+## flat bonus, and Reactive Armor's own per-stack bonus, each while
+## active.
 func _hero_armor() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor - _player_essence_shift_penalty.get("armor", 0.0)
+	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor + _living_armor_bonus_armor + _reactive_armor_bonus_armor() - _player_essence_shift_penalty.get("armor", 0.0)
 
 
 ## Savage Roar's current level data ({} if not learned yet) - looked
@@ -1099,6 +1282,19 @@ func _load_enemies() -> void:
 			mele_templates.append(enemy_def)
 
 	var counts: Dictionary = GameManager.get_stage_enemy_counts(_current_stage)
+
+	# Tutorial stage 3 (see TutorialManager.start_stage3()) puts the
+	# hero into this stage's real enemy composition (5 melee + 2 range
+	# at Cladd Isles) while deliberately low on HP - fine for the brief
+	# stage 2 scenario (one attack, then flee), but that many attackers
+	# every turn is lethal over stage 3's longer script (level up, wait
+	# for reinforcements, cast the ultimate, mop up). Opens with stage
+	# 1's smaller count instead - reinforcements (still sized for the
+	# real stage 3, see _spawn_reinforcements()) bring the numbers back
+	# up right as Ghostship becomes available to deal with them.
+	if TutorialManager.is_active and TutorialManager.current_stage == 3:
+		counts = GameManager.get_stage_enemy_counts(1)
+
 	_spawn_stage_enemies(mele_templates, int(counts.get("mele", 0)))
 	_spawn_stage_enemies(range_templates, int(counts.get("range", 0)))
 
@@ -1243,6 +1439,8 @@ func _spawn_reinforcements() -> void:
 
 	if (not mele_templates.is_empty() and mele_count > 0) or (not range_templates.is_empty() and range_count > 0):
 		_show_message_over_hero("Reinforcements arrived!")
+		_tutorial_maybe_explain_reinforcements()
+		_tutorial_maybe_advance_stage3_for_reinforcements()
 
 
 ## Only items that are actually consumed by use (heal/mana potions)
@@ -1294,6 +1492,10 @@ func _populate_item_grid() -> void:
 				# check), so there's nothing left for him to spend it on.
 				btn.disabled = _battle_over or _has_acted_this_turn or _cold_embrace_active or _player_stun_turns_left > 0
 				btn.pressed.connect(_on_item_pressed.bind(item_id))
+				# Lets _apply_tutorial_gate() find this button again by
+				# item id without needing its own tracking dict, the way
+				# _skill_buttons already does for skills.
+				btn.set_meta("tutorial_item_id", item_id)
 			else:
 				# Equipment is passive, not clickable - but `disabled`
 				# also dims the icon in Godot's default theme, which
@@ -1302,11 +1504,13 @@ func _populate_item_grid() -> void:
 				# it fully bright while still being unclickable.
 				btn.disabled = false
 				btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				btn.set_meta("tutorial_item_id", "")
 		else:
 			btn.icon = null
 			btn.text = ""
 			btn.disabled = true
 			btn.mouse_filter = Control.MOUSE_FILTER_STOP
+			btn.set_meta("tutorial_item_id", "")
 
 
 func _refresh_gold_label() -> void:
@@ -1328,6 +1532,12 @@ func _on_item_pressed(item_id: String) -> void:
 			heal(value)
 		"mana":
 			restore_mana(value)
+
+	if TutorialManager.is_active and TutorialManager.current_stage == 3:
+		if _tutorial_stage3_step == "heal_up" and item_id == "health":
+			_advance_tutorial_stage3_step("attack_to_level_up")
+		elif _tutorial_stage3_step == "need_mana_potion" and item_id == "mana":
+			_advance_tutorial_stage3_step("cast_ultimate_ready")
 
 	_mark_turn_used()
 
@@ -1401,7 +1611,7 @@ func _refresh_bars() -> void:
 ## each one just reflects current state rather than being toggled from
 ## every individual cast/tick/dispel site.
 func _refresh_status_effects() -> void:
-	# Ice Blast's execute mechanic (see _tick_player_ice_blast_effects())
+	# Ice Blast's execute mechanic (see _tick_player_turn_start_effects())
 	# reserves execute_pct of the player's OWN max HP as a fixed danger
 	# zone near the bottom of the bar, not a chunk of current HP - so
 	# this is a static width fraction of the bar, not tied to hp_bar's
@@ -1602,6 +1812,9 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 	var mana_cost: float = float(level_data.get("mana_cost", skill.get("mana_cost", 0)))
 	if _recruited.get("current_mana", 0) < mana_cost:
 		_show_message_over_hero("Not enough mana")
+		if TutorialManager.is_active and TutorialManager.current_stage == 3 \
+		and skill_id == "ghostship" and _tutorial_stage3_step == "cast_ultimate":
+			_advance_tutorial_stage3_step("need_mana_potion")
 		return
 
 	var generation_before: int = _stage_generation
@@ -1616,6 +1829,26 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			if not _cast_dark_pact(level_data):
 				# No enemies in range - same as above, no-op.
 				return
+		"whirling_death":
+			if not _cast_whirling_death(level_data):
+				# No enemies in range - same as above, no-op.
+				return
+		"timber_chain":
+			if not _start_timber_chain_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_timber_chain_cast), not here.
+			return
+		"chakram":
+			if not _start_chakram_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_chakram_cast), not here.
+			return
 		"mist_coil":
 			_start_mist_coil_targeting(level_data)
 			# Mist Coil needs the player to click a target first - an
@@ -1630,6 +1863,8 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			_activate_essence_shift(level_data)
 		"shadow_dance":
 			_activate_shadow_dance(level_data)
+		"nature's_guise":
+			_activate_natures_guise(level_data)
 		"arctic_burn":
 			_activate_arctic_burn(level_data)
 		"cold_embrace":
@@ -1769,18 +2004,34 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			# above - the mana/cooldown/turn spend happens once the
 			# click resolves (_resolve_walrus_punch_cast), not here.
 			return
+		"leech_seed":
+			if not _start_leech_seed_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_leech_seed_cast), not here.
+			return
+		"living_armor":
+			_activate_living_armor(level_data)
+		"overgrowth":
+			_activate_overgrowth(level_data)
 		_:
 			# No effect implemented yet for other skills - this is the
 			# hook point for when they're added. For now it just
 			# confirms the wiring works end to end.
 			print("Used skill: ", skill.get("name", ""))
 
-	# Shadow Dance only breaks from attacking or casting ANOTHER
-	# skill - not from the cast that just activated it in the first
-	# place, and not from items/potions (those never reach this
-	# function at all).
-	if _is_hero_hidden() and skill_id != "shadow_dance":
-		_end_shadow_dance()
+	# Shadow Dance/Nature's Guise only break from attacking or casting
+	# ANOTHER skill - not from the cast that just activated them in the
+	# first place, and not from items/potions (those never reach this
+	# function at all). Only one of the two could ever be active in a
+	# given battle, so this just ends whichever one actually is.
+	if _is_hero_hidden() and skill_id != "shadow_dance" and skill_id != "nature's_guise":
+		if _shadow_dance_active:
+			_end_shadow_dance()
+		elif _natures_guise_active:
+			_end_natures_guise()
 
 	spend_mana(mana_cost)
 	_skill_cooldowns[skill_id] = int(level_data.get("cooldown", 0))
@@ -1833,6 +2084,12 @@ func _cast_pounce(level_data: Dictionary) -> bool:
 		var next_pos: int = pos + direction
 		if next_pos < 0 or next_pos >= GRID_COLUMNS:
 			break
+		# A rival's Ice Shards wall stops the leap dead - it can't carry
+		# the hero past a blocked column, same "can't step into one"
+		# rule _melee_move_target()/_ranged_move_target() already
+		# enforce for a normal move.
+		if _is_column_enemy_ice_shards_blocked(next_pos):
+			break
 		pos = next_pos
 
 		var enemy_here: Dictionary = _get_enemy_at(pos)
@@ -1881,11 +2138,37 @@ func _cast_dark_pact(level_data: Dictionary) -> bool:
 	return true
 
 
+## Timbersaw's Whirling Death: deals `level_data.damage` (a flat amount,
+## not a roll off the hero's own attack) to every enemy within
+## `level_data.radius` columns of Timbersaw. Same shape as
+## _cast_dark_pact() above, just with a flat damage value instead of a
+## multiplier on a rolled hit. Returns false (no mana/turn/cooldown
+## spent) if nothing is in range.
+func _cast_whirling_death(level_data: Dictionary) -> bool:
+	var radius: int = int(level_data.get("radius", 0))
+	var targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+			targets.append(enemy)
+
+	if targets.is_empty():
+		_show_message_over_hero("No enemies in range")
+		return false
+
+	var whirling_damage: float = float(level_data.get("damage", 0))
+	for enemy in targets:
+		_deal_fixed_damage_to_enemy(enemy, whirling_damage)
+
+	return true
+
+
 ## Resolves an Entangle cast once the player has clicked a target
 ## (see _start_entangle_targeting()/_on_enemy_clicked()): roots and
 ## silences `target` for this level's turn counts and arms its
-## damage-over-time (ticked once per turn by _tick_entangle_effects(),
-## alongside skill cooldowns). Then spends mana, starts Entangle's own
+## damage-over-time (ticked once per turn, at the start of that enemy's
+## own turn, by _tick_enemy_turn_start_effects()). Then spends mana, starts Entangle's own
 ## cooldown, and ends the turn - the same bookkeeping _on_skill_pressed
 ## does for every other skill, just deferred to here since Entangle's
 ## target isn't known until after that function already returned.
@@ -1969,6 +2252,20 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 	_skill_cooldowns["torrent"] = int(level_data.get("cooldown", 0))
 	PlayerManager.set_skill_cooldown("torrent", _skill_cooldowns["torrent"])
 	_refresh_skill_cooldown_labels()
+
+	if TutorialManager.is_active and TutorialManager.current_stage == 1 \
+	and (_tutorial_stage1_step == "cast_torrent_on_range" or _tutorial_stage1_step == "recast_torrent_on_range"):
+		# A recast (see "melee_in_range"'s own check below) can land while
+		# the hero isn't actually standing next to a melee creep yet - a
+		# reinforcement's melee creep spawns at its own fixed column,
+		# independent of wherever the hero happens to be by then. Only
+		# jump straight to "attack" if one is already right there;
+		# otherwise route through "approach_melee" same as the very
+		# first cast always has.
+		if _get_enemy_at(_hero_pos_index).is_empty():
+			_advance_tutorial_stage1_step("approach_melee")
+		else:
+			_advance_tutorial_stage1_step("melee_in_range")
 
 	if _battle_over or _stage_generation != generation_before:
 		return
@@ -2067,10 +2364,209 @@ func _resolve_ghostship_cast(target: Dictionary, level_data: Dictionary) -> void
 	PlayerManager.set_skill_cooldown("ghostship", _skill_cooldowns["ghostship"])
 	_refresh_skill_cooldown_labels()
 
+	if TutorialManager.is_active and TutorialManager.current_stage == 3 and _tutorial_stage3_step == "cast_ultimate_ready":
+		_advance_tutorial_stage3_step("mop_up")
+
 	if _battle_over or _stage_generation != generation_before:
 		return
 
 	_mark_turn_used()
+
+
+## Resolves a Timber Chain cast on `target`: chains a line from
+## Timbersaw's own column to `target`'s, so every enemy currently
+## standing anywhere between the two (inclusive of both ends, same
+## convention as _resolve_ghostship_cast() above) takes
+## `level_data.damage` - `target` itself takes the same amount, it's
+## not a separate/bonus hit. The whole path is snapshotted into
+## `hit_targets` before any damage is dealt, same reasoning as
+## Ghostship's own snapshot. Timbersaw then pulls himself onto
+## `target`'s own pos_index (read after the damage above, but a dead
+## enemy keeps its last "pos_index" around, so this still lands in the
+## right spot even if the chain itself killed `target`) - UNLESS a
+## rival's Ice Shards wall sits somewhere in that path, in which case
+## the pull itself stops one column short of it (the chain's damage
+## above still reaches the full line regardless - only the hero's own
+## physical landing spot is blocked).
+func _resolve_timber_chain_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	var start_col: int = mini(_hero_pos_index, target["pos_index"])
+	var end_col: int = maxi(_hero_pos_index, target["pos_index"])
+
+	var hit_targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		var pos: int = enemy["pos_index"]
+		if pos >= start_col and pos <= end_col:
+			hit_targets.append(enemy)
+	for enemy in hit_targets:
+		_deal_fixed_damage_to_enemy(enemy, damage)
+
+	# The chain's own damage still reaches every enemy across the full
+	# line above (a magical effect, not the hero physically walking it)
+	# but a rival's Ice Shards wall in that same path stops the hero's
+	# own pull short of target's column - same "can't step into one"
+	# rule every other hero movement enforces, just walked one column
+	# at a time here instead of using _melee_move_target()/_ranged_
+	# move_target() (this pull crosses a whole line at once, not a
+	# fixed per-move distance).
+	var chain_direction: int = _step_toward(_hero_pos_index, target["pos_index"])
+	var landing_pos: int = _hero_pos_index
+	while chain_direction != 0 and landing_pos != target["pos_index"]:
+		var next_pos: int = landing_pos + chain_direction
+		if _is_column_enemy_ice_shards_blocked(next_pos):
+			break
+		landing_pos = next_pos
+
+	_hero_pos_index = landing_pos
+	_update_hero_position()
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["timber_chain"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("timber_chain", _skill_cooldowns["timber_chain"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+# ------------------------------------------------------------------
+# Timbersaw's ultimate, Chakram (see the field comment above _chakram
+# for the overall shape).
+# ------------------------------------------------------------------
+
+## Resolves a Chakram cast on `target`: deals this level's own
+## cast_damage to `target` and every other enemy within radius columns
+## of `target`'s position at this moment, then plants the chakram
+## there - snapshotting that position now, so it stays fixed even if
+## `target` (or anything else) moves later. Any chakram already planted
+## from a previous cast is torn down first, same "recast replaces
+## outright" reasoning as _summon_spirit_bear()'s own _despawn_bear()
+## call, since the ultimate's long cooldown makes an overlapping recast
+## a rare, deliberate choice rather than something worth stacking.
+func _resolve_chakram_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var pos_index: int = target["pos_index"]
+	var radius: int = int(level_data.get("radius", 0))
+
+	var cast_damage: float = float(level_data.get("cast_damage", 0))
+	var hit_targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], pos_index) <= radius:
+			hit_targets.append(enemy)
+	for enemy in hit_targets:
+		_deal_fixed_damage_to_enemy(enemy, cast_damage)
+
+	_despawn_chakram()
+	_chakram = {
+		"pos_index": pos_index,
+		"radius": radius,
+		"damage_per_turn": float(level_data.get("damage_per_turn", 0)),
+		"turns_remaining": int(level_data.get("duration", 0)),
+		"duration_pending_start": true,
+		"node": _spawn_chakram_marker(pos_index),
+	}
+	_show_message_over_hero("Chakram!")
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["chakram"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("chakram", _skill_cooldowns["chakram"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Purely cosmetic: spawns the chakram's marker texture at
+## `pos_index`, half the usual creature height since it's a planted
+## marker rather than a combatant - same texture-loading/layering
+## convention as _summon_spirit_bear()'s own art. Returns the created
+## node for _resolve_chakram_cast() to store into `_chakram["node"]`,
+## or null (with a console print, same as a missing bear image) if the
+## art asset isn't actually there.
+func _spawn_chakram_marker(pos_index: int) -> TextureRect:
+	if not ResourceLoader.exists(CHAKRAM_IMAGE_PATH):
+		print("No Chakram image found at: ", CHAKRAM_IMAGE_PATH)
+		return null
+
+	var full_creature_height: float = get_viewport_rect().size.y / 4.0
+	var target_height: float = full_creature_height / 2.0
+	var texture: Texture2D = load(CHAKRAM_IMAGE_PATH)
+	var tex_size: Vector2 = texture.get_size()
+	var scale_factor: float = target_height / tex_size.y
+	var target_width: float = tex_size.x * scale_factor
+
+	var tex_rect := TextureRect.new()
+	tex_rect.texture = texture
+	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+	tex_rect.size = Vector2(target_width, target_height)
+	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tex_rect.position = Vector2(_index_to_x(pos_index), _creature_y() + (full_creature_height - target_height) / 2.0)
+	add_child(tex_rect)
+	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# render at the hero/enemy layer, not on top of every UI panel.
+	move_child(tex_rect, enemies_layer.get_index() + 1)
+
+	return tex_rect
+
+
+## Ticks the planted Chakram's duration down once per End Turn, same
+## timing (and same "the casting turn doesn't count" skip) as every
+## other duration-based buff - dealing this level's own damage_per_turn
+## to every living, targetable enemy within radius columns of the
+## FIXED position it was planted at (not re-checked against any
+## enemy's current position - see the field comment above _chakram) on
+## every tick that actually counts against the duration. A no-op while
+## no chakram is planted.
+func _tick_chakram() -> void:
+	if _chakram.is_empty():
+		return
+
+	if _chakram.get("duration_pending_start", false):
+		_chakram["duration_pending_start"] = false
+		return
+
+	var pos_index: int = int(_chakram["pos_index"])
+	var radius: int = int(_chakram["radius"])
+	var damage_per_turn: float = float(_chakram["damage_per_turn"])
+	for enemy in _enemies.duplicate():
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], pos_index) <= radius:
+			_deal_fixed_damage_to_enemy(enemy, damage_per_turn)
+			if _battle_over:
+				return
+
+	_chakram["turns_remaining"] = int(_chakram["turns_remaining"]) - 1
+	if int(_chakram["turns_remaining"]) <= 0:
+		_despawn_chakram()
+
+
+## Removes whatever chakram is currently planted, if any - used both
+## when a fresh cast replaces one still active (see
+## _resolve_chakram_cast()) and when its duration runs out
+## (_tick_chakram()). Scene teardown at battle end frees the node
+## implicitly either way, same reasoning as _despawn_bear()'s own
+## comment.
+func _despawn_chakram() -> void:
+	if _chakram.is_empty():
+		return
+	if is_instance_valid(_chakram.get("node")):
+		_chakram["node"].queue_free()
+	_chakram = {}
 
 
 ## Purely cosmetic: spawns the ship art at `start_pos_index` and tweens
@@ -2119,8 +2615,8 @@ func _play_ghostship_animation(start_pos_index: int, target_pos_index: int) -> v
 ## fields, separate from Entangle's/Curse of Avernus's own DoT fields
 ## even though the mechanism is identical, since a different skill's
 ## effect shouldn't silently share or clobber another's state) - ticked
-## once per turn by _tick_cold_feet_effects(), alongside every other
-## enemy-side DoT. Recasting on an already-frozen target simply
+## once per turn, at the start of that enemy's own turn, by
+## _tick_enemy_turn_start_effects(). Recasting on an already-frozen target simply
 ## overwrites its counters with this cast's fresh values, same as
 ## Entangle's own recast rule.
 func _resolve_cold_feet_cast(target: Dictionary, level_data: Dictionary) -> void:
@@ -2141,24 +2637,6 @@ func _resolve_cold_feet_cast(target: Dictionary, level_data: Dictionary) -> void
 	_mark_turn_used()
 
 
-## Ticks Cold Feet's damage-over-time down by one turn for every enemy
-## currently carrying it, dealing that turn's damage (still mitigated
-## by that enemy's own armor, via _deal_fixed_damage_to_enemy() - same
-## helper Entangle's own DoT uses) - called once per End Turn,
-## alongside _tick_entangle_effects(). Bails out immediately if a
-## tick's damage ends the battle, same reasoning as that function's own
-## early return.
-func _tick_cold_feet_effects() -> void:
-	for enemy in _enemies.duplicate():
-		if enemy.get("cold_feet_dot_turns_left", 0) > 0:
-			enemy["cold_feet_dot_turns_left"] -= 1
-			var dot_damage: float = float(enemy.get("cold_feet_dot_damage", 0))
-			if dot_damage > 0.0:
-				_deal_fixed_damage_to_enemy(enemy, dot_damage)
-				if _battle_over:
-					return
-
-
 ## Resolves an Ice Vortex cast on `target`: no immediate damage, just
 ## arms this level's own damage/duration onto EVERY enemy within
 ## this level's own radius of `target`'s column (`target` included -
@@ -2166,9 +2644,10 @@ func _tick_cold_feet_effects() -> void:
 ## ice_vortex_dot_damage/ice_vortex_dot_turns_left fields, kept
 ## separate from Cold Feet's/Entangle's/Curse of Avernus's own DoT
 ## fields for the same reason Cold Feet's are separate from theirs.
-## Ticked once per turn by _tick_ice_vortex_effects(). Recasting
-## overwrites whatever DoT an already-affected enemy was carrying,
-## same as every other DoT skill's own recast rule.
+## Ticked once per turn, at the start of that enemy's own turn, by
+## _tick_enemy_turn_start_effects(). Recasting overwrites whatever DoT
+## an already-affected enemy was carrying, same as every other DoT
+## skill's own recast rule.
 func _resolve_ice_vortex_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
@@ -2194,23 +2673,6 @@ func _resolve_ice_vortex_cast(target: Dictionary, level_data: Dictionary) -> voi
 		return
 
 	_mark_turn_used()
-
-
-## Ticks Ice Vortex's damage-over-time down by one turn for every enemy
-## currently carrying it, dealing that turn's damage (still mitigated
-## by that enemy's own armor, via _deal_fixed_damage_to_enemy()) -
-## called once per End Turn, alongside Cold Feet's own tick. Bails out
-## immediately if a tick's damage ends the battle, same reasoning as
-## _tick_entangle_effects()'s own early return.
-func _tick_ice_vortex_effects() -> void:
-	for enemy in _enemies.duplicate():
-		if enemy.get("ice_vortex_dot_turns_left", 0) > 0:
-			enemy["ice_vortex_dot_turns_left"] -= 1
-			var dot_damage: float = float(enemy.get("ice_vortex_dot_damage", 0))
-			if dot_damage > 0.0:
-				_deal_fixed_damage_to_enemy(enemy, dot_damage)
-				if _battle_over:
-					return
 
 
 ## Resolves a Chilling Touch cast on `target`: one instant hit for the
@@ -2246,7 +2708,7 @@ func _resolve_chilling_touch_cast(target: Dictionary, level_data: Dictionary) ->
 ## own "one rolled amount, many separately-mitigated hits" pattern),
 ## then arms this level's own DoT (dot_damage/dot_duration) AND execute
 ## threshold (execute_pct, the "reserved %" of max HP - see
-## _tick_ice_blast_effects() for how that's actually enforced) on every
+## _tick_enemy_turn_start_effects() for how that's actually enforced) on every
 ## one of them that survived the initial hit. `target` alone also gets
 ## stunned, mirroring Torrent's own "only the primary target" rule for
 ## its stun.
@@ -2287,40 +2749,6 @@ func _resolve_ice_blast_cast(target: Dictionary, level_data: Dictionary) -> void
 		return
 
 	_mark_turn_used()
-
-
-## Ticks Ice Blast's damage-over-time down by one turn for every enemy
-## currently carrying it, dealing that turn's damage (still mitigated
-## by that enemy's own armor, via _deal_fixed_damage_to_enemy()) - then,
-## if it survived that hit, checks its execute threshold: an enemy
-## whose current_hp has dropped to or below execute_pct of its own max
-## HP dies outright, regardless of how much literal HP it has left
-## (the "reserved %" - see the skill's own design doc). Once the DoT
-## duration itself runs out, the execute threshold resets to 0 (no more
-## instant kills) until Ice Blast is cast on that enemy again. Called
-## once per End Turn, alongside every other enemy-side DoT.
-func _tick_ice_blast_effects() -> void:
-	for enemy in _enemies.duplicate():
-		if enemy.get("ice_blast_dot_turns_left", 0) <= 0:
-			continue
-
-		enemy["ice_blast_dot_turns_left"] -= 1
-		var dot_damage: float = float(enemy.get("ice_blast_dot_damage", 0))
-		if dot_damage > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, dot_damage)
-			if _battle_over:
-				return
-
-		if enemy.get("current_hp", 0) > 0:
-			var execute_pct: float = float(enemy.get("ice_blast_execute_pct", 0.0))
-			var max_hp: float = float(enemy["static"].get("hp", 1))
-			if execute_pct > 0.0 and enemy["current_hp"] <= max_hp * execute_pct:
-				_kill_enemy(enemy)
-				if _battle_over:
-					return
-
-		if enemy.get("ice_blast_dot_turns_left", 0) <= 0:
-			enemy["ice_blast_execute_pct"] = 0.0
 
 
 ## Resolves a Splinter Blast cast on `target`: `level_data.damage` to
@@ -2446,7 +2874,8 @@ func _resolve_crystal_nova_cast(target: Dictionary, level_data: Dictionary) -> v
 ## the same shared per-enemy field Torrent's/Ice Blast's/Winter's
 ## Curse's own stun already uses), then arms its own damage-over-time
 ## (target["frostbite_dot_damage"]/["frostbite_dot_turns_left"], ticked
-## by _tick_frostbite_effects() alongside every other DoT) - a
+## by _tick_enemy_turn_start_effects() at the start of that enemy's own
+## turn, alongside every other DoT) - a
 ## dedicated pair of fields rather than reusing Cold Feet's/Ice
 ## Vortex's/Ice Blast's own, so a different skill's DoT never silently
 ## shares or clobbers another's counters on the same target.
@@ -2468,22 +2897,6 @@ func _resolve_frostbite_cast(target: Dictionary, level_data: Dictionary) -> void
 
 	_mark_turn_used()
 
-
-## Ticks Frostbite's damage-over-time down by one turn for every enemy
-## currently carrying it, dealing that turn's damage (still mitigated
-## by that enemy's own armor, via _deal_fixed_damage_to_enemy()) -
-## called once per End Turn, alongside every other DoT. Bails out
-## immediately if a tick's damage ends the battle, same reasoning as
-## _tick_cold_feet_effects()'s own early return.
-func _tick_frostbite_effects() -> void:
-	for enemy in _enemies.duplicate():
-		if enemy.get("frostbite_dot_turns_left", 0) > 0:
-			enemy["frostbite_dot_turns_left"] -= 1
-			var dot_damage: float = float(enemy.get("frostbite_dot_damage", 0))
-			if dot_damage > 0.0:
-				_deal_fixed_damage_to_enemy(enemy, dot_damage)
-				if _battle_over:
-					return
 
 
 # ------------------------------------------------------------------
@@ -2549,6 +2962,37 @@ func _apply_tidebringer_cleave(target: Dictionary, attack_damage: float, level_d
 		if is_same(enemy, target) or _is_target_hidden(enemy):
 			continue
 		if _distance(enemy["pos_index"], target_pos) <= radius:
+			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
+
+
+const CLEAVER_DAMAGE_PCT := 0.30
+const CLEAVER_RANGE := 1
+
+
+## The Cleaver item's own passive: identical shape to Tidebringer's
+## cleave just above (same "% of the attack's own raw damage, before
+## the main target's own armor reduces it, splashed to every OTHER
+## living enemy within `radius` columns, each mitigated by its own
+## armor separately" rule - see _apply_tidebringer_cleave()) but a
+## flat, always-on item bonus rather than a levelled, stack-consuming
+## skill proc. Gated on actually owning one - a no-op the instant it's
+## sold, same as every other passive "stat" item's own bonus (see
+## PlayerManager.get_inventory_stat_bonus()'s own comment on why
+## nothing needs to be stored beyond "is it in the inventory right
+## now").
+func _apply_cleaver_cleave(target: Dictionary, attack_damage: float) -> void:
+	if PlayerManager.get_inventory().get("cleaver", 0) <= 0:
+		return
+
+	var cleave_damage: float = attack_damage * CLEAVER_DAMAGE_PCT
+	if cleave_damage <= 0.0:
+		return
+
+	var target_pos: int = target["pos_index"]
+	for enemy in _enemies:
+		if is_same(enemy, target) or _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], target_pos) <= CLEAVER_RANGE:
 			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
 
 
@@ -2727,10 +3171,14 @@ func _end_ice_shards() -> void:
 ## every PLAIN movement decision in _enemy_turn()/_enemy_hero_turn()
 ## (flee, "close in", Winter's Curse's own redirect) so an enemy
 ## standing in a blocked column can't move at all and one standing
-## outside it can't step into one, i.e. can't move past it. Deliberately
-## NOT checked against a skill-driven relocation (Pounce's leap, X Marks
-## the Spot's teleport) - the design doc calls those out as still usable
-## while walled in, same as an attack or an item.
+## outside it can't step into one, i.e. can't move past it. A true
+## teleport (X Marks the Spot) still isn't checked against this - it
+## doesn't travel through the columns in between at all, unlike a jump
+## (Pounce, Snowball) or a pull (Timber Chain), which now ARE stopped
+## by a wall in their path on both sides (see _cast_pounce()/
+## _resolve_snowball_cast()/_resolve_timber_chain_cast() and their own
+## _is_column_enemy_ice_shards_blocked() checks for the player's own
+## copies, _cast_enemy_pounce()/_cast_enemy_snowball() for the rival's).
 func _is_column_ice_shards_blocked(col: int) -> bool:
 	return _ice_shards_active and col in _ice_shards_blocked_columns
 
@@ -2740,9 +3188,11 @@ func _is_column_ice_shards_blocked(col: int) -> bool:
 # ------------------------------------------------------------------
 
 ## Resolves a Snowball cast on `target`: moves the hero straight onto
-## `target`'s own column - updating his LOGICAL position immediately,
-## same as every other action, so anything checked right after (range,
-## _stage_generation, etc.) already sees him there - then deals
+## `target`'s own column - or, if a rival's Ice Shards wall sits
+## somewhere in that path, only as far as one column short of it -
+## updating his LOGICAL position immediately, same as every other
+## action, so anything checked right after (range, _stage_generation,
+## etc.) already sees him there - then deals
 ## `level_data.damage` and stuns it for `level_data.stun_turns` if it
 ## survives, same stun mechanism Torrent's/Ice Blast's/Frostbite's own
 ## use. The charge itself (portrait swap to SNOWBALL_IMAGE_PATH, a
@@ -2762,15 +3212,28 @@ func _resolve_snowball_cast(target: Dictionary, level_data: Dictionary) -> void:
 	if target.get("current_hp", 0) > 0:
 		target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
 
-	_hero_pos_index = target_pos_index
+	# The charge physically carries the hero across every column in
+	# between (unlike X Marks the Spot's true teleport), so a rival's
+	# Ice Shards wall in its path stops it one column short of
+	# target_pos_index, same rule Pounce's own leap and Timber Chain's
+	# own pull now follow.
+	var charge_direction: int = _step_toward(start_pos_index, target_pos_index)
+	var landing_pos_index: int = start_pos_index
+	while charge_direction != 0 and landing_pos_index != target_pos_index:
+		var next_pos: int = landing_pos_index + charge_direction
+		if _is_column_enemy_ice_shards_blocked(next_pos):
+			break
+		landing_pos_index = next_pos
+
+	_hero_pos_index = landing_pos_index
 	# Hero art is drawn facing right by default (see _hero_move()'s own
 	# note on art orientation), so charging left mirrors it to face
 	# that way.
-	hero_image.flip_h = target_pos_index < start_pos_index
+	hero_image.flip_h = landing_pos_index < start_pos_index
 	_set_hero_image(SNOWBALL_IMAGE_PATH)
 
 	var tween := create_tween()
-	tween.tween_property(hero_image, "position:x", _index_to_x(target_pos_index), SNOWBALL_TRAVEL_DURATION)
+	tween.tween_property(hero_image, "position:x", _index_to_x(landing_pos_index), SNOWBALL_TRAVEL_DURATION)
 	tween.finished.connect(_end_snowball_animation)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
@@ -2934,6 +3397,196 @@ func _resolve_walrus_punch_damage(target: Dictionary, punch_damage: float, hit_w
 	_mark_turn_used()
 
 
+# ------------------------------------------------------------------
+# Treant Protector's Leech Seed.
+# ------------------------------------------------------------------
+
+## Resolves a Leech Seed cast on `target`: no immediate damage, just
+## arms this level's own dot_damage/heal_per_turn onto `target`'s own
+## dedicated leech_seed_dot_turns_left counter - a separate pair of
+## fields from Cold Feet's/Ice Vortex's/Ice Blast's/Frostbite's own
+## DoTs, same "never silently shares or clobbers another skill's
+## counters on the same target" reasoning those already follow - ticked
+## once per turn, at the start of that enemy's own turn, by
+## _tick_enemy_turn_start_effects(), healing the hero the same amount
+## it damages the target.
+func _resolve_leech_seed_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	target["leech_seed_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["leech_seed_heal_per_turn"] = float(level_data.get("heal_per_turn", 0))
+	target["leech_seed_dot_turns_left"] = int(level_data.get("duration", 0))
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["leech_seed"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("leech_seed", _skill_cooldowns["leech_seed"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+
+# ------------------------------------------------------------------
+# Treant Protector's Living Armor.
+# ------------------------------------------------------------------
+
+## Activates Living Armor: arms this level's own bonus_armor/
+## bonus_hp_regen for `level_data.duration` turns. Always "succeeds" -
+## cast on the hero himself, no target or range requirement, same as
+## every other self-cast buff.
+func _activate_living_armor(level_data: Dictionary) -> void:
+	_living_armor_active = true
+	_living_armor_bonus_armor = float(level_data.get("bonus_armor", 0))
+	_living_armor_bonus_hp_regen = float(level_data.get("bonus_hp_regen", 0))
+	_living_armor_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_living_armor()), same as
+	# every other duration-based buff.
+	_living_armor_duration_pending_start = true
+
+	_show_message_over_hero("Living Armor!")
+
+
+## Ticks Living Armor's duration down once per End Turn, same timing
+## (and same "the casting turn doesn't count" skip) as every other
+## duration-based buff - healing the hero for this level's own
+## bonus_hp_regen, on top of his baseline passive regen
+## (_apply_passive_hero_regen()), on every tick that actually counts
+## against the duration.
+func _tick_living_armor() -> void:
+	if not _living_armor_active:
+		return
+
+	if _living_armor_duration_pending_start:
+		_living_armor_duration_pending_start = false
+		return
+
+	heal(_living_armor_bonus_hp_regen)
+	_living_armor_turns_remaining -= 1
+	if _living_armor_turns_remaining <= 0:
+		_end_living_armor()
+
+
+## Ends Living Armor once its duration runs out.
+func _end_living_armor() -> void:
+	_living_armor_active = false
+	_living_armor_bonus_armor = 0.0
+	_living_armor_bonus_hp_regen = 0.0
+	_living_armor_turns_remaining = 0
+	_living_armor_duration_pending_start = false
+
+	_show_message_over_hero("Living Armor wears off")
+
+
+# ------------------------------------------------------------------
+# Timbersaw's Reactive Armor (passive - see the field comment above
+# _reactive_armor_stack_turns for the overall shape).
+# ------------------------------------------------------------------
+
+## Reactive Armor's level data for whatever level the player has it at
+## right now - {} if it isn't learned at all (level 0) or the current
+## hero isn't Timbersaw, the same "empty means locked" convention every
+## other auto-triggered skill's own _get_*_level_data() helper uses.
+func _get_reactive_armor_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("reactive_armor")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "reactive_armor":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Reactive Armor's current total armor bonus - this level's own
+## bonus_armor_per_stack times however many stacks are currently up.
+## Folded into _hero_armor(). A no-op (0.0) while the skill isn't
+## learned or no stacks are up.
+func _reactive_armor_bonus_armor() -> float:
+	var level_data: Dictionary = _get_reactive_armor_level_data()
+	if level_data.is_empty():
+		return 0.0
+	return _reactive_armor_stack_turns.size() * float(level_data.get("bonus_armor_per_stack", 0.0))
+
+
+## Called from apply_damage() every time a hit actually lands on the
+## hero, regardless of source (Attack, skill nuke, DoT tick - anything
+## routed through apply_damage()). Adds one stack with this level's own
+## full duration; if that would exceed max_stacks, the oldest stack
+## (soonest to expire) is dropped first so the count never exceeds the
+## cap. A no-op while the skill isn't learned.
+func _apply_reactive_armor_stack() -> void:
+	var level_data: Dictionary = _get_reactive_armor_level_data()
+	if level_data.is_empty():
+		return
+
+	var max_stacks: int = int(level_data.get("max_stacks", 0))
+	if _reactive_armor_stack_turns.size() >= max_stacks:
+		_reactive_armor_stack_turns.pop_front()
+	_reactive_armor_stack_turns.append(int(level_data.get("duration", 0)))
+
+
+## Ticks every active stack's own remaining-turns counter down by one,
+## once per End Turn, dropping any that reach zero - independently of
+## each other, unlike every other duration-based buff in this file
+## which only ever tracks one shared timer. A no-op while no stacks are
+## up (including while the skill isn't learned, since then none can
+## ever have been added).
+func _tick_reactive_armor_stacks() -> void:
+	for i in range(_reactive_armor_stack_turns.size()):
+		_reactive_armor_stack_turns[i] -= 1
+	_reactive_armor_stack_turns = _reactive_armor_stack_turns.filter(func(turns_left): return turns_left > 0)
+
+
+## Heals this level's own bonus_hp_regen_per_stack times however many
+## stacks are currently up, once at the start of every hero turn - same
+## timing/stacking relationship (on top of, not instead of) as Arcane
+## Aura's and the baseline passive regen. A no-op while the skill isn't
+## learned or no stacks are up.
+func _apply_reactive_armor_regen() -> void:
+	var level_data: Dictionary = _get_reactive_armor_level_data()
+	if level_data.is_empty() or _reactive_armor_stack_turns.is_empty():
+		return
+
+	heal(_reactive_armor_stack_turns.size() * float(level_data.get("bonus_hp_regen_per_stack", 0.0)))
+
+
+# ------------------------------------------------------------------
+# Treant Protector's ultimate, Overgrowth.
+# ------------------------------------------------------------------
+
+## Activates Overgrowth: every living, targetable enemy within
+## `level_data.radius` columns of the hero's CURRENT position gets
+## rooted (target["root_turns_left"], the same shared per-enemy field
+## Entangle's/Nature's Guise's/Ice Shards'/Winter's Curse's own root/
+## freeze effects already use - it can still attack and cast skills
+## while rooted, same as any other rooted enemy) for `level_data.
+## root_duration` turns, and armed with that same level's own DoT
+## (target["overgrowth_dot_damage"]/["overgrowth_dot_turns_left"], a
+## dedicated pair of fields so it never clobbers another skill's DoT on
+## the same enemy) for the same duration - ticked, at the start of each
+## enemy's own turn, by _tick_enemy_turn_start_effects(). Always
+## "succeeds" - cast on the hero himself, no target or range
+## requirement, same as every other self-cast buff/AoE.
+func _activate_overgrowth(level_data: Dictionary) -> void:
+	var dot_damage: float = float(level_data.get("dot_damage", 0))
+	var root_duration: int = int(level_data.get("root_duration", 0))
+	var radius: int = int(level_data.get("radius", 0))
+
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+			enemy["root_turns_left"] = root_duration
+			enemy["overgrowth_dot_damage"] = dot_damage
+			enemy["overgrowth_dot_turns_left"] = root_duration
+
+	_show_message_over_hero("Overgrowth!")
+
+
 ## Resolves a Mist Coil cast on Abaddon himself: pays `level_data.
 ## hp_cost` straight off current_hp - no armor mitigation, same as the
 ## Spirit Bear's death penalty (_apply_bear_death_penalty()) - then
@@ -2979,8 +3632,8 @@ func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
 ##     cast skills in the first place, so this only ever matters
 ##     against a hero-fight boss.
 ##   - "entangle_dot_damage"/"entangle_dot_turns_left": ticked once per
-##     turn by _tick_entangle_effects(), dealing that much damage
-##     (through normal armor mitigation) for that many turns.
+##     turn by _tick_enemy_turn_start_effects(), dealing that much
+##     damage (through normal armor mitigation) for that many turns.
 ## Recasting Entangle on an already-rooted target simply overwrites
 ## its counters with this cast's fresh values rather than stacking.
 func _apply_root(target: Dictionary, level_data: Dictionary) -> void:
@@ -2990,27 +3643,209 @@ func _apply_root(target: Dictionary, level_data: Dictionary) -> void:
 	target["entangle_dot_turns_left"] = int(level_data.get("dot_duration", 0))
 
 
-## Ticks every enemy's root/silence counters and Entangle damage-over-
-## time down by one turn, applying that turn's DoT tick (still
-## mitigated by the target's own armor, same as any other damage) -
-## called once per End Turn, alongside _tick_skill_cooldowns().
-## Bails out immediately if a tick's damage ends the battle (last
-## enemy dies, stage clears, etc.) so it doesn't keep operating on
-## enemies from a fight that's already moved on.
-func _tick_entangle_effects() -> void:
-	for enemy in _enemies.duplicate():
-		if enemy.get("root_turns_left", 0) > 0:
-			enemy["root_turns_left"] -= 1
-		if enemy.get("silence_turns_left", 0) > 0:
-			enemy["silence_turns_left"] -= 1
+## Applies every "start of its own turn" damage-over-time currently on
+## `enemy`, all in one pass, right before anything else about its turn
+## is decided (stun included - see the call site in _enemy_turn()/
+## _enemy_hero_turn()): Entangle's own DoT, Curse of Avernus's DoT
+## (ending the curse once its own duration runs out - stack decay for a
+## NOT-yet-activated curse is a separate, turn-count-based check handled
+## by _tick_curse_of_avernus_effects() instead, since it isn't a DoT),
+## Cold Feet's/Ice Vortex's/Frostbite's/Leech Seed's own DoTs (Leech
+## Seed also healing the hero back), Ice Blast's DoT plus its own
+## execute-threshold check, and Treant Protector's Overgrowth DoT -
+## each a dedicated pair of fields so none of them ever clobber each
+## other on the same enemy. Every damage instance is still mitigated by
+## the enemy's own armor, via _deal_fixed_damage_to_enemy(). Bails out
+## the moment a hit ends the battle (last enemy dies, stage clears,
+## etc.) - the caller then knows to stop processing this enemy (and the
+## turn) immediately, same reasoning the old per-skill tick functions
+## this replaces used to need individually. Also stops early (without
+## ending the battle) the moment `enemy` itself dies partway through,
+## since there's nothing left on it worth ticking further that turn.
+## Root/silence (Entangle's own counters, also reused by Nature's Guise's
+## root) are deliberately NOT decremented here, unlike everything else in
+## this function - unlike a DoT, they GATE a decision later in this same
+## turn (_is_enemy_rooted()/_is_enemy_silenced(), checked from _enemy_
+## turn()/_enemy_hero_turn() after this call returns), so decrementing
+## them up front would burn off one full turn's worth of root/silence
+## before it ever actually blocked anything - a 1-turn root would never
+## stop a single move. They're decremented instead at the point they're
+## actually consumed, the same "check with the CURRENT value, use it,
+## decrement after" pattern stun_turns_left already uses in _enemy_turn().
+func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
+	if enemy.get("entangle_dot_turns_left", 0) > 0:
+		enemy["entangle_dot_turns_left"] -= 1
+		var entangle_dot: float = float(enemy.get("entangle_dot_damage", 0))
+		if entangle_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, entangle_dot)
+			if _battle_over or enemy.get("current_hp", 0) <= 0:
+				return
 
-		if enemy.get("entangle_dot_turns_left", 0) > 0:
-			enemy["entangle_dot_turns_left"] -= 1
-			var dot_damage: float = float(enemy.get("entangle_dot_damage", 0))
-			if dot_damage > 0.0:
-				_deal_fixed_damage_to_enemy(enemy, dot_damage)
+	if enemy.get("curse_active", false):
+		if enemy.get("curse_dot_turns_left", 0) > 0:
+			enemy["curse_dot_turns_left"] -= 1
+			var curse_dot: float = float(enemy.get("curse_dot_damage", 0))
+			if curse_dot > 0.0:
+				_deal_fixed_damage_to_enemy(enemy, curse_dot)
+				if _battle_over or enemy.get("current_hp", 0) <= 0:
+					return
+		if enemy.get("curse_dot_turns_left", 0) <= 0:
+			enemy["curse_active"] = false
+			enemy["curse_dot_damage"] = 0.0
+
+	if enemy.get("cold_feet_dot_turns_left", 0) > 0:
+		enemy["cold_feet_dot_turns_left"] -= 1
+		var cold_feet_dot: float = float(enemy.get("cold_feet_dot_damage", 0))
+		if cold_feet_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, cold_feet_dot)
+			if _battle_over or enemy.get("current_hp", 0) <= 0:
+				return
+
+	if enemy.get("ice_vortex_dot_turns_left", 0) > 0:
+		enemy["ice_vortex_dot_turns_left"] -= 1
+		var ice_vortex_dot: float = float(enemy.get("ice_vortex_dot_damage", 0))
+		if ice_vortex_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, ice_vortex_dot)
+			if _battle_over or enemy.get("current_hp", 0) <= 0:
+				return
+
+	if enemy.get("ice_blast_dot_turns_left", 0) > 0:
+		enemy["ice_blast_dot_turns_left"] -= 1
+		var ice_blast_dot: float = float(enemy.get("ice_blast_dot_damage", 0))
+		if ice_blast_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, ice_blast_dot)
+			if _battle_over or enemy.get("current_hp", 0) <= 0:
+				return
+
+		if enemy.get("current_hp", 0) > 0:
+			var execute_pct: float = float(enemy.get("ice_blast_execute_pct", 0.0))
+			var max_hp: float = float(enemy["static"].get("hp", 1))
+			if execute_pct > 0.0 and enemy["current_hp"] <= max_hp * execute_pct:
+				_kill_enemy(enemy)
 				if _battle_over:
 					return
+
+		if enemy.get("ice_blast_dot_turns_left", 0) <= 0:
+			enemy["ice_blast_execute_pct"] = 0.0
+
+		if enemy.get("current_hp", 0) <= 0:
+			return
+
+	if enemy.get("frostbite_dot_turns_left", 0) > 0:
+		enemy["frostbite_dot_turns_left"] -= 1
+		var frostbite_dot: float = float(enemy.get("frostbite_dot_damage", 0))
+		if frostbite_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, frostbite_dot)
+			if _battle_over or enemy.get("current_hp", 0) <= 0:
+				return
+
+	if enemy.get("leech_seed_dot_turns_left", 0) > 0:
+		enemy["leech_seed_dot_turns_left"] -= 1
+		var leech_seed_dot: float = float(enemy.get("leech_seed_dot_damage", 0))
+		if leech_seed_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, leech_seed_dot)
+			if _battle_over:
+				return
+		var leech_seed_heal: float = float(enemy.get("leech_seed_heal_per_turn", 0))
+		if leech_seed_heal > 0.0:
+			heal(leech_seed_heal)
+		if enemy.get("current_hp", 0) <= 0:
+			return
+
+	if enemy.get("overgrowth_dot_turns_left", 0) > 0:
+		enemy["overgrowth_dot_turns_left"] -= 1
+		var overgrowth_dot: float = float(enemy.get("overgrowth_dot_damage", 0))
+		if overgrowth_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, overgrowth_dot)
+
+
+## The player-side mirror of _tick_enemy_turn_start_effects(): every
+## "start of the player's own turn" duration counter and damage-over-
+## time a rival hero could have inflicted on him, ticked in one pass
+## against the single-player battle-local vars instead of a per-enemy
+## Dictionary - Entangle's root/silence counters and DoT, Curse of
+## Avernus's DoT (stack decay lives in _tick_enemy_curse_of_avernus_
+## effects() instead, same "not a DoT" reasoning as the enemy-side
+## version), Cold Feet's/Ice Vortex's/Frostbite's own DoTs, Ice Blast's
+## DoT plus its own execute-threshold check, Treant Protector's Leech
+## Seed (unlike every other DoT here, its own healing half goes to the
+## CASTER - the rival - not the player, so this heals the boss directly
+## via _get_hero_fight_boss() each tick instead of calling heal()), and
+## Overgrowth's own DoT (its root shares _player_root_turns_left above,
+## the same field Entangle's own root already ticks down). Called once,
+## right where the player's own new turn opens in _end_turn() - before
+## he gets to act. Unlike the enemy-side version, nothing here needs to
+## bail out mid-function on a kill: apply_damage() never frees nodes or
+## changes scenes the way killing an enemy can, so _end_turn() just
+## checks the hero's HP once, right after calling this.
+func _tick_player_turn_start_effects() -> void:
+	if _player_root_turns_left > 0:
+		_player_root_turns_left -= 1
+	if _player_silence_turns_left > 0:
+		_player_silence_turns_left -= 1
+
+	if _player_entangle_dot_turns_left > 0:
+		_player_entangle_dot_turns_left -= 1
+		if _player_entangle_dot_damage > 0.0:
+			apply_damage(_player_entangle_dot_damage)
+
+	if _player_curse_active:
+		if _player_curse_dot_turns_left > 0:
+			_player_curse_dot_turns_left -= 1
+			if _player_curse_dot_damage > 0.0:
+				apply_damage(_player_curse_dot_damage)
+		if _player_curse_dot_turns_left <= 0:
+			_player_curse_active = false
+			_player_curse_dot_damage = 0.0
+
+	if _player_cold_feet_dot_turns_left > 0:
+		_player_cold_feet_dot_turns_left -= 1
+		if _player_cold_feet_dot_damage > 0.0:
+			apply_damage(_player_cold_feet_dot_damage)
+
+	if _player_ice_vortex_dot_turns_left > 0:
+		_player_ice_vortex_dot_turns_left -= 1
+		if _player_ice_vortex_dot_damage > 0.0:
+			apply_damage(_player_ice_vortex_dot_damage)
+
+	if _player_ice_blast_dot_turns_left > 0:
+		_player_ice_blast_dot_turns_left -= 1
+		if _player_ice_blast_dot_damage > 0.0:
+			apply_damage(_player_ice_blast_dot_damage)
+
+		if _recruited.get("current_hp", 0) > 0 and _player_ice_blast_execute_pct > 0.0:
+			var max_hp: float = _hero_max_hp()
+			if max_hp > 0.0 and float(_recruited.get("current_hp", 0)) <= max_hp * _player_ice_blast_execute_pct:
+				PlayerManager.damage_hero(float(_recruited.get("current_hp", 0)))
+				_refresh_bars()
+
+		if _player_ice_blast_dot_turns_left <= 0:
+			_player_ice_blast_execute_pct = 0.0
+
+	if _player_frostbite_dot_turns_left > 0:
+		_player_frostbite_dot_turns_left -= 1
+		if _player_frostbite_dot_damage > 0.0:
+			apply_damage(_player_frostbite_dot_damage)
+
+	if _player_leech_seed_dot_turns_left > 0:
+		_player_leech_seed_dot_turns_left -= 1
+		if _player_leech_seed_dot_damage > 0.0:
+			apply_damage(_player_leech_seed_dot_damage)
+		# Unlike every other DoT above, the healing half goes to the
+		# CASTER (the rival), not the player - mirrors the player's own
+		# _resolve_leech_seed_cast()/_tick_enemy_turn_start_effects()
+		# ("leech_seed" case), just healing the boss directly here
+		# instead of the player.
+		if _player_leech_seed_heal_per_turn > 0.0:
+			var leech_seed_caster: Dictionary = _get_hero_fight_boss()
+			if not leech_seed_caster.is_empty():
+				var caster_max_hp: float = _enemy_hero_effective_max_hp(leech_seed_caster)
+				leech_seed_caster["current_hp"] = minf(caster_max_hp, float(leech_seed_caster.get("current_hp", 0.0)) + _player_leech_seed_heal_per_turn)
+
+	if _player_overgrowth_dot_turns_left > 0:
+		_player_overgrowth_dot_turns_left -= 1
+		if _player_overgrowth_dot_damage > 0.0:
+			apply_damage(_player_overgrowth_dot_damage)
 
 
 ## Whether `enemy` is currently rooted by Entangle and therefore can't
@@ -3255,10 +4090,11 @@ func _activate_cold_embrace(level_data: Dictionary) -> void:
 ## belong to other heroes, but this stays generic and correct regardless
 ## of whose battle it runs in - plus every debuff a rival hero fight
 ## boss could have inflicted (root, silence, Entangle's/Curse of
-## Avernus's/Cold Feet's/Ice Vortex's/Ice Blast's damage-over-time, Ice
-## Blast's execute threshold, Pounce's/Torrent's stun, and a hostile
-## Essence Shift's stat penalty) - the same field list _reset_enemy_
-## hero_state() clears fresh for each new hero fight.
+## Avernus's/Cold Feet's/Ice Vortex's/Ice Blast's/Frostbite's/Leech
+## Seed's/Overgrowth's damage-over-time, Ice Blast's execute threshold,
+## Pounce's/Torrent's stun, and a hostile Essence Shift's stat penalty) -
+## the same field list _reset_enemy_hero_state() clears fresh for each
+## new hero fight.
 func _dispel_all_hero_effects() -> void:
 	if _arctic_burn_active:
 		_end_arctic_burn()
@@ -3296,6 +4132,11 @@ func _dispel_all_hero_effects() -> void:
 	_player_ice_blast_execute_pct = 0.0
 	_player_frostbite_dot_damage = 0.0
 	_player_frostbite_dot_turns_left = 0
+	_player_leech_seed_dot_damage = 0.0
+	_player_leech_seed_heal_per_turn = 0.0
+	_player_leech_seed_dot_turns_left = 0
+	_player_overgrowth_dot_damage = 0.0
+	_player_overgrowth_dot_turns_left = 0
 
 	_refresh_bars()
 
@@ -3336,10 +4177,12 @@ func _end_cold_embrace() -> void:
 # Slark's Shadow Dance.
 # ------------------------------------------------------------------
 
-## True while Slark is hidden by Shadow Dance. Enemy attacks check
-## this in _enemy_turn() and simply don't land while it's true.
+## True while the hero is hidden by Shadow Dance OR Nature's Guise -
+## whichever the current hero actually has, since only one of the two
+## could ever be active in a given battle. Enemy attacks check this in
+## _enemy_turn() and simply don't land while it's true.
 func _is_hero_hidden() -> bool:
-	return _shadow_dance_active
+	return _shadow_dance_active or _natures_guise_active
 
 
 ## Activates Shadow Dance: hides Slark for `level_data.duration` turns
@@ -3381,8 +4224,53 @@ func _end_shadow_dance() -> void:
 	_update_hero_visibility()
 
 
+# ------------------------------------------------------------------
+# Treant Protector's Nature's Guise.
+# ------------------------------------------------------------------
+
+## Activates Nature's Guise: hides the hero for `level_data.duration`
+## turns (not counting the casting turn itself) and arms `level_data.
+## root_turns` for whichever comes first, his next Attack or the
+## duration running out - same "casting turn doesn't count"/"one-shot
+## payoff on the breaking Attack" shape as Shadow Dance's own
+## _activate_shadow_dance(), just with a root instead of bonus damage.
+func _activate_natures_guise(level_data: Dictionary) -> void:
+	_natures_guise_active = true
+	_natures_guise_root_turns = int(level_data.get("root_turns", 0))
+	_natures_guise_turns_remaining = int(level_data.get("duration", 0))
+	_natures_guise_duration_pending_start = true
+	_update_hero_visibility()
+
+
+## Ticks Nature's Guise's duration down once per End Turn, same timing
+## and same "casting turn doesn't count" rule as Shadow Dance's own
+## _tick_shadow_dance().
+func _tick_natures_guise() -> void:
+	if not _natures_guise_active:
+		return
+
+	if _natures_guise_duration_pending_start:
+		_natures_guise_duration_pending_start = false
+		return
+
+	_natures_guise_turns_remaining -= 1
+	if _natures_guise_turns_remaining <= 0:
+		_end_natures_guise()
+
+
+## Ends Nature's Guise, whether from its duration running out, the hero
+## attacking while hidden, or casting another skill while hidden.
+func _end_natures_guise() -> void:
+	_natures_guise_active = false
+	_natures_guise_root_turns = 0
+	_natures_guise_turns_remaining = 0
+	_natures_guise_duration_pending_start = false
+	_update_hero_visibility()
+
+
 ## Slight fade to represent invisibility - fully opaque and visible
-## otherwise. Called whenever Shadow Dance starts or ends.
+## otherwise. Called whenever Shadow Dance or Nature's Guise starts or
+## ends.
 func _update_hero_visibility() -> void:
 	hero_image.modulate = Color(1, 1, 1, 0.4) if _is_hero_hidden() else Color(1, 1, 1, 1)
 
@@ -3439,6 +4327,22 @@ func _apply_spirit_link_lifesteal(mitigated_attack_damage: float) -> void:
 	if not _spirit_link_active or mitigated_attack_damage <= 0.0:
 		return
 	heal(mitigated_attack_damage * _spirit_link_lifesteal_pct)
+
+
+const MORBID_MASK_LIFESTEAL_PCT := 0.10
+
+
+## The Morbid Mask item's own passive: identical shape to Spirit
+## Link's own lifesteal just above (same "% of the plain Attack's
+## damage, after the target's own armor already reduced it" rule,
+## never skill damage) but a flat, always-on item bonus rather than a
+## temporary skill buff - stacks with Spirit Link if the player has
+## both active at once. Gated on actually owning one, same as
+## Cleaver's own item check (see _apply_cleaver_cleave()).
+func _apply_morbid_mask_lifesteal(mitigated_attack_damage: float) -> void:
+	if mitigated_attack_damage <= 0.0 or PlayerManager.get_inventory().get("morbid_mask", 0) <= 0:
+		return
+	heal(mitigated_attack_damage * MORBID_MASK_LIFESTEAL_PCT)
 
 
 # ------------------------------------------------------------------
@@ -3679,14 +4583,17 @@ func _refresh_skill_cooldown_labels() -> void:
 
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
 ## and ticks Essence Shift's, Shadow Dance's, Arctic Burn's, Cold
-## Embrace's, Freezing Field's, Ice Shards', Tag Team's, Spirit Link's,
-## True Form's, Aphotic Shield's, and Borrowed Time's durations, plus
-## every
-## enemy's Entangle/Curse of Avernus/Cold Feet/Ice Vortex/Ice Blast/
-## Frostbite root/silence/DoT/stack/execute durations, alongside them -
-## and, during a hero fight, the rival's own mirrored copies of all of
-## the above (including, for a Crystal Maiden rival, her own Freezing
-## Field ticking on herself and Frostbite's DoT ticking on the player).
+## Embrace's, Freezing Field's, Ice Shards', Tag Team's, Nature's
+## Guise's, Living Armor's, Reactive Armor's (each stack independently),
+## Chakram's, Spirit Link's, True Form's, Aphotic Shield's, and Borrowed
+## Time's durations, plus Curse of Avernus's own (enemy- and player-side)
+## un-activated-stack decay - not a DoT, so it
+## stays here rather than moving to turn-start with the rest (see
+## _tick_curse_of_avernus_effects()'s own comment) - and, during a hero
+## fight, the rival's own mirrored buff/cooldown durations. Every actual
+## DoT/root/silence/execute effect, on either side, now ticks at the
+## start of whichever turn it belongs to instead
+## (_tick_enemy_turn_start_effects()/_tick_player_turn_start_effects()).
 ## Called once per End Turn.
 func _tick_skill_cooldowns() -> void:
 	for skill_id in _skill_cooldowns.keys():
@@ -3696,21 +4603,20 @@ func _tick_skill_cooldowns() -> void:
 
 	_tick_essence_shift()
 	_tick_shadow_dance()
+	_tick_natures_guise()
 	_tick_arctic_burn()
 	_tick_cold_embrace()
 	_tick_freezing_field()
 	_tick_ice_shards()
 	_tick_tag_team()
+	_tick_living_armor()
 	_tick_spirit_link()
 	_tick_true_form()
 	_tick_aphotic_shield()
 	_tick_borrowed_time()
-	_tick_entangle_effects()
 	_tick_curse_of_avernus_effects()
-	_tick_cold_feet_effects()
-	_tick_ice_vortex_effects()
-	_tick_ice_blast_effects()
-	_tick_frostbite_effects()
+	_tick_reactive_armor_stacks()
+	_tick_chakram()
 	_tick_enemy_passive_regen()
 
 	if _in_hero_fight:
@@ -3723,17 +4629,17 @@ func _tick_skill_cooldowns() -> void:
 		_tick_enemy_true_form()
 		_tick_enemy_aphotic_shield()
 		_tick_enemy_borrowed_time()
-		_tick_player_entangle_effects()
 		_tick_enemy_curse_of_avernus_effects()
-		_tick_player_cold_feet_effects()
-		_tick_player_ice_vortex_effects()
-		_tick_player_ice_blast_effects()
-		_tick_player_frostbite_effects()
 		_tick_enemy_arctic_burn()
 		_tick_enemy_cold_embrace()
 		_tick_enemy_freezing_field()
 		_tick_enemy_ice_shards()
 		_tick_enemy_tag_team()
+		_tick_enemy_natures_guise()
+		_tick_enemy_living_armor()
+		_tick_enemy_reactive_armor_stacks()
+		_apply_enemy_reactive_armor_regen()
+		_tick_enemy_chakram()
 
 
 # ------------------------------------------------------------------
@@ -3930,8 +4836,8 @@ func _get_curse_of_avernus_level_data() -> Dictionary:
 ## one stack of Curse of Avernus on `target`, or - once this level's
 ## hits_to_activate is reached - consumes all of them to activate the
 ## actual curse instead (silence, via the same `silence_turns_left`
-## field Entangle uses, ticked down by _tick_entangle_effects(); and a
-## damage-over-time, ticked by _tick_curse_of_avernus_effects() below).
+## field Entangle uses; and a damage-over-time - both ticked, at the
+## start of that enemy's own turn, by _tick_enemy_turn_start_effects()).
 ## No-ops entirely if the hero doesn't have this skill learned, if the
 ## hit already killed the target, or if it's already cursed - a curse
 ## has nothing left to build toward until it wears off on its own.
@@ -3958,34 +4864,17 @@ func _apply_curse_of_avernus_stack(target: Dictionary) -> void:
 	_show_message_over_hero("Cursed!")
 
 
-## Ticks Curse of Avernus once per End Turn, alongside
-## _tick_entangle_effects(): applies this turn's damage-over-time to
-## every currently-cursed enemy (still mitigated by its own armor, via
-## _deal_fixed_damage_to_enemy() - same helper Entangle's own DoT
-## uses), ending the curse once its duration runs out, ready to build
-## fresh stacks again. Silence itself isn't ticked here - it shares
-## Entangle's own `silence_turns_left` field and is already ticked by
-## _tick_entangle_effects(), whether or not this curse is still active
-## (the table's silence duration is always the shorter of the two, so
-## it always finishes before the DoT does).
-## For every NOT-yet-cursed enemy that still has stacks on it, decays
-## them to 0 once CURSE_OF_AVERNUS_STACK_DECAY_TURNS full turns have
-## passed since the last hit that touched them.
+## Curse of Avernus's own DoT (and the silence sharing Entangle's
+## `silence_turns_left` field) both moved to _tick_enemy_turn_start_
+## effects() along with every other DoT - this is only what's left:
+## decaying a NOT-yet-activated curse's stacks back to 0 once
+## CURSE_OF_AVERNUS_STACK_DECAY_TURNS full ROUNDS (not that enemy's own
+## turns - _turn_count is a global round counter) have passed since the
+## last hit that touched it. Not a DoT itself, so it stays here, ticked
+## once per End Turn same as before.
 func _tick_curse_of_avernus_effects() -> void:
 	for enemy in _enemies.duplicate():
-		if enemy.get("curse_active", false):
-			if enemy.get("curse_dot_turns_left", 0) > 0:
-				enemy["curse_dot_turns_left"] -= 1
-				var dot_damage: float = float(enemy.get("curse_dot_damage", 0))
-				if dot_damage > 0.0:
-					_deal_fixed_damage_to_enemy(enemy, dot_damage)
-					if _battle_over:
-						return
-
-			if enemy.get("curse_dot_turns_left", 0) <= 0:
-				enemy["curse_active"] = false
-				enemy["curse_dot_damage"] = 0.0
-		elif enemy.get("curse_stacks", 0) > 0:
+		if not enemy.get("curse_active", false) and enemy.get("curse_stacks", 0) > 0:
 			var last_hit_turn: int = int(enemy.get("curse_last_hit_turn", _turn_count))
 			if _turn_count - last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
 				enemy["curse_stacks"] = 0
@@ -4105,6 +4994,10 @@ func apply_damage(amount: float) -> float:
 		return 0.0
 
 	var reduced: float = _apply_armor_reduction(amount, _hero_armor())
+	# Reactive Armor stacks off of this hit landing - added only after
+	# _hero_armor() above already read the stack count, so the stack
+	# this hit just earned reduces the NEXT hit, not this one.
+	_apply_reactive_armor_stack()
 	# Savage Roar's damage reduction stacks on top of armor mitigation
 	# rather than replacing it, and only applies while it's active.
 	reduced *= (1.0 - _savage_roar_damage_reduction_pct)
@@ -4211,6 +5104,18 @@ func _maybe_show_skill_choice_popup() -> void:
 	_refresh_skill_choice_popup()
 	skill_choice_popup.visible = true
 
+	match _tutorial_forced_skill_id():
+		"tidebringer":
+			TutorialManager.show_popup(
+				"You've got a skill point to spend. Kunkka needs more damage output to clear every "
+				+ "enemy here in time - learn Tidebringer."
+			)
+		"ghostship":
+			TutorialManager.show_popup(
+				"You've got a skill point to spend. Learn Ghostship - it's your ultimate, and the "
+				+ "single most powerful attack in your kit."
+			)
+
 
 ## Rebuilds the skill-choice popup's option buttons from scratch:
 ## one per skill the player could currently learn (unlearned, level-1
@@ -4240,6 +5145,16 @@ func _refresh_skill_choice_popup() -> void:
 		# player can read the skill before committing (see
 		# _on_skill_choice_option_pressed()).
 		btn.pressed.connect(_on_skill_choice_option_pressed.bind(skill))
+
+		# Tutorial support: locks every option except whichever skill
+		# the current stage is forcing (see _on_skill_choice_desc_ok_
+		# pressed()) - once that one's been taught, any later level-up's
+		# skill point is the player's own free choice again, same as a
+		# real playthrough.
+		var forced_skill_id: String = _tutorial_forced_skill_id()
+		if forced_skill_id != "" and skill_id != forced_skill_id:
+			btn.disabled = true
+
 		skill_choice_options.add_child(btn)
 
 
@@ -4288,6 +5203,19 @@ func _on_skill_choice_desc_ok_pressed() -> void:
 		return
 
 	if PlayerManager.spend_skill_point(skill_id, _hero_static):
+		if skill_id == "tidebringer":
+			_tutorial_taught_tidebringer = true
+		elif skill_id == "ghostship":
+			_tutorial_taught_ghostship = true
+			# Starts the reinforcement countdown fresh from HERE rather
+			# than from stage 3's battle start - landing that first kill
+			# (to trigger this level-up) can itself take several attacks
+			# against a melee creep's real HP, so counting from turn 0
+			# let reinforcements arrive mid-leveling, before Ghostship
+			# even existed to answer them - roughly doubling the enemy
+			# count on top of the original roster and proving fatal.
+			_next_reinforcement_turn = _turn_count + 2
+			_advance_tutorial_stage3_step("attack_before_reinforcements")
 		_recruited = PlayerManager.get_recruited_hero()
 		_populate_skill_buttons()
 		_update_action_buttons()
@@ -4316,10 +5244,15 @@ func _on_skill_choice_desc_cancel_pressed() -> void:
 ## of 1.5-2.7 rounds to 2-3 columns per move, while every enemy
 ## always takes exactly one column per turn (see _enemy_turn()). Adds
 ## Savage Roar's bonus columns while it's active (see
-## _update_savage_roar_state()).
+## _update_savage_roar_state()), plus a flat +1 column while Nature's
+## Guise is active - moving unseen covers more ground, same "bonus on
+## top of the normal speed-based distance" shape Savage Roar's own
+## bonus already has, just gated on _natures_guise_active instead of an
+## HP threshold.
 func _hero_move_distance() -> int:
 	var speed: float = float(_recruited.get("stats", {}).get("speed", 1.0))
-	return maxi(1, roundi(speed)) + _savage_roar_bonus_movement
+	var natures_guise_bonus: int = 1 if _natures_guise_active else 0
+	return maxi(1, roundi(speed)) + _savage_roar_bonus_movement + natures_guise_bonus
 
 
 ## Whether the hero currently fights at range - normally just his
@@ -4642,6 +5575,60 @@ func _start_ghostship_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
+## Timbersaw's Timber Chain target picking: same column-range/highlight
+## mechanism as every other targeted skill above, using this level's
+## own `range` field (3-5 columns, growing with level).
+## Returns false (and shows a message) if nothing is in range.
+func _start_timber_chain_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 3))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "timber_chain"
+	_pending_timber_chain_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 0.7, 1)
+	return true
+
+
+## Timbersaw's Chakram target picking: same column-range/highlight
+## mechanism as every other targeted skill above, using this level's
+## own `range` field (5-7 columns, growing with level) - separate from
+## the `radius` field used for the AoE once it's planted (see
+## _resolve_chakram_cast()/_tick_chakram()). Returns false (and shows a
+## message) if nothing is in range.
+func _start_chakram_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 5))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "chakram"
+	_pending_chakram_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 0.7, 1)
+	return true
+
+
 ## Ancient Apparition's Cold Feet target picking: same column-range/
 ## highlight mechanism as every other targeted skill above, using this
 ## level's own `range` field (2-4 columns, growing with level).
@@ -4943,11 +5930,49 @@ func _start_walrus_punch_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
+## Treant Protector's Leech Seed target picking: same column-range/
+## highlight mechanism as every other targeted skill above, using this
+## level's own fixed range field (a constant 2 columns per the design
+## doc, still stored per-level like every other skill's own range).
+## Returns false (and shows a message) if nothing is in range.
+func _start_leech_seed_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 0))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "leech_seed"
+	_pending_leech_seed_level_data = level_data
+	for enemy in _valid_targets:
+		enemy["node"].modulate = Color(0.6, 0.95, 0.5)
+	return true
+
+
+## Clears any still-highlighted valid-target tint and resets the hero's
+## own portrait modulate back to whatever it's SUPPOSED to be right now
+## (_update_hero_visibility(), not a hardcoded Color(1,1,1)) - Mist
+## Coil's own self-target highlight tints hero_image the same way a
+## valid enemy target gets tinted, so this needs to undo that without
+## also stomping Shadow Dance's/Nature's Guise's own invisibility fade
+## if either is still active. _cancel_targeting() runs constantly -
+## every _end_turn() call, every new targeting session - so a hardcoded
+## reset here was clobbering the invisibility fade back to fully opaque
+## one turn after casting Nature's Guise, even though _natures_guise_
+## active stayed true for its whole duration.
 func _cancel_targeting() -> void:
 	for enemy in _valid_targets:
 		if is_instance_valid(enemy["node"]):
 			enemy["node"].modulate = Color(1, 1, 1)
-	hero_image.modulate = Color(1, 1, 1)
+	_update_hero_visibility()
 	_valid_targets.clear()
 	_targeting_mode = false
 	_targeting_purpose = "attack"
@@ -4965,6 +5990,8 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		return
 	if not _valid_targets.has(enemy):
 		return
+	if not _tutorial_allows_enemy_click(enemy):
+		return
 
 	var purpose: String = _targeting_purpose
 	var entangle_level_data: Dictionary = _pending_entangle_level_data
@@ -4972,6 +5999,8 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	var torrent_level_data: Dictionary = _pending_torrent_level_data
 	var xmarks_level_data: Dictionary = _pending_xmarks_level_data
 	var ghostship_level_data: Dictionary = _pending_ghostship_level_data
+	var timber_chain_level_data: Dictionary = _pending_timber_chain_level_data
+	var chakram_level_data: Dictionary = _pending_chakram_level_data
 	var cold_feet_level_data: Dictionary = _pending_cold_feet_level_data
 	var ice_vortex_level_data: Dictionary = _pending_ice_vortex_level_data
 	var chilling_touch_level_data: Dictionary = _pending_chilling_touch_level_data
@@ -4983,6 +6012,7 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	var ice_shards_level_data: Dictionary = _pending_ice_shards_level_data
 	var snowball_level_data: Dictionary = _pending_snowball_level_data
 	var walrus_punch_level_data: Dictionary = _pending_walrus_punch_level_data
+	var leech_seed_level_data: Dictionary = _pending_leech_seed_level_data
 	_cancel_targeting()
 
 	if purpose == "entangle":
@@ -4995,6 +6025,10 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		_resolve_xmarks_cast(enemy, xmarks_level_data)
 	elif purpose == "ghostship":
 		_resolve_ghostship_cast(enemy, ghostship_level_data)
+	elif purpose == "timber_chain":
+		_resolve_timber_chain_cast(enemy, timber_chain_level_data)
+	elif purpose == "chakram":
+		_resolve_chakram_cast(enemy, chakram_level_data)
 	elif purpose == "cold_feet":
 		_resolve_cold_feet_cast(enemy, cold_feet_level_data)
 	elif purpose == "ice_vortex":
@@ -5017,6 +6051,8 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		_resolve_snowball_cast(enemy, snowball_level_data)
 	elif purpose == "walrus_punch":
 		_resolve_walrus_punch_cast(enemy, walrus_punch_level_data)
+	elif purpose == "leech_seed":
+		_resolve_leech_seed_cast(enemy, leech_seed_level_data)
 	else:
 		_apply_hero_attack(enemy)
 
@@ -5047,6 +6083,11 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# like the rest of the hit - see _roll_hero_damage()) and ends the
 	# invisibility right here, whether or not the hit kills the target.
 	var shadow_dance_bonus: float = _shadow_dance_bonus_damage if _is_hero_hidden() else 0.0
+	# Same idea for Nature's Guise, just with a root on the target
+	# instead of bonus damage - captured now, before the attack (and
+	# possibly _end_natures_guise()) below can change what _natures_
+	# guise_active reads.
+	var attacking_from_natures_guise: bool = _natures_guise_active
 	# Tidebringer counts this Attack toward its own threshold - once
 	# reached, THIS hit's roll gets its bonus damage folded in below
 	# (so the cleave that follows is based on the same empowered
@@ -5066,6 +6107,9 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# uses the damage actually dealt, i.e. after the target's armor
 	# has already reduced it.
 	_apply_spirit_link_lifesteal(mitigated_damage)
+	# Morbid Mask's own lifesteal - independent of and stacks with
+	# Spirit Link's above.
+	_apply_morbid_mask_lifesteal(mitigated_damage)
 	# Curse of Avernus stacks the same way - only this plain Attack
 	# action builds toward it, never skill damage.
 	_apply_curse_of_avernus_stack(target)
@@ -5073,8 +6117,19 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	if not tidebringer_level_data.is_empty():
 		_apply_tidebringer_cleave(target, attack_damage, tidebringer_level_data)
 
+	# Cleaver's own cleave - a no-op unless the item is actually owned
+	# (see _apply_cleaver_cleave()'s own gate). Independent of
+	# Tidebringer's: both can splash off the same Attack if the player
+	# has both.
+	_apply_cleaver_cleave(target, attack_damage)
+
 	if shadow_dance_bonus > 0.0:
 		_end_shadow_dance()
+
+	if attacking_from_natures_guise:
+		if target.get("current_hp", 0) > 0:
+			target["root_turns_left"] = _natures_guise_root_turns
+		_end_natures_guise()
 
 	# If that kill cleared the stage (or won a hero fight) and a fresh
 	# encounter started, the turn lock has already been reset for it -
@@ -5130,6 +6185,15 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 		# hit just never happens.
 		return mitigated
 
+	if is_boss:
+		# Timbersaw's Reactive Armor stacks off of this hit landing -
+		# added only after enemy_armor above already read the stack
+		# count, so the stack this hit just earned reduces the NEXT hit,
+		# not this one, mirroring the player's own apply_damage(). A
+		# no-op for every other hero (see _apply_enemy_reactive_armor_
+		# stack()'s own "not learned" check).
+		_apply_enemy_reactive_armor_stack()
+
 	if is_boss and _enemy_borrowed_time_active:
 		var max_hp: float = _enemy_hero_effective_max_hp(target)
 		target["current_hp"] = minf(max_hp, target["current_hp"] + mitigated * _enemy_borrowed_time_heal_conversion_pct)
@@ -5169,7 +6233,7 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 func _enemy_hero_bonus_armor(target: Dictionary) -> float:
 	if not target["static"].get("is_hero_fight_boss", false):
 		return 0.0
-	return _enemy_essence_shift_bonus.get("armor", 0.0) + _enemy_spirit_link_bonus_armor
+	return _enemy_essence_shift_bonus.get("armor", 0.0) + _enemy_spirit_link_bonus_armor + _enemy_living_armor_bonus_armor + _enemy_reactive_armor_bonus_armor()
 
 
 func _get_enemy_at(pos_index: int) -> Dictionary:
@@ -5179,13 +6243,14 @@ func _get_enemy_at(pos_index: int) -> Dictionary:
 	return {}
 
 
-## True for the rival hero currently hidden by their own Shadow Dance -
-## the player can't select, attack, or target them with a skill while
-## this holds (see _get_enemy_at(), _start_ranged_targeting(),
-## _start_entangle_targeting(), _cast_dark_pact()), exactly mirroring
-## what the player's own Shadow Dance does to him in _enemy_turn().
+## True for the rival hero currently hidden by their own Shadow Dance or
+## Nature's Guise - the player can't select, attack, or target them with
+## a skill while this holds (see _get_enemy_at(), _start_ranged_
+## targeting(), _start_entangle_targeting(), _cast_dark_pact()), exactly
+## mirroring what the player's own Shadow Dance/Nature's Guise does to
+## him in _enemy_turn() (both folded into his own _is_hero_hidden()).
 func _is_target_hidden(target: Dictionary) -> bool:
-	return target["static"].get("is_hero_fight_boss", false) and _enemy_shadow_dance_active
+	return target["static"].get("is_hero_fight_boss", false) and (_enemy_shadow_dance_active or _enemy_natures_guise_active)
 
 
 ## Rolls a hero attack's damage, adding Essence Shift's ongoing
@@ -5311,6 +6376,24 @@ func _show_gold_gain(target_node: Control, amount: int) -> void:
 ## winning that hero fight (_in_hero_fight was true when the last
 ## enemy died) marks it defeated and then finishes for real.
 func _handle_victory() -> void:
+	# Tutorial stage 1 ends here rather than rolling into the zone's own
+	# stage 2 - the next tutorial stage is a separately scripted scenario
+	# (Kunkka at level 5, mid-fight, low on resources - not a straight
+	# continuation of this fight), so it needs its own checkpoint instead
+	# of _advance_to_next_stage()'s normal handoff.
+	if TutorialManager.is_active and TutorialManager.current_stage == 1 and _current_stage == 1:
+		_advance_tutorial_stage1_step("stage_cleared")
+		return
+
+	# Tutorial stage 3 is the closing scenario - ends the whole tutorial
+	# here with its own closing popup rather than falling through to a
+	# real hero-fight/zone-finished flow the sandbox was never set up
+	# for (no NPC rivals exist in it - see PlayerManager.
+	# clear_recruited_hero()'s npc_* wipe).
+	if TutorialManager.is_active and TutorialManager.current_stage == 3:
+		_advance_tutorial_stage3_step("zone_cleared")
+		return
+
 	if _in_hero_fight:
 		PlayerManager.mark_hero_defeated(_hero_fight_target_id)
 		_in_hero_fight = false
@@ -5507,6 +6590,20 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_tag_team_turns_remaining = 0
 	_enemy_tag_team_duration_pending_start = false
 
+	_enemy_natures_guise_active = false
+	_enemy_natures_guise_root_turns = 0
+	_enemy_natures_guise_turns_remaining = 0
+	_enemy_natures_guise_duration_pending_start = false
+
+	_enemy_living_armor_active = false
+	_enemy_living_armor_bonus_armor = 0.0
+	_enemy_living_armor_bonus_hp_regen = 0.0
+	_enemy_living_armor_turns_remaining = 0
+	_enemy_living_armor_duration_pending_start = false
+
+	_enemy_reactive_armor_stack_turns = []
+	_despawn_enemy_chakram()
+
 	var stats: Dictionary = hero_static.get("stats", {})
 	_enemy_max_mana = float(stats.get("mana", 0))
 	_enemy_current_mana = _enemy_max_mana
@@ -5535,6 +6632,11 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_player_ice_blast_execute_pct = 0.0
 	_player_frostbite_dot_damage = 0.0
 	_player_frostbite_dot_turns_left = 0
+	_player_leech_seed_dot_damage = 0.0
+	_player_leech_seed_heal_per_turn = 0.0
+	_player_leech_seed_dot_turns_left = 0
+	_player_overgrowth_dot_damage = 0.0
+	_player_overgrowth_dot_turns_left = 0
 
 
 func _update_stage_label() -> void:
@@ -5592,17 +6694,17 @@ func _end_turn() -> void:
 
 	_tick_skill_cooldowns()
 
-	# Entangle's damage-over-time ticks inside _tick_skill_cooldowns()
-	# above and can finish the player off outside of the normal
-	# attack/skill/enemy-turn paths already checked earlier in this
-	# function, so it needs its own defeat check. The same ticks (or
-	# Ice Blast's execute threshold) can just as easily finish off the
-	# LAST enemy instead - _kill_enemy() already calls _handle_victory()
-	# for that on its own, which can set _battle_over and change scene
-	# outright (see _finish_zone_victory()) - so THIS needs its own
-	# bail-out too: without it, a hero fight the boss just lost to a
-	# DoT tick would fall through to the stun/Cold Embrace check at the
-	# tail of this function and schedule another _end_turn() call via
+	# A rival's own buff tick inside _tick_skill_cooldowns() above (e.g.
+	# Freezing Field, if it ever damages its own caster) could in
+	# principle finish either side off outside the normal attack/skill/
+	# enemy-turn paths already checked earlier in this function, so this
+	# still needs its own defeat check. A kill can just as easily finish
+	# off the LAST enemy instead - _kill_enemy() already calls
+	# _handle_victory() for that on its own, which can set _battle_over
+	# and change scene outright (see _finish_zone_victory()) - so THIS
+	# needs its own bail-out too: without it, a hero fight the boss just
+	# lost would fall through to the stun/Cold Embrace check at the tail
+	# of this function and schedule another _end_turn() call via
 	# get_tree().create_timer() - a timer that fires after this node has
 	# already been removed from the tree by that scene change, crashing
 	# on a null get_tree().
@@ -5616,6 +6718,18 @@ func _end_turn() -> void:
 		_player_stun_turns_left -= 1
 		if _player_stun_turns_left <= 0:
 			_player_winters_curse_active = false
+
+	# Every DoT/root/silence/execute effect a rival hero could have
+	# inflicted on the player lands right here, at the very start of his
+	# own new turn - before he gets to act - same reasoning as the
+	# enemy-side version (_tick_enemy_turn_start_effects(), ticked from
+	# _enemy_turn() instead). Unlike that version, a kill here can't
+	# free any nodes or change scenes on its own, so a plain HP check
+	# right after is enough - no bail-out needed mid-function.
+	_tick_player_turn_start_effects()
+	if _recruited.get("current_hp", 0) <= 0:
+		_handle_defeat()
+		return
 
 	# The hero's new turn is opening right here - if X Marks the Spot
 	# marked something last turn, this is "his next turn", so he
@@ -5633,6 +6747,11 @@ func _end_turn() -> void:
 	# timing as Arcane Aura's own regen just above, on top of it rather
 	# than instead of it.
 	_apply_passive_hero_regen()
+
+	# Reactive Armor's own regen, off of whatever stacks are currently
+	# active - same timing/stacking relationship as Arcane Aura's and
+	# the baseline regen above.
+	_apply_reactive_armor_regen()
 
 	_has_acted_this_turn = false
 	_update_action_buttons()
@@ -5710,6 +6829,21 @@ func _enemy_turn() -> void:
 	var curse_damage_multiplier: float = 1.0 + _winter_curse_bonus_damage_pct
 
 	for enemy in _enemies.duplicate():
+		# Every DoT/execute effect currently on this enemy lands right
+		# here, at the very start of its own turn - before stun is even
+		# checked, so a DoT still burns through one. See
+		# _tick_enemy_turn_start_effects()'s own comment for the full
+		# list. A kill from one of these can end the whole battle (last
+		# enemy standing, stage clears, etc.), so this needs the same
+		# bail-out every other kill site in this function already uses;
+		# a kill that leaves the fight still going just skips the rest
+		# of this specific enemy's turn instead.
+		_tick_enemy_turn_start_effects(enemy)
+		if _battle_over:
+			return
+		if not _is_enemy_still_active(enemy):
+			continue
+
 		var stun_turns_left: int = enemy.get("stun_turns_left", 0)
 		if stun_turns_left > 0:
 			# Loses this turn entirely - no move, no attack - then the
@@ -5726,7 +6860,14 @@ func _enemy_turn() -> void:
 		var enemy_type: String = enemy_static.get("type", "")
 		var enemy_damage: float = float(enemy_static.get("damage", 0))
 		var hero_hidden: bool = _is_hero_hidden()
+		# Root (Entangle's own, or Nature's Guise's) is checked with its
+		# CURRENT value before ticking it down - same "use it, then
+		# decrement" order stun_turns_left uses just above - so a 1-turn
+		# root actually blocks the one movement it's meant to, instead of
+		# expiring before it's ever consulted.
 		var rooted: bool = _is_enemy_rooted(enemy) or _is_column_ice_shards_blocked(enemy["pos_index"])
+		if enemy.get("root_turns_left", 0) > 0:
+			enemy["root_turns_left"] -= 1
 
 		if curse_active and not is_same(enemy, curse_target) and _distance(enemy["pos_index"], curse_target_pos) <= _winter_curse_range:
 			# Cursed: this enemy drops the hero/bear entirely for this
@@ -5738,6 +6879,7 @@ func _enemy_turn() -> void:
 			# hero.
 			if enemy_type == "range":
 				if _distance(enemy["pos_index"], curse_target_pos) <= RANGE_ENEMY_ATTACK_RANGE:
+					_play_enemy_attack_lunge(enemy)
 					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
 				elif not rooted:
 					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
@@ -5746,6 +6888,7 @@ func _enemy_turn() -> void:
 						_move_enemy(enemy, next_pos)
 			elif enemy_type == "mele":
 				if enemy["pos_index"] == curse_target_pos:
+					_play_enemy_attack_lunge(enemy)
 					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
 				elif not rooted:
 					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
@@ -5774,11 +6917,13 @@ func _enemy_turn() -> void:
 			if hero_distance <= RANGE_ENEMY_ATTACK_RANGE and not hero_hidden:
 				# SAFE RANGE on the hero, and he's a valid target -
 				# always the priority over the bear.
+				_play_enemy_attack_lunge(enemy)
 				apply_damage(enemy_damage)
 				attacked = true
 			elif _is_bear_alive() and _distance(enemy["pos_index"], _bear["pos_index"]) <= RANGE_ENEMY_ATTACK_RANGE:
 				# Hero's out of range (or hidden), but the bear is
 				# close enough to shoot instead.
+				_play_enemy_attack_lunge(enemy)
 				_deal_damage_to_bear(enemy_damage)
 				attacked = true
 
@@ -5799,9 +6944,11 @@ func _enemy_turn() -> void:
 		elif enemy_type == "mele":
 			var attacked: bool = false
 			if enemy["pos_index"] == _hero_pos_index and not hero_hidden:
+				_play_enemy_attack_lunge(enemy)
 				apply_damage(enemy_damage)
 				attacked = true
 			elif _is_bear_alive() and enemy["pos_index"] == _bear["pos_index"]:
+				_play_enemy_attack_lunge(enemy)
 				_deal_damage_to_bear(enemy_damage)
 				attacked = true
 
@@ -5881,7 +7028,17 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 	# movement exactly like a root does - see _enemy_turn()'s own
 	# comment for the full reasoning - so it's folded into the same
 	# `rooted` flag rather than tracked separately here.
+	# Root/silence are both checked with their CURRENT value before
+	# ticking them down - same "use it, then decrement" order stun
+	# uses in _enemy_turn() - so a 1-turn root/silence actually blocks
+	# the one turn it's meant to, instead of expiring before it's ever
+	# consulted (see _tick_enemy_turn_start_effects()'s own comment).
 	var rooted: bool = _is_enemy_rooted(enemy) or _is_column_ice_shards_blocked(enemy["pos_index"])
+	if enemy.get("root_turns_left", 0) > 0:
+		enemy["root_turns_left"] -= 1
+	var silenced: bool = _is_enemy_silenced(enemy)
+	if enemy.get("silence_turns_left", 0) > 0:
+		enemy["silence_turns_left"] -= 1
 
 	# Potion, skill, or basic attack - in that priority, one action per
 	# turn, exactly mirroring EnemyHeroManager's own simulated turn
@@ -5893,7 +7050,7 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 		_drink_enemy_health_potion(enemy)
 		return
 
-	if not hero_hidden and not _is_enemy_silenced(enemy):
+	if not hero_hidden and not silenced:
 		var skill_id: String = _pick_enemy_ready_skill(enemy, enemy_type, hero_distance)
 		if skill_id != "":
 			_cast_enemy_skill(enemy, skill_id)
@@ -5967,7 +7124,13 @@ func _drink_enemy_mana_potion() -> void:
 ## exactly like the player's own copies, only ever trigger off this
 ## plain Attack, never off a skill.
 func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
+	_play_enemy_attack_lunge(enemy)
 	var shadow_bonus: float = _enemy_shadow_dance_bonus_damage if _enemy_shadow_dance_active else 0.0
+	# Same idea for Nature's Guise, just with a root on the player
+	# instead of bonus damage - captured now, before the attack (and
+	# possibly _end_enemy_natures_guise()) below can change what
+	# _enemy_natures_guise_active reads.
+	var attacking_from_enemy_natures_guise: bool = _enemy_natures_guise_active
 	var tidebringer_level_data: Dictionary = _maybe_consume_enemy_tidebringer_stack()
 	var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
 	var mitigated: float = apply_damage(_roll_enemy_hero_damage(enemy, shadow_bonus + tidebringer_bonus))
@@ -5986,6 +7149,11 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 
 	if _enemy_shadow_dance_active and shadow_bonus > 0.0:
 		_end_enemy_shadow_dance()
+
+	if attacking_from_enemy_natures_guise:
+		if _recruited.get("current_hp", 0) > 0:
+			_player_root_turns_left = _enemy_natures_guise_root_turns
+		_end_enemy_natures_guise()
 
 
 ## The rival hero's flat "damage" stat (see GameManager.build_hero_
@@ -6097,6 +7265,17 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			return _player_frostbite_dot_turns_left <= 0
 		"tag_team":
 			return not _enemy_tag_team_active
+		"nature's_guise":
+			return not _enemy_natures_guise_active
+		"living_armor":
+			return not _enemy_living_armor_active
+		"leech_seed":
+			# Same "no benefit from resetting your own DoT" reasoning as
+			# Cold Feet/Ice Vortex/Frostbite above - recasting on an
+			# already-seeded player just restarts the same level's own
+			# damage/healing back to full, no extra total value over
+			# letting the existing one run its course.
+			return _player_leech_seed_dot_turns_left <= 0
 		_:
 			return true
 
@@ -6251,6 +7430,18 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int)
 ##     there at all - see EnemyHeroManager's own _build_npc_ai_context()
 ##     docstring), where `grid_columns` defaults to 0 and both modifiers
 ##     fall back to their own no-columns proxy instead.
+##   - reactive_armor_stacks/reactive_armor_max_stacks: Timbersaw's own
+##     current Reactive Armor stack count/cap, for EnemySkillAI's own
+##     _timbersaw_modifier() to fold into its survival/aggression
+##     calculations (see that function's own docstring) - 0/0 for every
+##     other hero (a no-op there, same as every other hero-specific
+##     field in this context).
+##   - target_is_hero: always true here - the player is the only
+##     possible target in a hero fight, and always a hero. Used by
+##     Timbersaw's own Whirling Death (see _timbersaw_whirling_death_
+##     modifier()) for its own qualitative "a hero was hit" value;
+##     EnemyHeroManager's own _build_npc_ai_context() reports false
+##     instead, since the simulation's own targets are always creeps.
 func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distance: int) -> Dictionary:
 	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 	var current_hp: float = float(enemy.get("current_hp", 0.0))
@@ -6292,6 +7483,9 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 		"target_pos_index": _hero_pos_index,
 		"grid_columns": GRID_COLUMNS,
 		"caster_facing_left": bool(enemy["node"].flip_h),
+		"reactive_armor_stacks": _enemy_reactive_armor_stack_turns.size(),
+		"reactive_armor_max_stacks": int(_get_enemy_reactive_armor_level_data().get("max_stacks", 0)),
+		"target_is_hero": true,
 	}
 
 
@@ -6408,13 +7602,31 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 			_cast_enemy_tag_team(level_data)
 		"walrus_punch":
 			_cast_enemy_walrus_punch(enemy, level_data)
+		"nature's_guise":
+			_activate_enemy_natures_guise(level_data)
+		"leech_seed":
+			_cast_enemy_leech_seed(level_data)
+		"living_armor":
+			_activate_enemy_living_armor(level_data)
+		"overgrowth":
+			_cast_enemy_overgrowth(enemy, level_data)
+		"whirling_death":
+			_cast_enemy_whirling_death(enemy, level_data)
+		"timber_chain":
+			_cast_enemy_timber_chain(enemy, level_data)
+		"chakram":
+			_cast_enemy_chakram(enemy, level_data)
 
-	# Shadow Dance only breaks from casting ANOTHER skill (or
-	# attacking, handled separately in _resolve_enemy_hero_attack()),
-	# never from a cast/recast of Shadow Dance itself - mirrors the
-	# player's own _on_skill_pressed().
+	# Shadow Dance/Nature's Guise only break from casting ANOTHER skill
+	# (or attacking, handled separately in _resolve_enemy_hero_attack()),
+	# never from a cast/recast of themselves - mirrors the player's own
+	# _on_skill_pressed(). Only one of the two could ever be active at
+	# once (different heroes' kits), so this just ends whichever one
+	# actually is.
 	if _enemy_shadow_dance_active and skill_id != "shadow_dance":
 		_end_enemy_shadow_dance()
+	if _enemy_natures_guise_active and skill_id != "nature's_guise":
+		_end_enemy_natures_guise()
 
 	# After Shadow Dance's own break above, so the caster's modulate is
 	# already back to opaque before the flash reads/writes it.
@@ -6538,6 +7750,11 @@ func _cast_enemy_pounce(enemy: Dictionary, level_data: Dictionary) -> void:
 	for i in range(move_distance):
 		var next_pos: int = pos + direction
 		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		# The player's own Ice Shards wall stops the leap dead, same
+		# "can't jump past a wall in its path" rule the player's own
+		# Pounce follows now (see _cast_pounce()).
+		if _is_column_ice_shards_blocked(next_pos):
 			break
 		pos = next_pos
 		if pos == _hero_pos_index:
@@ -6696,13 +7913,14 @@ func _update_enemy_hero_visibility() -> void:
 	var boss: Dictionary = _get_hero_fight_boss()
 	if boss.is_empty() or not is_instance_valid(boss["node"]):
 		return
-	boss["node"].modulate = Color(1, 1, 1, 0.4) if _enemy_shadow_dance_active else Color(1, 1, 1, 1)
+	var hidden: bool = _enemy_shadow_dance_active or _enemy_natures_guise_active
+	boss["node"].modulate = Color(1, 1, 1, 0.4) if hidden else Color(1, 1, 1, 1)
 
 
 # ------------------------------------------------------------------
 # Lone Druid's Entangle, cast by the rival on the player - mirrors
-# _apply_root()/_tick_entangle_effects(), just aimed at the player
-# instead of an enemy. There's only one possible target (the player),
+# _apply_root(), just aimed at the player instead of an enemy. There's
+# only one possible target (the player),
 # so no targeting step is needed the way the player's own Entangle
 # needs _start_entangle_targeting()/_resolve_entangle_cast().
 # ------------------------------------------------------------------
@@ -6714,17 +7932,6 @@ func _cast_enemy_entangle(level_data: Dictionary) -> void:
 	_player_entangle_dot_turns_left = int(level_data.get("dot_duration", 0))
 	_show_message_over_hero("Entangled!")
 
-
-func _tick_player_entangle_effects() -> void:
-	if _player_root_turns_left > 0:
-		_player_root_turns_left -= 1
-	if _player_silence_turns_left > 0:
-		_player_silence_turns_left -= 1
-
-	if _player_entangle_dot_turns_left > 0:
-		_player_entangle_dot_turns_left -= 1
-		if _player_entangle_dot_damage > 0.0:
-			apply_damage(_player_entangle_dot_damage)
 
 
 # ------------------------------------------------------------------
@@ -7109,24 +8316,13 @@ func _apply_enemy_curse_of_avernus_stack() -> void:
 	_show_message_over_hero("Cursed!")
 
 
-## Ticks Curse of Avernus once per End Turn, alongside
-## _tick_player_entangle_effects(): applies this turn's damage-over-
-## time to the player while cursed, ending the curse once its duration
-## runs out; for a not-yet-cursed player still carrying stacks, decays
-## them to 0 once CURSE_OF_AVERNUS_STACK_DECAY_TURNS full turns have
-## passed since the rival's last hit - same rules as the player's own
-## copy, just aimed at the player instead of an enemy.
+## The player-side mirror of _tick_curse_of_avernus_effects(): the
+## curse's own DoT moved to _tick_player_turn_start_effects() along with
+## every other DoT - this is only the leftover, turn-count-based decay
+## for a not-yet-cursed player still carrying stacks, same rules as the
+## enemy-side version.
 func _tick_enemy_curse_of_avernus_effects() -> void:
-	if _player_curse_active:
-		if _player_curse_dot_turns_left > 0:
-			_player_curse_dot_turns_left -= 1
-			if _player_curse_dot_damage > 0.0:
-				apply_damage(_player_curse_dot_damage)
-
-		if _player_curse_dot_turns_left <= 0:
-			_player_curse_active = false
-			_player_curse_dot_damage = 0.0
-	elif _player_curse_stacks > 0:
+	if not _player_curse_active and _player_curse_stacks > 0:
 		if _turn_count - _player_curse_last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
 			_player_curse_stacks = 0
 
@@ -7212,26 +8408,10 @@ func _cast_enemy_cold_feet(level_data: Dictionary) -> void:
 	_show_message_over_hero("Cold Feet!")
 
 
-func _tick_player_cold_feet_effects() -> void:
-	if _player_cold_feet_dot_turns_left <= 0:
-		return
-	_player_cold_feet_dot_turns_left -= 1
-	if _player_cold_feet_dot_damage > 0.0:
-		apply_damage(_player_cold_feet_dot_damage)
-
-
 func _cast_enemy_ice_vortex(level_data: Dictionary) -> void:
 	_player_ice_vortex_dot_damage = float(level_data.get("damage", 0))
 	_player_ice_vortex_dot_turns_left = int(level_data.get("duration", 0))
 	_show_message_over_hero("Ice Vortex!")
-
-
-func _tick_player_ice_vortex_effects() -> void:
-	if _player_ice_vortex_dot_turns_left <= 0:
-		return
-	_player_ice_vortex_dot_turns_left -= 1
-	if _player_ice_vortex_dot_damage > 0.0:
-		apply_damage(_player_ice_vortex_dot_damage)
 
 
 # ------------------------------------------------------------------
@@ -7251,7 +8431,7 @@ func _cast_enemy_chilling_touch(enemy: Dictionary, level_data: Dictionary) -> vo
 
 # ------------------------------------------------------------------
 # Ancient Apparition's Ice Blast, cast by the rival - mirrors the
-# player's own _resolve_ice_blast_cast()/_tick_ice_blast_effects().
+# player's own _resolve_ice_blast_cast().
 # Like Dark Pact/Torrent/Ghostship's own rival copies, there's only one
 # possible target in a hero fight (the player), so the "hit everyone
 # within radius" AoE collapses to a single hit; the DoT/execute state
@@ -7268,35 +8448,6 @@ func _cast_enemy_ice_blast(level_data: Dictionary) -> void:
 	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 	_show_message_over_hero("Ice Blast!")
 
-
-## Ticks Ice Blast's damage-over-time down by one turn on the player,
-## dealing that turn's damage, then - if the player survived it -
-## checks the execute threshold: if the player's current HP has dropped
-## to or below execute_pct of their own max HP, they die outright,
-## regardless of how much literal HP is left, mirroring
-## _tick_ice_blast_effects()'s own enemy-side execute check. There's no
-## dedicated "kill the player" helper the way _kill_enemy() exists for
-## an enemy - zeroing PlayerManager's own current_hp is enough, since
-## _end_turn()'s own "current_hp <= 0" check (run right after this
-## tick, as part of _tick_skill_cooldowns()) already handles calling
-## _handle_defeat() from there, the same way Entangle's/Curse of
-## Avernus's own DoT-driven kills already do today.
-func _tick_player_ice_blast_effects() -> void:
-	if _player_ice_blast_dot_turns_left <= 0:
-		return
-
-	_player_ice_blast_dot_turns_left -= 1
-	if _player_ice_blast_dot_damage > 0.0:
-		apply_damage(_player_ice_blast_dot_damage)
-
-	if _recruited.get("current_hp", 0) > 0 and _player_ice_blast_execute_pct > 0.0:
-		var max_hp: float = _hero_max_hp()
-		if max_hp > 0.0 and float(_recruited.get("current_hp", 0)) <= max_hp * _player_ice_blast_execute_pct:
-			PlayerManager.damage_hero(float(_recruited.get("current_hp", 0)))
-			_refresh_bars()
-
-	if _player_ice_blast_dot_turns_left <= 0:
-		_player_ice_blast_execute_pct = 0.0
 
 
 # ------------------------------------------------------------------
@@ -7490,13 +8641,6 @@ func _cast_enemy_frostbite(level_data: Dictionary) -> void:
 	_show_message_over_hero("Frostbite!")
 
 
-func _tick_player_frostbite_effects() -> void:
-	if _player_frostbite_dot_turns_left <= 0:
-		return
-	_player_frostbite_dot_turns_left -= 1
-	if _player_frostbite_dot_damage > 0.0:
-		apply_damage(_player_frostbite_dot_damage)
-
 
 # ------------------------------------------------------------------
 # Crystal Maiden's ultimate, Freezing Field, cast by the rival on
@@ -7623,7 +8767,19 @@ func _cast_enemy_snowball(enemy: Dictionary, level_data: Dictionary) -> void:
 	apply_damage(float(level_data.get("damage", 0)))
 	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 
-	_move_enemy(enemy, _hero_pos_index)
+	# The charge physically carries the rival across every column in
+	# between, so the player's own Ice Shards wall in its path stops it
+	# one column short - same rule the player's own Snowball charge
+	# follows now (see _resolve_snowball_cast()).
+	var charge_direction: int = _step_toward(enemy["pos_index"], _hero_pos_index)
+	var landing_pos: int = enemy["pos_index"]
+	while charge_direction != 0 and landing_pos != _hero_pos_index:
+		var next_pos: int = landing_pos + charge_direction
+		if _is_column_ice_shards_blocked(next_pos):
+			break
+		landing_pos = next_pos
+
+	_move_enemy(enemy, landing_pos)
 	_show_message_over_hero("Snowball!")
 
 
@@ -7692,6 +8848,12 @@ func _cast_enemy_walrus_punch(enemy: Dictionary, level_data: Dictionary) -> void
 			break
 		if not _get_enemy_at(next_pos).is_empty():
 			break
+		# Knocked straight into the rival's own Ice Shards wall (if
+		# they've cast it) - stops here same as hitting the board edge
+		# or another enemy, and counts as the same "hit_wall" bonus
+		# damage below (a literal wall, this time).
+		if _is_column_enemy_ice_shards_blocked(next_pos):
+			break
 		pos = next_pos
 		actual_distance += 1
 
@@ -7714,6 +8876,314 @@ func _cast_enemy_walrus_punch(enemy: Dictionary, level_data: Dictionary) -> void
 		_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 
 
+# ------------------------------------------------------------------
+# Treant Protector's Nature's Guise, cast by the rival on himself -
+# mirrors the player's own _activate_natures_guise()/_tick_natures_
+# guise()/_end_natures_guise(): functionally the same invisibility as
+# Shadow Dance (folded into the very same _is_target_hidden()/_update_
+# enemy_hero_visibility() checks), just with a root on the player
+# instead of bonus damage for the Attack that breaks it - see
+# _resolve_enemy_hero_attack()'s own "attacking_from_enemy_natures_
+# guise" capture.
+# ------------------------------------------------------------------
+
+func _activate_enemy_natures_guise(level_data: Dictionary) -> void:
+	_enemy_natures_guise_active = true
+	_enemy_natures_guise_root_turns = int(level_data.get("root_turns", 0))
+	_enemy_natures_guise_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_natures_guise_duration_pending_start = true
+	_update_enemy_hero_visibility()
+
+
+func _tick_enemy_natures_guise() -> void:
+	if not _enemy_natures_guise_active:
+		return
+	if _enemy_natures_guise_duration_pending_start:
+		_enemy_natures_guise_duration_pending_start = false
+		return
+	_enemy_natures_guise_turns_remaining -= 1
+	if _enemy_natures_guise_turns_remaining <= 0:
+		_end_enemy_natures_guise()
+
+
+func _end_enemy_natures_guise() -> void:
+	_enemy_natures_guise_active = false
+	_enemy_natures_guise_root_turns = 0
+	_enemy_natures_guise_turns_remaining = 0
+	_enemy_natures_guise_duration_pending_start = false
+	_update_enemy_hero_visibility()
+
+
+# ------------------------------------------------------------------
+# Treant Protector's Leech Seed, cast by the rival on the player -
+# mirrors the player's own _resolve_leech_seed_cast(): no immediate
+# damage, just arms this level's own dot_damage/heal_per_turn on the
+# player's own dedicated _player_leech_seed_* fields, ticked once per
+# turn (alongside every other rival-inflicted DoT) by _tick_player_
+# turn_start_effects() - which, unlike every other DoT there, also heals
+# the CASTER (the rival, via _get_hero_fight_boss()) each tick instead
+# of the player.
+# ------------------------------------------------------------------
+
+func _cast_enemy_leech_seed(level_data: Dictionary) -> void:
+	_player_leech_seed_dot_damage = float(level_data.get("dot_damage", 0))
+	_player_leech_seed_heal_per_turn = float(level_data.get("heal_per_turn", 0))
+	_player_leech_seed_dot_turns_left = int(level_data.get("duration", 0))
+	_show_message_over_hero("Leech Seed!")
+
+
+# ------------------------------------------------------------------
+# Treant Protector's Living Armor, cast by the rival on himself - mirrors
+# the player's own _activate_living_armor()/_tick_living_armor()/
+# _end_living_armor(): bonus_armor folds into _enemy_hero_bonus_armor(),
+# bonus_hp_regen heals the rival on top of his own baseline passive
+# regen (_tick_enemy_passive_regen()) every tick, same "on top of the
+# baseline, not instead of it" relationship the player's own copy has
+# with _apply_passive_hero_regen().
+# ------------------------------------------------------------------
+
+func _activate_enemy_living_armor(level_data: Dictionary) -> void:
+	_enemy_living_armor_active = true
+	_enemy_living_armor_bonus_armor = float(level_data.get("bonus_armor", 0))
+	_enemy_living_armor_bonus_hp_regen = float(level_data.get("bonus_hp_regen", 0))
+	_enemy_living_armor_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_living_armor_duration_pending_start = true
+	_show_message_over_hero("Living Armor!")
+
+
+func _tick_enemy_living_armor() -> void:
+	if not _enemy_living_armor_active:
+		return
+	if _enemy_living_armor_duration_pending_start:
+		_enemy_living_armor_duration_pending_start = false
+		return
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if not boss.is_empty():
+		var max_hp: float = _enemy_hero_effective_max_hp(boss)
+		boss["current_hp"] = minf(max_hp, float(boss.get("current_hp", 0.0)) + _enemy_living_armor_bonus_hp_regen)
+
+	_enemy_living_armor_turns_remaining -= 1
+	if _enemy_living_armor_turns_remaining <= 0:
+		_end_enemy_living_armor()
+
+
+func _end_enemy_living_armor() -> void:
+	_enemy_living_armor_active = false
+	_enemy_living_armor_bonus_armor = 0.0
+	_enemy_living_armor_bonus_hp_regen = 0.0
+	_enemy_living_armor_turns_remaining = 0
+	_enemy_living_armor_duration_pending_start = false
+
+
+# ------------------------------------------------------------------
+# Treant Protector's ultimate, Overgrowth, cast by the rival - mirrors
+# the player's own _activate_overgrowth(): every living, targetable
+# enemy within `radius` columns of the rival's CURRENT position gets
+# rooted (_player_root_turns_left, the same shared field Entangle's own
+# root already uses - it can still attack and cast skills while rooted,
+# same as any other rooted enemy) for `root_duration` turns, armed with
+# that same level's own DoT (_player_overgrowth_dot_damage/_player_
+# overgrowth_dot_turns_left, a dedicated pair so it never clobbers
+# another skill's DoT on the player) for the same duration - ticked, at
+# the start of the player's own turn, by _tick_player_turn_start_
+# effects(). There's only one possible target in a hero fight, so this
+# collapses to a single conditional hit rather than a loop over multiple
+# enemies, same simplification every other AoE skill's own rival copy
+# already uses.
+# ------------------------------------------------------------------
+
+func _cast_enemy_overgrowth(enemy: Dictionary, level_data: Dictionary) -> void:
+	var radius: int = int(level_data.get("radius", 0))
+	if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+		var dot_damage: float = float(level_data.get("dot_damage", 0))
+		var root_duration: int = int(level_data.get("root_duration", 0))
+		_player_root_turns_left = root_duration
+		_player_overgrowth_dot_damage = dot_damage
+		_player_overgrowth_dot_turns_left = root_duration
+
+	_show_message_over_hero("Overgrowth!")
+
+
+# ------------------------------------------------------------------
+# Timbersaw's Whirling Death, cast by the rival on himself - mirrors the
+# player's own _cast_whirling_death(): `level_data.damage` to the player
+# whenever they're within `radius` columns of the rival's CURRENT
+# position. There's only one possible target in a hero fight, so this
+# collapses to a single conditional hit rather than a loop over multiple
+# enemies, same simplification every other self-centered AoE's own
+# rival copy already uses (see _cast_enemy_freezing_field()/_cast_enemy_
+# overgrowth()). "Pure damage" and the primary-attribute reduction are
+# both purely descriptive here - neither is mechanically implemented
+# anywhere in this project (the player's own _cast_whirling_death() also
+# just calls _deal_fixed_damage_to_enemy(), the same armor-mitigated
+# path every other skill uses, and no reduction amount exists anywhere
+# in its own level data), so this mirrors that exact behavior rather
+# than inventing either one - see EnemySkillAI's own _timbersaw_
+# whirling_death_modifier() for how the AI still accounts for the
+# qualitative "a hero was hit" value without a real stat system behind
+# it.
+# ------------------------------------------------------------------
+
+func _cast_enemy_whirling_death(enemy: Dictionary, level_data: Dictionary) -> void:
+	var radius: int = int(level_data.get("radius", 0))
+	if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+		apply_damage(float(level_data.get("damage", 0)))
+	_show_message_over_hero("Whirling Death!")
+
+
+# ------------------------------------------------------------------
+# Timbersaw's Timber Chain, cast by the rival on the player - mirrors
+# the player's own _resolve_timber_chain_cast(): `level_data.damage` to
+# the player (there's only one possible target/path occupant in a hero
+# fight - see this section's own header comment above), then pulls the
+# rival onto the player's own column, stopping one column short of a
+# player-cast Ice Shards wall in the way, exactly the same "the damage
+# still reaches the full line, only the physical landing spot is
+# blocked" split the player's own copy uses.
+# ------------------------------------------------------------------
+
+func _cast_enemy_timber_chain(enemy: Dictionary, level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+
+	var chain_direction: int = _step_toward(enemy["pos_index"], _hero_pos_index)
+	var landing_pos: int = enemy["pos_index"]
+	while chain_direction != 0 and landing_pos != _hero_pos_index:
+		var next_pos: int = landing_pos + chain_direction
+		if _is_column_ice_shards_blocked(next_pos):
+			break
+		landing_pos = next_pos
+
+	_move_enemy(enemy, landing_pos)
+	_show_message_over_hero("Timber Chain!")
+
+
+# ------------------------------------------------------------------
+# Timbersaw's Reactive Armor (passive) - mirrors the player's own
+# _reactive_armor_stack_turns/_get_reactive_armor_level_data()/_apply_
+# reactive_armor_stack()/_tick_reactive_armor_stacks()/_apply_reactive_
+# armor_regen().
+# ------------------------------------------------------------------
+
+## Reactive Armor's level data for whatever level the rival has it at
+## right now - {} if it isn't learned at all (level 0), the same "empty
+## means locked" convention every other auto-triggered skill's own
+## _get_*_level_data() helper uses.
+func _get_enemy_reactive_armor_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "reactive_armor")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_enemy_skill("reactive_armor")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _enemy_reactive_armor_bonus_armor() -> float:
+	if _enemy_reactive_armor_stack_turns.is_empty():
+		return 0.0
+	var level_data: Dictionary = _get_enemy_reactive_armor_level_data()
+	if level_data.is_empty():
+		return 0.0
+	return _enemy_reactive_armor_stack_turns.size() * float(level_data.get("bonus_armor_per_stack", 0.0))
+
+
+func _apply_enemy_reactive_armor_stack() -> void:
+	var level_data: Dictionary = _get_enemy_reactive_armor_level_data()
+	if level_data.is_empty():
+		return
+
+	var max_stacks: int = int(level_data.get("max_stacks", 0))
+	if _enemy_reactive_armor_stack_turns.size() >= max_stacks:
+		_enemy_reactive_armor_stack_turns.pop_front()
+	_enemy_reactive_armor_stack_turns.append(int(level_data.get("duration", 0)))
+
+
+func _tick_enemy_reactive_armor_stacks() -> void:
+	for i in range(_enemy_reactive_armor_stack_turns.size()):
+		_enemy_reactive_armor_stack_turns[i] -= 1
+	_enemy_reactive_armor_stack_turns = _enemy_reactive_armor_stack_turns.filter(func(turns_left): return turns_left > 0)
+
+
+func _apply_enemy_reactive_armor_regen() -> void:
+	var level_data: Dictionary = _get_enemy_reactive_armor_level_data()
+	if level_data.is_empty() or _enemy_reactive_armor_stack_turns.is_empty():
+		return
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty():
+		return
+
+	var max_hp: float = _enemy_hero_effective_max_hp(boss)
+	var heal_amount: float = _enemy_reactive_armor_stack_turns.size() * float(level_data.get("bonus_hp_regen_per_stack", 0.0))
+	boss["current_hp"] = minf(max_hp, float(boss.get("current_hp", 0.0)) + heal_amount)
+
+
+# ------------------------------------------------------------------
+# Timbersaw's ultimate, Chakram, cast by the rival - mirrors the
+# player's own _chakram field/_resolve_chakram_cast()/_tick_chakram()/
+# _despawn_chakram(). There's only one possible initial-AoE target in a
+# hero fight (the player), so this collapses the "every OTHER enemy
+# within radius" splash to a single hit, same simplification every other
+# rival AoE cast already uses.
+# ------------------------------------------------------------------
+
+func _cast_enemy_chakram(enemy: Dictionary, level_data: Dictionary) -> void:
+	var pos_index: int = _hero_pos_index
+	apply_damage(float(level_data.get("cast_damage", 0)))
+
+	_despawn_enemy_chakram()
+	_enemy_chakram = {
+		"pos_index": pos_index,
+		"radius": int(level_data.get("radius", 0)),
+		"damage_per_turn": float(level_data.get("damage_per_turn", 0)),
+		"turns_remaining": int(level_data.get("duration", 0)),
+		"duration_pending_start": true,
+		"node": _spawn_chakram_marker(pos_index),
+	}
+	_show_message_over_hero("Chakram!")
+
+
+## Ticks the rival's planted Chakram's duration down once per End Turn,
+## same timing (and same "the casting turn doesn't count" skip) as every
+## other duration-based buff - dealing this level's own damage_per_turn
+## to the player whenever they're within radius columns of the FIXED
+## position it was planted at (not re-checked against the player's
+## current position - same as the player's own copy), on every tick that
+## actually counts against the duration. A no-op while no chakram is
+## planted.
+func _tick_enemy_chakram() -> void:
+	if _enemy_chakram.is_empty():
+		return
+
+	if _enemy_chakram.get("duration_pending_start", false):
+		_enemy_chakram["duration_pending_start"] = false
+		return
+
+	var pos_index: int = int(_enemy_chakram["pos_index"])
+	var radius: int = int(_enemy_chakram["radius"])
+	if _distance(_hero_pos_index, pos_index) <= radius:
+		apply_damage(float(_enemy_chakram["damage_per_turn"]))
+
+	_enemy_chakram["turns_remaining"] = int(_enemy_chakram["turns_remaining"]) - 1
+	if int(_enemy_chakram["turns_remaining"]) <= 0:
+		_despawn_enemy_chakram()
+
+
+## Removes whatever chakram the rival currently has planted, if any -
+## used both when a fresh cast replaces one still active and when its
+## duration runs out, same reasoning as the player's own _despawn_
+## chakram(). Scene teardown at battle end frees the node implicitly
+## either way; also called from _reset_enemy_hero_state() so a marker
+## from a PREVIOUS hero fight never lingers into a new one.
+func _despawn_enemy_chakram() -> void:
+	if _enemy_chakram.is_empty():
+		return
+	if is_instance_valid(_enemy_chakram.get("node")):
+		_enemy_chakram["node"].queue_free()
+	_enemy_chakram = {}
+
+
 ## Moves an enemy to `new_pos` (clamped on-board) and syncs its node's
 ## screen position to match, flipping its art to face the direction it
 ## just moved in (same left/right art convention as _spawn_enemy()).
@@ -7726,6 +9196,41 @@ func _move_enemy(enemy: Dictionary, new_pos: int) -> void:
 	if direction != 0:
 		var native_faces_right: bool = enemy["static"].get("is_hero_fight", false)
 		enemy["node"].flip_h = (direction < 0) if native_faces_right else (direction > 0)
+
+
+const ATTACK_LUNGE_DISTANCE := 18.0
+const ATTACK_LUNGE_OUT_DURATION := 0.09
+const ATTACK_LUNGE_BACK_DURATION := 0.14
+
+
+## A quick "slight shift" in the direction the attacker is currently
+## facing, and back - every enemy attack's own visual tell, the enemy-
+## side equivalent of the player clicking Attack (already an obvious,
+## deliberate action he just took). Enemies otherwise act automatically
+## with nothing on screen to show which one just hit something, so
+## this plays at every creep/rival-hero attack call site (see
+## _enemy_turn()/_resolve_enemy_hero_attack()) - purely cosmetic, the
+## damage itself is already fully resolved by the time this starts.
+##
+## Deliberately keyed off the sprite's own facing (flip_h, same
+## left/right art convention _move_enemy() already maintains) rather
+## than the actual target's column: a melee attacker always shares its
+## target's column outright (distance 0), so a direction-to-target
+## computation would always come out to zero for exactly the case that
+## needs this lunge the most.
+func _play_enemy_attack_lunge(enemy: Dictionary) -> void:
+	var node: Control = enemy.get("node")
+	if node == null:
+		return
+
+	var native_faces_right: bool = enemy["static"].get("is_hero_fight", false)
+	var facing_left: bool = node.flip_h if native_faces_right else not node.flip_h
+	var direction: float = -1.0 if facing_left else 1.0
+
+	var base_x: float = node.position.x
+	var tween := create_tween()
+	tween.tween_property(node, "position:x", base_x + direction * ATTACK_LUNGE_DISTANCE, ATTACK_LUNGE_OUT_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_property(node, "position:x", base_x, ATTACK_LUNGE_BACK_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
 
 
 ## Picks a flee direction once and sticks with it - only flipping to
@@ -7764,6 +9269,16 @@ func _update_action_buttons() -> void:
 	move_right_button.disabled = locked
 	attack_button.disabled = locked
 
+	# Fleeing is free at any time in a real playthrough - never gated by
+	# turn-lock/stun/cooldown here, so unlike the buttons above it never
+	# gets a fresh baseline elsewhere in this function. _apply_tutorial_
+	# gate() below only ever ADDS a disable on top of whatever's already
+	# set (see its own comment) - without resetting this to false first,
+	# a step that gates flee out (e.g. stage 2's "attack_while_low")
+	# would leave it stuck disabled forever, even once a later step
+	# (e.g. "must_flee") allows it again.
+	flee_button.disabled = false
+
 	for skill_id in _skill_buttons.keys():
 		var on_cooldown: bool = _skill_cooldowns.get(skill_id, 0) > 0
 		_skill_buttons[skill_id].disabled = locked or on_cooldown
@@ -7772,6 +9287,464 @@ func _update_action_buttons() -> void:
 	# icon can also change from item use - _populate_item_grid() reads
 	# _has_acted_this_turn itself to decide their disabled state.
 	_populate_item_grid()
+
+	# Progress checks BEFORE the gate: _apply_tutorial_gate() only ever
+	# ADDS restrictions on top of whatever locked/cooldown state the
+	# lines above just set - it never lifts one. A step transition
+	# triggered by one of these checks (e.g. _advance_tutorial_stage1_
+	# step()) calls the gate again itself with the NEW allowed list, but
+	# that can't undo a disable the FIRST (stale-list) gate call already
+	# applied to a button that just became allowed - it would get stuck
+	# disabled with nothing left to ever re-enable it. Settling the step
+	# (and its allowed-actions list) first means the one gate call at
+	# the end always sees the final list for this pass.
+	_check_tutorial_stage1_progress()
+	_check_tutorial_stage2_progress()
+	_apply_tutorial_gate()
+
+
+# ------------------------------------------------------------------
+# Tutorial support (TutorialManager's stage 1 script: recruit Kunkka
+# with Torrent on Zone.tscn, then this file walks through using Torrent
+# on the ranged creep and closing in on the melee ones). Every function
+# here is a no-op unless TutorialManager.is_active, so none of it
+# affects a real playthrough.
+# ------------------------------------------------------------------
+
+# Which forced step stage 1's script is currently on - "" outside the
+# tutorial. Driving state for _check_tutorial_stage1_progress() (polled
+# after every action via _update_action_buttons()) and the explicit
+# advance from _resolve_torrent_cast() once the ranged creep is hit.
+var _tutorial_stage1_step: String = ""
+
+# One-shot flags so the reinforcements tip and the forced Tidebringer/
+# Ghostship picks each only ever interrupt the player once - a second
+# reinforcement wave, or a second level-up's skill point, are the
+# player's own to handle freely from then on.
+var _tutorial_shown_reinforcement_tip: bool = false
+var _tutorial_taught_tidebringer: bool = false
+var _tutorial_taught_ghostship: bool = false
+
+
+## Which skill id (if any) the current tutorial stage is forcing the
+## player's next skill point onto - "" once that stage's forced pick
+## has already been made (or outside the tutorial entirely), meaning
+## any further banked points are the player's own free choice again.
+## Shared by _maybe_show_skill_choice_popup()/_refresh_skill_choice_
+## popup(), so stage 1 (Tidebringer) and stage 3 (Ghostship) both force
+## their pick through the same one code path.
+func _tutorial_forced_skill_id() -> String:
+	if not TutorialManager.is_active:
+		return ""
+	if TutorialManager.current_stage == 1 and not _tutorial_taught_tidebringer:
+		return "tidebringer"
+	if TutorialManager.current_stage == 3 and not _tutorial_taught_ghostship:
+		return "ghostship"
+	return ""
+
+
+## Fully recomputes every action button's disabled state from scratch
+## whenever the tutorial is active - deliberately NOT layered on top of
+## whatever _update_action_buttons() happened to set earlier, since
+## this can be (and often is) called well outside that function's own
+## call chain: _advance_tutorial_stageN_step() calls this directly from
+## spots like a failed skill cast (not enough mana) or a torrent/
+## ghostship cast resolving, neither of which goes through
+## _update_action_buttons() at all. An earlier version only ever ADDED
+## disables on top of the current button state, which happened to work
+## while every call site ran with a stable allowed-list, but broke the
+## moment a button was disabled under an OLD allowed-list and needed to
+## become enabled again under a NEW one from a call outside that flow -
+## it had no way to undo a disable it hadn't just set (this hit Torrent,
+## then Flee, then the Mana Potion, before landing on this fix). See
+## TutorialManager.is_action_allowed() for the action id scheme
+## ("move_left", "move_right", "attack", "flee", "skill:<id>",
+## "item:<item_id>").
+func _apply_tutorial_gate() -> void:
+	if not TutorialManager.is_active:
+		return
+
+	# Same "one action per turn" lock _update_action_buttons() computes -
+	# duplicated here since this needs to be authoritative on its own,
+	# not dependent on that function having just run. Flee is
+	# deliberately excluded, same as _update_action_buttons() - it's
+	# never turn-locked in a real playthrough either.
+	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0 or _cold_embrace_active
+
+	move_left_button.disabled = locked or not TutorialManager.is_action_allowed("move_left")
+	move_right_button.disabled = locked or not TutorialManager.is_action_allowed("move_right")
+	attack_button.disabled = locked or not TutorialManager.is_action_allowed("attack")
+	flee_button.disabled = not TutorialManager.is_action_allowed("flee")
+
+	for skill_id in _skill_buttons.keys():
+		var on_cooldown: bool = _skill_cooldowns.get(skill_id, 0) > 0
+		_skill_buttons[skill_id].disabled = locked or on_cooldown or not TutorialManager.is_action_allowed("skill:" + skill_id)
+
+	for btn in items_grid.get_children():
+		var item_id: String = btn.get_meta("tutorial_item_id", "")
+		if item_id != "":
+			btn.disabled = locked or not TutorialManager.is_action_allowed("item:" + item_id)
+
+	_tutorial_update_glow()
+
+
+# Tracks whichever single button is currently glowing (see
+# _tutorial_update_glow()) so repeated _apply_tutorial_gate() calls -
+# there are many, every turn - don't restart the pulse animation from
+# scratch each time; only a change of target tears down the old glow
+# and starts a new one.
+var _tutorial_glow_button: Button = null
+var _tutorial_glow_style: StyleBoxFlat = null
+var _tutorial_glow_tween: Tween = null
+
+
+## Which single button (if any) the tutorial's CURRENT allowed-actions
+## list is forcing the player toward - the counterpart TutorialManager.
+## make_glow_style() gets applied to. Returns null when nothing is
+## forced (allowed list empty, e.g. mid-checkpoint) or more than one
+## thing is allowed at once (battle.gd's own steps only ever force
+## exactly one action at a time; Shop.gd's simultaneous health+mana
+## forcing is handled separately, in Shop.gd itself).
+func _tutorial_current_forced_button() -> Button:
+	if not TutorialManager.is_active:
+		return null
+
+	var allowed: Array = TutorialManager.get_allowed_actions()
+	if allowed.size() != 1:
+		return null
+
+	var action_id: String = allowed[0]
+	if action_id == "move_left":
+		return move_left_button
+	if action_id == "move_right":
+		return move_right_button
+	if action_id == "attack":
+		return attack_button
+	if action_id == "flee":
+		return flee_button
+	if action_id.begins_with("skill:"):
+		return _skill_buttons.get(action_id.substr(6), null)
+	if action_id.begins_with("item:"):
+		var item_id: String = action_id.substr(5)
+		for btn in items_grid.get_children():
+			if btn.get_meta("tutorial_item_id", "") == item_id:
+				return btn
+	return null
+
+
+## Moves the glow (see TutorialManager.make_glow_style()) onto whatever
+## _tutorial_current_forced_button() currently returns, tearing down
+## the previous one first - a no-op if the target hasn't changed since
+## last time, so the breathing animation isn't constantly restarted.
+func _tutorial_update_glow() -> void:
+	var target: Button = _tutorial_current_forced_button()
+	if target == _tutorial_glow_button:
+		return
+
+	if _tutorial_glow_button != null and is_instance_valid(_tutorial_glow_button):
+		_tutorial_glow_button.remove_theme_stylebox_override("normal")
+		_tutorial_glow_button.remove_theme_stylebox_override("hover")
+	if _tutorial_glow_tween:
+		_tutorial_glow_tween.kill()
+
+	_tutorial_glow_button = target
+	_tutorial_glow_style = null
+	_tutorial_glow_tween = null
+
+	if target == null:
+		return
+
+	_tutorial_glow_style = TutorialManager.make_glow_style()
+	target.add_theme_stylebox_override("normal", _tutorial_glow_style)
+	target.add_theme_stylebox_override("hover", _tutorial_glow_style)
+	_tutorial_glow_tween = TutorialManager.start_glow_pulse(_tutorial_glow_style, self)
+
+
+## Advances stage 1's script to `step_id`: sets which action(s)
+## TutorialManager will now allow, shows the popup explaining that
+## step, and re-applies the gate immediately so the newly-(dis)allowed
+## buttons don't wait for the next _update_action_buttons() pass.
+func _advance_tutorial_stage1_step(step_id: String) -> void:
+	_tutorial_stage1_step = step_id
+
+	match step_id:
+		"move_to_torrent_range":
+			TutorialManager.set_allowed_actions(["move_right"])
+			TutorialManager.show_popup(
+				"The enemies are still out of range. Move toward them - Torrent reaches 3 columns, "
+				+ "so you'll be able to use it well before you're close enough to be attacked back."
+			)
+		"cast_torrent_on_range":
+			TutorialManager.set_allowed_actions(["skill:torrent"])
+			TutorialManager.show_popup(
+				"Torrent is in range now. Cast it on the ranged creep in the back - left alone, it'll "
+				+ "keep its distance and shoot you from afar, or turn and flee if you close in on it "
+				+ "instead."
+			)
+		"approach_melee":
+			# Which direction actually closes the distance - a melee
+			# creep always spawns at its own fixed column regardless of
+			# wherever the hero currently is (see _spawn_enemy()), so on
+			# a reinforcement recast the hero could just as easily have
+			# drifted PAST that column already, needing "move_left"
+			# instead of the "move_right" the very first approach in
+			# stage 1 always needs.
+			var melee_enemy: Dictionary = _tutorial_find_enemy_by_type("mele")
+			var move_action: String = "move_right"
+			if not melee_enemy.is_empty() and melee_enemy["pos_index"] < _hero_pos_index:
+				move_action = "move_left"
+			TutorialManager.set_allowed_actions([move_action])
+			TutorialManager.show_popup(
+				"That'll keep it stunned for a moment, but it's not dead yet. Close the distance on "
+				+ "the melee creeps so you can start on them too."
+			)
+		"melee_in_range":
+			# Re-entered every time a Torrent cast finishes off a ranged
+			# creep (see _resolve_torrent_cast()) - the wording stays
+			# generic enough to make sense on every visit, not just the
+			# first.
+			TutorialManager.set_allowed_actions(["attack"])
+			TutorialManager.show_popup(
+				"The melee creeps are in range - keep attacking them. Use Torrent again the moment "
+				+ "it's ready if another ranged creep is still up."
+			)
+		"recast_torrent_on_range":
+			TutorialManager.set_allowed_actions(["skill:torrent"])
+			TutorialManager.show_popup(
+				"Torrent is ready again. Use it on the ranged creep to finish it off, so you can go "
+				+ "back to focusing entirely on the melee creeps."
+			)
+		"stage_cleared":
+			_battle_over = true
+			TutorialManager.set_allowed_actions([])
+			_update_action_buttons()
+			TutorialManager.show_checkpoint(
+				"Stage cleared! That's the core loop: move into range, use skills the moment they're "
+				+ "ready, attack in between, and spend skill points on whatever gets you more damage "
+				+ "or more answers.\n\nContinue with the next tutorial stage, or stop here?",
+				TutorialManager.start_stage2
+			)
+
+	_apply_tutorial_gate()
+
+
+## Polled from _update_action_buttons() (i.e. after every move/attack/
+## skill this battle resolves) - advances stage 1's script once its
+## current step's own condition is met. The "cast Torrent on the ranged
+## creep" step advances explicitly instead, from _resolve_torrent_cast()
+## right as that cast lands, not from here.
+func _check_tutorial_stage1_progress() -> void:
+	if not TutorialManager.is_active or TutorialManager.current_stage != 1:
+		return
+
+	match _tutorial_stage1_step:
+		"move_to_torrent_range":
+			var range_enemy: Dictionary = _tutorial_find_enemy_by_type("range")
+			if not range_enemy.is_empty() and _distance(range_enemy["pos_index"], _hero_pos_index) <= 3:
+				_advance_tutorial_stage1_step("cast_torrent_on_range")
+		"approach_melee":
+			if not _get_enemy_at(_hero_pos_index).is_empty():
+				_advance_tutorial_stage1_step("melee_in_range")
+		"melee_in_range":
+			# Watches for Torrent coming off cooldown with a ranged
+			# creep actually WITHIN its cast range - true for the
+			# original one (still alive after its first, non-lethal
+			# cast) and again for whichever ranged creep reinforcements
+			# bring in later. Checking range, not just "alive", matters:
+			# a reinforcement spawns at a fixed column regardless of
+			# where the hero is currently standing, so it can easily
+			# start out too far away - forcing "skill:torrent" only
+			# with nothing valid to cast it on would hard-lock the
+			# battle, since Attack/Move would be the only way to let a
+			# turn pass at all for it to approach. Staying in this step
+			# instead just keeps attacking melee - a real turn still
+			# passes, so the ranged creep's own AI gets to close the
+			# distance on its own.
+			var range_enemy: Dictionary = _tutorial_find_enemy_by_type("range")
+			if _skill_cooldowns.get("torrent", 0) <= 0 and not range_enemy.is_empty() \
+			and _distance(range_enemy["pos_index"], _hero_pos_index) <= 3:
+				_advance_tutorial_stage1_step("recast_torrent_on_range")
+
+
+func _tutorial_find_enemy_by_type(type: String) -> Dictionary:
+	for enemy in _enemies:
+		if enemy["static"].get("type", "") == type:
+			return enemy
+	return {}
+
+
+## Explains the reinforcement mechanic the first time it fires during
+## the tutorial - called from _spawn_reinforcements() alongside its own
+## normal "Reinforcements arrived!" banner. Doesn't touch the current
+## step or its allowed actions; it's a side note, not a forced step.
+func _tutorial_maybe_explain_reinforcements() -> void:
+	if not TutorialManager.is_active or TutorialManager.current_stage != 1 or _tutorial_shown_reinforcement_tip:
+		return
+	_tutorial_shown_reinforcement_tip = true
+	TutorialManager.show_popup(
+		"Reinforcements! Take too long to clear a stage and more enemies join the fight - so don't "
+		+ "hold skills back waiting for a 'perfect' moment. Use them as soon as they're ready."
+	)
+
+
+## While stage 1's script calls for a specific target (Torrent needs to
+## land on the ranged creep specifically - by the time it's in range,
+## the melee creeps usually are too, since they stand one column
+## closer), rejects a click on anything else. The popup already says
+## which one to click; this just stops a stray click from skipping past
+## it. Every other step - and anything outside the tutorial - allows
+## any valid target, same as a real playthrough.
+func _tutorial_allows_enemy_click(enemy: Dictionary) -> bool:
+	if TutorialManager.is_active and TutorialManager.current_stage == 1 \
+	and (_tutorial_stage1_step == "cast_torrent_on_range" or _tutorial_stage1_step == "recast_torrent_on_range"):
+		return enemy["static"].get("type", "") == "range"
+	return true
+
+
+# ------------------------------------------------------------------
+# Tutorial support (TutorialManager's stage 2 script: a manufactured
+# mid-run scenario - see TutorialManager.start_stage2() - where Kunkka
+# is already at level 5, deep into this zone's hardest stage, and
+# critically low on HP/mana. Teaches attacking, taking a hit, and
+# fleeing before it's too late; the Map/Shop side of the flee (forcing
+# the shop open and buying potions) lives in Map.gd/Shop.gd instead.
+# ------------------------------------------------------------------
+
+var _tutorial_stage2_step: String = ""
+
+
+## Called from _ready() once stage 2's manufactured state (level,
+## HP/mana, stage 3 enemies) has already loaded normally - drops the
+## hero straight onto the melee creeps' column instead of making them
+## walk there again, since this scenario starts mid-fight, not fresh.
+func _start_tutorial_stage2_battle() -> void:
+	_hero_pos_index = 7
+	_update_hero_position()
+	_advance_tutorial_stage2_step("attack_while_low")
+
+
+func _advance_tutorial_stage2_step(step_id: String) -> void:
+	_tutorial_stage2_step = step_id
+
+	match step_id:
+		"attack_while_low":
+			TutorialManager.set_allowed_actions(["attack"])
+			TutorialManager.show_popup(
+				"Kunkka's already taken a beating - level 5, deep into this zone's hardest stage, and "
+				+ "critically low on HP and mana with no potions in reserve. You're right on top of the "
+				+ "melee creeps here - go ahead and attack, but keep an eye on that health bar."
+			)
+		"must_flee":
+			TutorialManager.set_allowed_actions(["flee"])
+			TutorialManager.show_popup(
+				"That hit brings you dangerously close to death. Staying to keep fighting isn't worth "
+				+ "the risk - flee back to the map and restock on potions before pushing any further."
+			)
+
+	_apply_tutorial_gate()
+
+
+## Polled from _update_action_buttons(), same as stage 1's own check -
+## advances past the forced Attack once a full turn (the attack itself,
+## then the enemies' own retaliation) has actually played out.
+func _check_tutorial_stage2_progress() -> void:
+	if not TutorialManager.is_active or TutorialManager.current_stage != 2:
+		return
+
+	if _tutorial_stage2_step == "attack_while_low" and _turn_count >= 1:
+		_advance_tutorial_stage2_step("must_flee")
+
+
+# ------------------------------------------------------------------
+# Tutorial support (TutorialManager's stage 3 script: the final
+# scripted scenario - see TutorialManager.start_stage3() - same setup
+# as stage 2 but with the potions bought there still in reserve.
+# Teaches drinking a potion mid-fight, picking up an ultimate on
+# level-up, discovering it costs more mana than you have, and using a
+# second potion to actually cast it.
+# ------------------------------------------------------------------
+
+var _tutorial_stage3_step: String = ""
+
+
+## Called from _ready() once stage 3's manufactured state has already
+## loaded normally - same "drop straight onto the melee creeps' column"
+## reasoning as _start_tutorial_stage2_battle().
+func _start_tutorial_stage3_battle() -> void:
+	_hero_pos_index = 7
+	_update_hero_position()
+	_advance_tutorial_stage3_step("heal_up")
+
+
+func _advance_tutorial_stage3_step(step_id: String) -> void:
+	_tutorial_stage3_step = step_id
+
+	match step_id:
+		"heal_up":
+			TutorialManager.set_allowed_actions(["item:health"])
+			TutorialManager.show_popup(
+				"Same rough spot as before - but this time you've got a Health Potion. Drink it before "
+				+ "doing anything else."
+			)
+		"attack_to_level_up":
+			TutorialManager.set_allowed_actions(["attack"])
+			TutorialManager.show_popup(
+				"Better. Now attack the melee creeps - one more kill should push you to level 6."
+			)
+		"attack_before_reinforcements":
+			TutorialManager.set_allowed_actions(["attack"])
+			TutorialManager.show_popup(
+				"Ghostship is yours now - your single strongest hit. Keep attacking for the moment; "
+				+ "you'll want it ready for when reinforcements show up."
+			)
+		"cast_ultimate":
+			TutorialManager.set_allowed_actions(["skill:ghostship"])
+			TutorialManager.show_popup(
+				"Reinforcements are here - exactly what Ghostship is for. It hits everything caught "
+				+ "between you and your target, so aim it at whichever enemy is farthest away to catch "
+				+ "as many as possible. Cast it now."
+			)
+		"need_mana_potion":
+			TutorialManager.set_allowed_actions(["item:mana"])
+			TutorialManager.show_popup(
+				"Not enough mana to cast it yet - drink your Mana Potion first."
+			)
+		"cast_ultimate_ready":
+			TutorialManager.set_allowed_actions(["skill:ghostship"])
+			TutorialManager.show_popup(
+				"Mana's topped up - go ahead and cast Ghostship."
+			)
+		"mop_up":
+			TutorialManager.set_allowed_actions(["attack"])
+			TutorialManager.show_popup(
+				"That should have thinned the crowd out considerably - finish off whatever's still "
+				+ "standing."
+			)
+		"zone_cleared":
+			_battle_over = true
+			TutorialManager.set_allowed_actions([])
+			_update_action_buttons()
+			TutorialManager.show_popup(
+				"That's every stage of your home zone cleared! From here you're free to roam Terrene "
+				+ "and challenge other heroes to duels to prove yourself - each of them has their own "
+				+ "unique, dangerous skills, so stay sharp.\n\nGood luck out there.",
+				TutorialManager.exit_tutorial
+			)
+
+	_apply_tutorial_gate()
+
+
+## Explains reinforcements the first time they arrive during stage 3
+## (see _tutorial_maybe_explain_reinforcements() for stage 1's own,
+## separate one-shot flag) - called from _spawn_reinforcements()
+## alongside its own normal banner. Unlike stage 1's version, this one
+## DOES drive the script forward: reinforcements arriving is exactly
+## the cue to force Ghostship.
+func _tutorial_maybe_advance_stage3_for_reinforcements() -> void:
+	if not TutorialManager.is_active or TutorialManager.current_stage != 3 \
+	or _tutorial_stage3_step != "attack_before_reinforcements":
+		return
+	_advance_tutorial_stage3_step("cast_ultimate")
 
 
 func _handle_defeat() -> void:

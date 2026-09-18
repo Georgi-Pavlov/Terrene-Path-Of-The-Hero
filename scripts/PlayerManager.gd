@@ -44,6 +44,11 @@ func _ready() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_PAUSED \
 	or what == NOTIFICATION_CRASH:
+		# Abandon the tutorial sandbox first so this flush (if anything
+		# outside the tutorial left the real cache dirty) writes the
+		# real data, never the sandboxed stand-in.
+		if _tutorial_snapshot != null:
+			end_tutorial_sandbox()
 		flush_player_data()
 
 ## Returns true if a username already appears in players.txt
@@ -158,16 +163,49 @@ var _data_cache: Dictionary = {}
 var _cache_loaded: bool = false
 var _cache_dirty: bool = false
 
+# Set while TutorialManager's scripted walkthrough is running: a deep
+# copy of the real player's data taken the moment the tutorial starts.
+# Everything the tutorial does - recruiting a hero, spending gold,
+# draining potions - mutates _data_cache same as a real playthrough
+# would, but flush_player_data() below refuses to write to disk the
+# whole time, and end_tutorial_sandbox() throws the mutated cache away
+# and puts this snapshot back. That's what keeps a mid-tutorial crash,
+# background pause, or the Map scene's own NPC-tick flush (see
+# EnemyHeroManager.tick_all_npc_heroes()) from ever leaking sandboxed
+# state into the real save.
+var _tutorial_snapshot: Variant = null
+
 
 ## Actually persists the current player's cached data to disk, if
 ## anything has changed since the last flush - a no-op otherwise, so
 ## it's always safe to call opportunistically without worrying about
-## redundant disk writes.
+## redundant disk writes. Also a no-op for as long as the tutorial
+## sandbox is active - see _tutorial_snapshot above.
 func flush_player_data() -> void:
-	if not _cache_dirty or current_player == "":
+	if not _cache_dirty or current_player == "" or _tutorial_snapshot != null:
 		return
 	_write_player_data_to_disk(current_player, _data_cache)
 	_cache_dirty = false
+
+
+## Starts the tutorial sandbox: from here until end_tutorial_sandbox(),
+## every read/write against the current player's data operates on an
+## in-memory copy that can never reach disk.
+func begin_tutorial_sandbox() -> void:
+	_tutorial_snapshot = _read_player_data(current_player).duplicate(true)
+
+
+## Ends the tutorial sandbox, discarding whatever it did and restoring
+## the real data exactly as it was before begin_tutorial_sandbox() -
+## called whether the tutorial finished, was exited early, or the app
+## quit/paused mid-tutorial (see _notification() below).
+func end_tutorial_sandbox() -> void:
+	if _tutorial_snapshot == null:
+		return
+	_data_cache = _tutorial_snapshot
+	_cache_loaded = true
+	_cache_dirty = false
+	_tutorial_snapshot = null
 
 
 ## The actual disk read, unconditionally - what _read_player_data()

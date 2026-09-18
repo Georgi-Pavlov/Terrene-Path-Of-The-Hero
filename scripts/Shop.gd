@@ -40,6 +40,11 @@ var _selected_item_id: String = ""
 
 var _message_tween: Tween
 
+# Health and Mana are forced SIMULTANEOUSLY here (unlike battle.gd's
+# steps, which only ever force one action at a time) - both glow at
+# once, so this tracks both tweens for _tutorial_clear_glow() to kill.
+var _tutorial_glow_tweens: Array = []
+
 
 func _ready() -> void:
 	back_button.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/Map.tscn"))
@@ -52,10 +57,92 @@ func _ready() -> void:
 	sell_button.pressed.connect(_on_sell_button_pressed)
 	sell_close_button.pressed.connect(func(): sell_popup.visible = false)
 
+	# The allowed-actions gate is set BEFORE _refresh_page() builds the
+	# item cards - _refresh_item_card() reads TutorialManager.
+	# is_action_allowed() to decide each card's disabled state, so the
+	# restriction has to already be in place or every card (including
+	# Health/Mana) builds as disabled, using whatever _allowed_actions
+	# was left over from wherever the player was before this scene.
+	if TutorialManager.is_active and TutorialManager.current_stage == 2:
+		TutorialManager.set_allowed_actions(["buy:health", "buy:mana"])
+
 	_initialize_stock()
 	_refresh_page()
 	_refresh_gold_label()
 	_refresh_details_panel()
+
+	# Back/sell/paging are disabled AFTER _refresh_page() runs, since
+	# _refresh_page() unconditionally recomputes both page buttons'
+	# disabled state itself (based on _current_page/_total_pages()) -
+	# setting these first would just get overwritten by that call.
+	if TutorialManager.is_active and TutorialManager.current_stage == 2:
+		back_button.disabled = true
+		sell_button.disabled = true
+		prev_page_button.disabled = true
+		next_page_button.disabled = true
+		_tutorial_glow_forced_items()
+		TutorialManager.show_popup(
+			"You've got exactly enough gold for one Health Potion and one Mana Potion - buy both "
+			+ "before heading back out."
+		)
+
+
+## Gives both the Health and Mana Potion cards the same glowing
+## treatment every other forced button during the tutorial uses (see
+## TutorialManager.make_glow_style()) - both at once, since either can
+## be bought first here. Called once _cards is actually populated
+## (_refresh_page() has to have run already - see its own call site).
+func _tutorial_glow_forced_items() -> void:
+	for item_id in ["health", "mana"]:
+		if not _cards.has(item_id):
+			continue
+		var button: Button = _cards[item_id]["button"]
+		var glow_style: StyleBoxFlat = TutorialManager.make_glow_style()
+		button.add_theme_stylebox_override("normal", glow_style)
+		button.add_theme_stylebox_override("hover", glow_style)
+		_tutorial_glow_tweens.append(TutorialManager.start_glow_pulse(glow_style, self))
+
+
+## Undoes _tutorial_glow_forced_items() once both potions are bought -
+## called from _tutorial_check_progress() right before it opens the
+## checkpoint.
+func _tutorial_clear_glow() -> void:
+	for item_id in ["health", "mana"]:
+		if _cards.has(item_id):
+			var button: Button = _cards[item_id]["button"]
+			button.remove_theme_stylebox_override("normal")
+			button.remove_theme_stylebox_override("hover")
+	for tween in _tutorial_glow_tweens:
+		if tween:
+			tween.kill()
+	_tutorial_glow_tweens.clear()
+
+
+## Polled after every successful purchase - once both potions are in
+## the inventory, opens the "continue to the final tutorial stage, or
+## stop here" checkpoint and lifts every restriction _apply_tutorial_
+## restrictions() put in place.
+func _tutorial_check_progress() -> void:
+	if not TutorialManager.is_active or TutorialManager.current_stage != 2:
+		return
+
+	var inventory: Dictionary = PlayerManager.get_inventory()
+	if inventory.get("health", 0) <= 0 or inventory.get("mana", 0) <= 0:
+		return
+
+	back_button.disabled = false
+	sell_button.disabled = false
+	prev_page_button.disabled = _current_page <= 0
+	next_page_button.disabled = _current_page >= _total_pages() - 1
+	TutorialManager.set_allowed_actions([])
+	_tutorial_clear_glow()
+
+	TutorialManager.show_checkpoint(
+		"Stocked up! That's the other half of surviving a run: knowing when to cut your losses, "
+		+ "and having potions ready for when you do.\n\nContinue with the final tutorial stage, or "
+		+ "stop here?",
+		TutorialManager.start_stage3
+	)
 
 
 func _refresh_gold_label() -> void:
@@ -189,7 +276,7 @@ func _refresh_item_card(item_id: String) -> void:
 		cost_label.text = "Sold out"
 		stock_label.text = ""
 	else:
-		button.disabled = false
+		button.disabled = not TutorialManager.is_action_allowed("buy:" + item_id)
 		cost_label.text = str(cost) + " Gold"
 		stock_label.text = "x%d in stock" % stock
 
@@ -219,6 +306,14 @@ func _refresh_details_panel() -> void:
 	details_name_label.text = item_data.get("name", "")
 	details_description_label.text = item_data.get("description", "")
 	details_buy_button.visible = true
+	# Default to the normal price - only the `stock <= 0` branch below
+	# overrides it to "Sold out". Previously only that branch ever set
+	# this label at all, so once you'd viewed one sold-out item, its
+	# "Sold out" text stuck around forever: the elif/else branches below
+	# only ever touched details_buy_button, never this label, so a fully
+	# in-stock item selected afterward still showed a stale "Sold out"
+	# price even though its own Buy button correctly re-enabled.
+	details_cost_label.text = str(cost) + " Gold"
 
 	if stock <= 0:
 		details_cost_label.text = "Sold out"
@@ -235,6 +330,9 @@ func _refresh_details_panel() -> void:
 func _on_buy_pressed() -> void:
 	var item_id: String = _selected_item_id
 	if item_id == "":
+		return
+
+	if not TutorialManager.is_action_allowed("buy:" + item_id):
 		return
 
 	var stock: int = _stock.get(item_id, 0)
@@ -261,6 +359,7 @@ func _on_buy_pressed() -> void:
 	_refresh_item_card(item_id)
 	_refresh_details_panel()
 	_show_message(item_data.get("name", "Item") + " purchased!")
+	_tutorial_check_progress()
 
 
 ## Brief fade-in/fade-out status message (purchase confirmation,
