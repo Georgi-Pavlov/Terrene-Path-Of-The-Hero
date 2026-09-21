@@ -54,6 +54,38 @@ extends Control
 # matching column index.
 const GRID_COLUMNS := 10
 
+# How long a floating status message (_show_message_over_hero()/
+# _show_message_over_enemy() - "No enemy in range", "Not enough mana",
+# "Stunned!", an enemy's own cast-name banner, etc.) holds still and
+# fully readable before it starts floating up and fading out. Previously
+# both started the instant the message appeared, so a player barely had
+# a moment to read it before it was already fading away.
+const MESSAGE_READ_HOLD_DURATION := 1.0
+
+# Every _start_X_targeting() function marks its valid targets with this
+# highlight (see _highlight_valid_targets()) instead of each picking its
+# own flat tint - those used to each land somewhere in the same pale,
+# desaturated blue range (0.5-0.95 per channel), easy to lose against a
+# similarly pale sprite or background. This pushes brightness well past
+# 1.0 (an "overbright" modulate, the same trick _pulse_caster_sprite()'s
+# own cast-feedback flash already uses) into a warm, saturated gold -
+# high contrast against the game's mostly cool/icy palette - and pulses
+# continuously between the two values below rather than sitting flat, so
+# motion helps draw the eye too.
+const TARGET_HIGHLIGHT_COLOR := Color(1.5, 1.2, 0.3, 1)
+const TARGET_HIGHLIGHT_PULSE_COLOR := Color(1.9, 1.7, 0.7, 1)
+
+# Same pulsing treatment as TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR above,
+# just in green rather than gold - marks the hero's own portrait as a
+# valid target for a skill that can be self-cast (right now, only Mist
+# Coil - see _highlight_hero_self_target()). Deliberately a different
+# hue rather than reusing the gold: for a skill like Mist Coil that can
+# be cast on either an enemy in range OR the hero, both highlights can
+# be lit and pulsing at the same time, so they need to read as two
+# distinct options rather than one ambiguous "the target."
+const HERO_TARGET_HIGHLIGHT_COLOR := Color(0.3, 1.7, 0.5, 1)
+const HERO_TARGET_HIGHLIGHT_PULSE_COLOR := Color(0.6, 2.0, 0.8, 1)
+
 # Lone Druid's Spirit Bear (summon_spirit_bear) always uses this art,
 # regardless of skill level.
 const SPIRIT_BEAR_IMAGE_PATH := "res://assets/heroes/Lone Druid Bear.png"
@@ -328,6 +360,16 @@ var _ice_shards_active: bool = false
 var _ice_shards_blocked_columns: Array[int] = []
 var _ice_shards_turns_remaining: int = 0
 var _ice_shards_duration_pending_start: bool = false
+
+const ICE_SHARDS_WALL_IMAGE_PATH := "res://assets/heroes skills/Tusk_ice_shards.png"
+
+# One TextureRect per currently-walled column (either side's - both use
+# the same visual), rebuilt from scratch by _refresh_ice_shards_visuals()
+# every time either side's own blocked-columns list changes, rather
+# than tracked per-side - a column blocked by both at once (rare, but
+# possible if both the player and a rival Tusk have one up) would
+# otherwise need de-duplicating twice over.
+var _ice_shards_wall_nodes: Array[TextureRect] = []
 
 # ------------------------------------------------------------------
 # Tusk's Tag Team: a self-cast that adds a flat bonus_damage to the
@@ -824,10 +866,15 @@ var _player_overgrowth_dot_turns_left: int = 0
 # _targeting_purpose ("attack" or a skill id like "entangle" or
 # "mist_coil") - see _on_enemy_clicked(). Mist Coil additionally lets
 # the player click the hero's own portrait instead (self-cast) - see
-# _on_hero_image_gui_input()/_resolve_mist_coil_self_cast().
+# _on_hero_image_gui_input()/_resolve_mist_coil_self_cast(). Every
+# _start_X_targeting() function marks _valid_targets via the shared
+# _highlight_valid_targets() (see TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR),
+# whose pulsing tweens are tracked here so _cancel_targeting() can kill
+# them before resetting modulate back to normal.
 var _targeting_mode: bool = false
 var _valid_targets: Array = []
 var _targeting_purpose: String = "attack"
+var _target_highlight_tweens: Array = []
 
 # Entangle's level data, held from the moment its target-picking
 # starts (_start_entangle_targeting) until a target is actually
@@ -1381,16 +1428,41 @@ func _spawn_enemy(enemy_def: Dictionary) -> void:
 
 	enemies_layer.add_child(tex_rect)
 
+	var hp_label := Label.new()
+	hp_label.size = Vector2(ENEMY_HP_LABEL_WIDTH, ENEMY_HP_LABEL_HEIGHT)
+	hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hp_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	hp_label.add_theme_constant_override("outline_size", 3)
+	enemies_layer.add_child(hp_label)
+
+	var status_label := Label.new()
+	status_label.size = Vector2(ENEMY_STATUS_LABEL_WIDTH, ENEMY_HP_LABEL_HEIGHT)
+	status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_label.visible = false
+	status_label.add_theme_color_override("font_color", ENEMY_STATUS_LABEL_COLOR)
+	status_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	status_label.add_theme_constant_override("outline_size", 3)
+	status_label.add_theme_font_size_override("font_size", ENEMY_STATUS_LABEL_FONT_SIZE)
+	enemies_layer.add_child(status_label)
+
 	var enemy_data := {
 		"static": enemy_def,
 		"current_hp": float(enemy_def.get("hp", 1)),
 		"current_main_stat_value": float(enemy_def.get("main_stat_value", 0)),
 		"pos_index": pos_index,
 		"node": tex_rect,
+		"hp_label": hp_label,
+		"status_label": status_label,
 	}
 	_enemies.append(enemy_data)
 
 	tex_rect.gui_input.connect(_on_enemy_gui_input.bind(enemy_data))
+
+	_refresh_enemy_overhead_labels()
 
 
 func _enemy_count_of_type(type: String) -> int:
@@ -1399,6 +1471,158 @@ func _enemy_count_of_type(type: String) -> int:
 		if enemy["static"].get("type", "") == type:
 			count += 1
 	return count
+
+
+# ------------------------------------------------------------------
+# Enemy HP number display - "current / max" over every enemy's own
+# image (no bars, just the numbers, per the design ask), in gold and a
+# little bigger for a hero-fight boss specifically so it reads as
+# unmistakably different from a regular creep's - plus, right next to
+# it, a plain-text list of whatever status effects are currently
+# active on that enemy ("Stunned", "Rooted", etc. - see
+# _enemy_status_effect_text()). Every enemy that shares a column (they
+# can end up sharing one via movement even though spawning only ever
+# uses columns 7/8 - see _spawn_enemy()'s own visual_offset fan-out)
+# gets its HP/status pair stacked vertically above that shared spot
+# instead of overlapping, with whichever one _get_enemy_at() would
+# actually resolve an attack on that column against - the "front" one
+# - always at the bottom of the stack, since that's the one actually
+# being attacked whenever that column is hit.
+# ------------------------------------------------------------------
+
+const ENEMY_HP_LABEL_WIDTH := 90.0
+const ENEMY_HP_LABEL_HEIGHT := 22.0
+const ENEMY_HP_LABEL_GAP := 4.0
+const ENEMY_HP_LABEL_FONT_SIZE := 15
+const ENEMY_HERO_HP_LABEL_FONT_SIZE := 20
+const ENEMY_HP_LABEL_COLOR := Color(1, 1, 1, 1)
+const ENEMY_HERO_HP_LABEL_COLOR := Color(1, 0.85, 0.2, 1)
+
+const ENEMY_STATUS_LABEL_WIDTH := 220.0
+const ENEMY_STATUS_LABEL_GAP := 6.0
+const ENEMY_STATUS_LABEL_FONT_SIZE := 13
+const ENEMY_STATUS_LABEL_COLOR := Color(1, 0.55, 0.3, 1)
+
+
+## Every status effect currently on `enemy` that's worth calling out,
+## as a comma-separated string ("" if none) - one entry per distinct
+## effect a player skill (or a wall the player's own Ice Shards put
+## under its feet) can inflict directly on an enemy Dictionary. Mirrors
+## _enemy_has_harmful_debuff()'s own field list (used for Cold Embrace's
+## AI scoring) plus the effects that helper doesn't need for that
+## purpose - stun, Frostbite's/Leech Seed's/Overgrowth's own DoTs, and
+## an Ice-Shards-blocked column, which isn't a Dictionary field at all
+## but reads as "rooted" just the same since the enemy can't move
+## either way (see _is_column_ice_shards_blocked()).
+func _enemy_status_effect_text(enemy: Dictionary) -> String:
+	var effects: PackedStringArray = []
+
+	if enemy.get("stun_turns_left", 0) > 0:
+		effects.append("Stunned")
+
+	# Entangle roots AND silences for the exact same duration - every
+	# level's own data sets root_turns == silence_turns, and both now
+	# tick down together every turn (see _enemy_turn()'s own silence
+	# decrement, added to match root's) - so silence_turns_left > 0 is
+	# a reliable "this root is Entangle's, not Nature's Guise's" signal
+	# (Nature's Guise only ever sets root_turns_left, never silence -
+	# see _apply_hero_attack()'s own "attacking_from_natures_guise"
+	# branch), without needing entangle_dot_turns_left at all - that
+	# field's own duration runs one turn longer than root/silence by
+	# design, but the "Entangled" status itself shouldn't outlive the
+	# root/silence it actually represents, just the residual DoT tick.
+	var entangled: bool = enemy.get("silence_turns_left", 0) > 0
+	var rooted: bool = enemy.get("root_turns_left", 0) > 0 or _is_column_ice_shards_blocked(enemy["pos_index"])
+	var overgrown: bool = enemy.get("overgrowth_dot_turns_left", 0) > 0
+
+	if entangled:
+		effects.append("Entangled")
+		effects.append("Silenced")
+	elif rooted and not overgrown:
+		# Overgrowth's own root already gets its own label below - so
+		# only fall back to plain "Rooted" when nothing more specific
+		# (Entangle, Overgrowth) is already covering it.
+		effects.append("Rooted")
+	if enemy.get("curse_active", false) or enemy.get("curse_stacks", 0) > 0:
+		effects.append("Cursed")
+	if enemy.get("cold_feet_dot_turns_left", 0) > 0:
+		effects.append("Cold Feet")
+	if enemy.get("ice_vortex_dot_turns_left", 0) > 0:
+		effects.append("Ice Vortex")
+	if enemy.get("ice_blast_dot_turns_left", 0) > 0:
+		effects.append("Ice Blast")
+	if enemy.get("frostbite_dot_turns_left", 0) > 0:
+		effects.append("Frostbitten")
+	if enemy.get("leech_seed_dot_turns_left", 0) > 0:
+		effects.append("Leeched")
+	if enemy.get("overgrowth_dot_turns_left", 0) > 0:
+		effects.append("Overgrowth")
+
+	return ", ".join(effects)
+
+
+## Recomputes every enemy's HP/status label text and position from
+## scratch - cheap enough to call from anywhere the enemy roster, any
+## enemy's current_hp, pos_index, or status effects could have changed
+## (spawning, dying, moving, taking damage, regenerating, a fresh
+## debuff landing or an old one ticking off) rather than trying to
+## track exactly which of those actually happened at each call site.
+func _refresh_enemy_overhead_labels() -> void:
+	var groups: Dictionary = {}
+	for enemy in _enemies:
+		var col: int = enemy["pos_index"]
+		if not groups.has(col):
+			groups[col] = []
+		groups[col].append(enemy)
+
+	for col in groups.keys():
+		var group: Array = groups[col]
+
+		# _get_enemy_at() is the same lookup melee attacks/ranged range-
+		# checks already resolve a column against - whichever enemy it
+		# returns here IS "the one being attacked" for this column, so
+		# that's the one anchored at the bottom. Falls back to the
+		# group's own first entry on the rare all-hidden case (see
+		# _get_enemy_at()'s own is_target_hidden() skip), so the stack
+		# still has *a* bottom rather than silently doing nothing.
+		var front: Dictionary = _get_enemy_at(col)
+		if front.is_empty():
+			front = group[0]
+
+		var ordered: Array = [front]
+		for enemy in group:
+			if not is_same(enemy, front):
+				ordered.append(enemy)
+
+		var front_node: Control = front["node"]
+		var center_x: float = front_node.position.x + front_node.size.x / 2.0
+		var base_y: float = front_node.position.y - ENEMY_HP_LABEL_GAP
+
+		for i in range(ordered.size()):
+			var enemy: Dictionary = ordered[i]
+			var label: Label = enemy.get("hp_label")
+			if label == null:
+				continue
+
+			var is_boss: bool = enemy["static"].get("is_hero_fight_boss", false)
+			var max_hp: float = _enemy_hero_effective_max_hp(enemy) if is_boss else float(enemy["static"].get("hp", 1))
+			var current_hp: float = maxf(0.0, float(enemy.get("current_hp", 0)))
+			label.text = "%d / %d" % [roundi(current_hp), maxi(1, roundi(max_hp))]
+
+			label.add_theme_color_override("font_color", ENEMY_HERO_HP_LABEL_COLOR if is_boss else ENEMY_HP_LABEL_COLOR)
+			label.add_theme_font_size_override("font_size", ENEMY_HERO_HP_LABEL_FONT_SIZE if is_boss else ENEMY_HP_LABEL_FONT_SIZE)
+
+			var slot_bottom: float = base_y - float(i) * (ENEMY_HP_LABEL_HEIGHT + ENEMY_HP_LABEL_GAP)
+			var label_top: float = slot_bottom - ENEMY_HP_LABEL_HEIGHT
+			label.position = Vector2(center_x - ENEMY_HP_LABEL_WIDTH / 2.0, label_top)
+
+			var status_label: Label = enemy.get("status_label")
+			if status_label != null:
+				var status_text: String = _enemy_status_effect_text(enemy)
+				status_label.visible = status_text != ""
+				if status_label.visible:
+					status_label.text = status_text
+					status_label.position = Vector2(label.position.x + ENEMY_HP_LABEL_WIDTH + ENEMY_STATUS_LABEL_GAP, label_top)
 
 
 ## Called every REINFORCEMENT_INTERVAL/REINFORCEMENT_REPEAT_INTERVAL
@@ -1604,6 +1828,12 @@ func _refresh_bars() -> void:
 
 	_refresh_status_effects()
 
+	# Called this pervasively (after nearly every action/tick in the
+	# game - see _refresh_bars()'s own many call sites) so an enemy's
+	# HP number stays current after damage/regen/potions too, not just
+	# the movement/spawn/death paths that already call this directly.
+	_refresh_enemy_overhead_labels()
+
 
 ## Keeps the "reserved HP" danger-zone marker and the three status
 ## badges (frost/curse/root) in sync with whatever's currently on the
@@ -1697,17 +1927,18 @@ func _populate_skill_buttons() -> void:
 		btn.custom_minimum_size = Vector2(0, 50)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		# Row 3: mana cost, just the number - a locked skill (no
-		# learned_level yet, so no level data of its own to read)
-		# previews its level-1 cost instead of showing nothing.
+		# Row 3: mana cost, just the number - blank for a skill with no
+		# point in it yet, since there's no level data behind it to make
+		# a mana cost (or a Ready/Passive status, below) mean anything
+		# yet; it's not "castable at this cost", it's not learned at all.
 		var mana_label := Label.new()
 		mana_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		mana_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 		mana_label.add_theme_constant_override("outline_size", 2)
 		mana_label.add_theme_font_size_override("font_size", 12)
 		mana_label.add_theme_color_override("font_color", Color(0.4, 0.7, 1, 1))
-		if not is_passive:
-			var mana_level_data: Dictionary = GameManager.get_skill_level_data(skill, maxi(learned_level, 1))
+		if not is_passive and learned_level > 0:
+			var mana_level_data: Dictionary = GameManager.get_skill_level_data(skill, learned_level)
 			var mana_cost: float = float(mana_level_data.get("mana_cost", skill.get("mana_cost", 0)))
 			mana_label.text = str(int(mana_cost))
 
@@ -1718,7 +1949,13 @@ func _populate_skill_buttons() -> void:
 		status_label.add_theme_constant_override("outline_size", 2)
 		status_label.add_theme_font_size_override("font_size", 12)
 
-		if is_passive:
+		if learned_level <= 0:
+			# No skill point spent here yet - leave both labels blank
+			# (mana above, status here) and the button disabled; there's
+			# nothing "Ready" or "Passive" about a skill that isn't
+			# learned at all.
+			btn.disabled = true
+		elif is_passive:
 			# Passives (currently just Savage Roar and Curse of
 			# Avernus) apply themselves automatically rather than
 			# being cast - no click, no mana, no cooldown. The label
@@ -1741,7 +1978,7 @@ func _populate_skill_buttons() -> void:
 			status_label.text = "Ready"
 			status_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5, 1))
 		else:
-			btn.disabled = learned_level <= 0
+			btn.disabled = false
 			btn.pressed.connect(_on_skill_pressed.bind(skill))
 			status_label.text = "Ready"
 			status_label.add_theme_color_override("font_color", Color(0.5, 1, 0.5, 1))
@@ -1751,22 +1988,23 @@ func _populate_skill_buttons() -> void:
 		slot.add_child(status_label)
 		skill_buttons_container.add_child(slot)
 
-		if is_passive:
-			if skill_id == "savage_roar":
-				_savage_roar_status_label = status_label
-		else:
-			_skill_cooldown_labels[skill_id] = status_label
-			# Cooldowns persist across battles (see PlayerManager.
-			# get_skill_cooldown/set_skill_cooldown), so a skill used
-			# near the end of one fight stays locked into the next.
-			_skill_cooldowns[skill_id] = PlayerManager.get_skill_cooldown(skill_id)
+		if learned_level > 0:
+			if is_passive:
+				if skill_id == "savage_roar":
+					_savage_roar_status_label = status_label
+			else:
+				_skill_cooldown_labels[skill_id] = status_label
+				# Cooldowns persist across battles (see PlayerManager.
+				# get_skill_cooldown/set_skill_cooldown), so a skill used
+				# near the end of one fight stays locked into the next.
+				_skill_cooldowns[skill_id] = PlayerManager.get_skill_cooldown(skill_id)
 
-			# Borrowed Time is never added to _skill_buttons - that
-			# dict drives _update_action_buttons()'s per-turn lock,
-			# which would re-enable its button (nothing handles a
-			# click on it) the moment the hero hasn't acted yet.
-			if learned_level > 0 and not is_auto_activate:
-				_skill_buttons[skill_id] = btn
+				# Borrowed Time is never added to _skill_buttons - that
+				# dict drives _update_action_buttons()'s per-turn lock,
+				# which would re-enable its button (nothing handles a
+				# click on it) the moment the hero hasn't acted yet.
+				if not is_auto_activate:
+					_skill_buttons[skill_id] = btn
 
 	_refresh_skill_cooldown_labels()
 	_update_savage_roar_state()
@@ -3129,6 +3367,7 @@ func _resolve_ice_shards_cast(target: Dictionary, level_data: Dictionary) -> voi
 	# ticking from the turn after (see _tick_ice_shards()), same as
 	# every other duration-based effect.
 	_ice_shards_duration_pending_start = true
+	_refresh_ice_shards_visuals()
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -3165,6 +3404,60 @@ func _end_ice_shards() -> void:
 	_ice_shards_blocked_columns = []
 	_ice_shards_turns_remaining = 0
 	_ice_shards_duration_pending_start = false
+	_refresh_ice_shards_visuals()
+
+
+## Rebuilds the on-screen ice-wall art from scratch against whatever's
+## actually walled off right now, on either side (the player's own
+## Ice Shards and a rival Tusk's both use the same image) - called
+## from every place either side's own blocked-columns list changes
+## (cast, natural expiry, a recast replacing the old columns) so
+## there's never a stale wall left over from one that's no longer up,
+## or a missing one for a wall that just went up. Semi-transparent and
+## layered like Ghostship's own flight animation (a root-level sibling
+## placed right after enemies_layer, so it draws over the hero/enemy
+## sprites without a z-order fight) rather than fully opaque, so a
+## creature standing in a walled column (very likely - both sides'
+## own walls always start on the caster's own column) still reads
+## through it.
+func _refresh_ice_shards_visuals() -> void:
+	for node in _ice_shards_wall_nodes:
+		if is_instance_valid(node):
+			node.queue_free()
+	_ice_shards_wall_nodes.clear()
+
+	if not ResourceLoader.exists(ICE_SHARDS_WALL_IMAGE_PATH):
+		return
+
+	var columns: Array[int] = []
+	if _ice_shards_active:
+		columns.append_array(_ice_shards_blocked_columns)
+	if _enemy_ice_shards_active:
+		for col in _enemy_ice_shards_blocked_columns:
+			if col not in columns:
+				columns.append(col)
+
+	if columns.is_empty():
+		return
+
+	var texture: Texture2D = load(ICE_SHARDS_WALL_IMAGE_PATH)
+	var tex_size: Vector2 = texture.get_size()
+	var wall_width: float = _grid_unit() * 0.9
+	var wall_height: float = wall_width * (tex_size.y / tex_size.x)
+	var ground_y: float = _creature_y() + get_viewport_rect().size.y / 4.0
+
+	for col in columns:
+		var wall := TextureRect.new()
+		wall.texture = texture
+		wall.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		wall.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+		wall.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		wall.modulate = Color(1, 1, 1, 0.85)
+		wall.size = Vector2(wall_width, wall_height)
+		wall.position = Vector2(_index_to_x(col) + (_grid_unit() - wall_width) / 2.0, ground_y - wall_height)
+		add_child(wall)
+		move_child(wall, enemies_layer.get_index() + 1)
+		_ice_shards_wall_nodes.append(wall)
 
 
 ## Whether `col` is currently walled off by Ice Shards - checked from
@@ -5203,19 +5496,29 @@ func _on_skill_choice_desc_ok_pressed() -> void:
 		return
 
 	if PlayerManager.spend_skill_point(skill_id, _hero_static):
-		if skill_id == "tidebringer":
-			_tutorial_taught_tidebringer = true
-		elif skill_id == "ghostship":
-			_tutorial_taught_ghostship = true
-			# Starts the reinforcement countdown fresh from HERE rather
-			# than from stage 3's battle start - landing that first kill
-			# (to trigger this level-up) can itself take several attacks
-			# against a melee creep's real HP, so counting from turn 0
-			# let reinforcements arrive mid-leveling, before Ghostship
-			# even existed to answer them - roughly doubling the enemy
-			# count on top of the original roster and proving fatal.
-			_next_reinforcement_turn = _turn_count + 2
-			_advance_tutorial_stage3_step("attack_before_reinforcements")
+		# Everything below reacts to a specific skill being learned
+		# purely for the guided tutorial's own scripted beats (forcing
+		# the next action, popping up its own explanation) - none of it
+		# should ever fire for a normal playthrough, so it's all gated
+		# behind TutorialManager.is_active. Without this, any player
+		# leveling up Kunkka's Tidebringer or Ghostship outside the
+		# tutorial would still get stage 3's "Ghostship is yours now..."
+		# popup and its action lock, since TutorialManager.show_popup()/
+		# set_allowed_actions() don't check is_active themselves.
+		if TutorialManager.is_active:
+			if skill_id == "tidebringer":
+				_tutorial_taught_tidebringer = true
+			elif skill_id == "ghostship":
+				_tutorial_taught_ghostship = true
+				# Starts the reinforcement countdown fresh from HERE rather
+				# than from stage 3's battle start - landing that first kill
+				# (to trigger this level-up) can itself take several attacks
+				# against a melee creep's real HP, so counting from turn 0
+				# let reinforcements arrive mid-leveling, before Ghostship
+				# even existed to answer them - roughly doubling the enemy
+				# count on top of the original roster and proving fatal.
+				_next_reinforcement_turn = _turn_count + 2
+				_advance_tutorial_stage3_step("attack_before_reinforcements")
 		_recruited = PlayerManager.get_recruited_hero()
 		_populate_skill_buttons()
 		_update_action_buttons()
@@ -5416,8 +5719,7 @@ func _start_ranged_targeting() -> void:
 
 	_targeting_mode = true
 	_targeting_purpose = "attack"
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(1, 1, 0.4)
+	_highlight_valid_targets()
 
 
 ## Entangle's target picking: same column-range/highlight mechanism as
@@ -5442,8 +5744,7 @@ func _start_entangle_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "entangle"
 	_pending_entangle_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 1, 0.6)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5484,10 +5785,9 @@ func _start_mist_coil_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "mist_coil"
 	_pending_mist_coil_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.7, 0.85, 1)
+	_highlight_valid_targets()
 	if can_self_cast:
-		hero_image.modulate = Color(0.6, 1, 0.6)
+		_highlight_hero_self_target()
 	return true
 
 
@@ -5515,8 +5815,7 @@ func _start_torrent_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "torrent"
 	_pending_torrent_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 0.85, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5541,8 +5840,7 @@ func _start_xmarks_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "x_marks_the_spot"
 	_pending_xmarks_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(1, 0.85, 0.4)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5570,8 +5868,7 @@ func _start_ghostship_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "ghostship"
 	_pending_ghostship_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 0.7, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5596,8 +5893,7 @@ func _start_timber_chain_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "timber_chain"
 	_pending_timber_chain_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 0.7, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5624,8 +5920,7 @@ func _start_chakram_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "chakram"
 	_pending_chakram_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 0.7, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5650,8 +5945,7 @@ func _start_cold_feet_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "cold_feet"
 	_pending_cold_feet_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 0.9, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5683,8 +5977,7 @@ func _start_ice_vortex_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "ice_vortex"
 	_pending_ice_vortex_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.5, 0.8, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5712,8 +6005,7 @@ func _start_chilling_touch_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "chilling_touch"
 	_pending_chilling_touch_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.7, 0.95, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5738,8 +6030,7 @@ func _start_ice_blast_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "ice_blast"
 	_pending_ice_blast_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.75, 0.9, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5766,8 +6057,7 @@ func _start_splinter_blast_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "splinter_blast"
 	_pending_splinter_blast_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.65, 0.85, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5793,8 +6083,7 @@ func _start_winters_curse_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "winter's_curse"
 	_pending_winters_curse_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.55, 0.8, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5819,8 +6108,7 @@ func _start_crystal_nova_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "crystal_nova"
 	_pending_crystal_nova_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 0.85, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5845,8 +6133,7 @@ func _start_frostbite_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "frostbite"
 	_pending_frostbite_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.5, 0.75, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5873,8 +6160,7 @@ func _start_ice_shards_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "ice_shards"
 	_pending_ice_shards_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.65, 0.9, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5899,8 +6185,7 @@ func _start_snowball_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "snowball"
 	_pending_snowball_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.75, 0.95, 1)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5925,8 +6210,7 @@ func _start_walrus_punch_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "walrus_punch"
 	_pending_walrus_punch_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(1, 0.8, 0.4)
+	_highlight_valid_targets()
 	return true
 
 
@@ -5952,9 +6236,44 @@ func _start_leech_seed_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "leech_seed"
 	_pending_leech_seed_level_data = level_data
-	for enemy in _valid_targets:
-		enemy["node"].modulate = Color(0.6, 0.95, 0.5)
+	_highlight_valid_targets()
 	return true
+
+
+## Marks every enemy currently in `_valid_targets` with a bright,
+## pulsing highlight (TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR) instead of
+## the flat, easy-to-miss pastel tint each _start_X_targeting() function
+## used to set on its own - called by every one of them right after
+## `_valid_targets` is actually populated. Each node's own pulse tween
+## is tracked in _target_highlight_tweens so _cancel_targeting() can
+## kill it before resetting modulate back to normal - an untracked,
+## still-running tween would just fight that reset every frame.
+func _highlight_valid_targets() -> void:
+	for enemy in _valid_targets:
+		var node: TextureRect = enemy["node"]
+		node.modulate = TARGET_HIGHLIGHT_COLOR
+		var tween := create_tween()
+		tween.set_loops()
+		tween.tween_property(node, "modulate", TARGET_HIGHLIGHT_PULSE_COLOR, 0.4).set_trans(Tween.TRANS_SINE)
+		tween.tween_property(node, "modulate", TARGET_HIGHLIGHT_COLOR, 0.4).set_trans(Tween.TRANS_SINE)
+		_target_highlight_tweens.append(tween)
+
+
+## Same bright, pulsing treatment as _highlight_valid_targets(), just on
+## the hero's own portrait (HERO_TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR's
+## green, not TARGET_HIGHLIGHT_COLOR's gold) - for a skill that can be
+## self-cast (right now, only Mist Coil's _start_mist_coil_targeting(),
+## when can_self_cast is true). Tracked in the same
+## _target_highlight_tweens _cancel_targeting() already kills and resets
+## (via _update_hero_visibility()) - one shared cleanup handles both the
+## enemy and hero highlights, whichever combination is currently lit.
+func _highlight_hero_self_target() -> void:
+	hero_image.modulate = HERO_TARGET_HIGHLIGHT_COLOR
+	var tween := create_tween()
+	tween.set_loops()
+	tween.tween_property(hero_image, "modulate", HERO_TARGET_HIGHLIGHT_PULSE_COLOR, 0.4).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(hero_image, "modulate", HERO_TARGET_HIGHLIGHT_COLOR, 0.4).set_trans(Tween.TRANS_SINE)
+	_target_highlight_tweens.append(tween)
 
 
 ## Clears any still-highlighted valid-target tint and resets the hero's
@@ -5967,8 +6286,14 @@ func _start_leech_seed_targeting(level_data: Dictionary) -> bool:
 ## every _end_turn() call, every new targeting session - so a hardcoded
 ## reset here was clobbering the invisibility fade back to fully opaque
 ## one turn after casting Nature's Guise, even though _natures_guise_
-## active stayed true for its whole duration.
+## active stayed true for its whole duration. Kills every pulsing
+## highlight tween FIRST (see _highlight_valid_targets()) so none of
+## them are still running to immediately overwrite the reset below.
 func _cancel_targeting() -> void:
+	for tween in _target_highlight_tweens:
+		if tween:
+			tween.kill()
+	_target_highlight_tweens.clear()
 	for enemy in _valid_targets:
 		if is_instance_valid(enemy["node"]):
 			enemy["node"].modulate = Color(1, 1, 1)
@@ -5992,6 +6317,17 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		return
 	if not _tutorial_allows_enemy_click(enemy):
 		return
+
+	# Resolve to whichever enemy on this same column is actually lowest
+	# HP, same as a melee Attack/Pounce/the bear already do via
+	# _get_enemy_at() - clicking a specific sprite just picks the
+	# column/spot to strike, not necessarily which of several stacked
+	# enemies there takes the hit. Falls back to the clicked enemy
+	# itself on the (should-be-impossible) case _get_enemy_at() finds
+	# nothing at its own column.
+	var resolved: Dictionary = _get_enemy_at(enemy["pos_index"])
+	if not resolved.is_empty():
+		enemy = resolved
 
 	var purpose: String = _targeting_purpose
 	var entangle_level_data: Dictionary = _pending_entangle_level_data
@@ -6236,11 +6572,24 @@ func _enemy_hero_bonus_armor(target: Dictionary) -> float:
 	return _enemy_essence_shift_bonus.get("armor", 0.0) + _enemy_spirit_link_bonus_armor + _enemy_living_armor_bonus_armor + _enemy_reactive_armor_bonus_armor()
 
 
+## The enemy to actually hit for whatever's on `pos_index` - the
+## lowest-HP living, targetable one there, matching EnemyHeroManager.gd's
+## own _lowest_hp_enemy() convention for its background simulation (so
+## a real hero fight and its simulated equivalent make the same call).
+## Ties keep whichever comes first in _enemies (stable, arbitrary but
+## consistent). Used for every "whatever's on this column" resolution -
+## a melee Attack, the bear's own attack, Pounce's leap, and (via
+## _on_enemy_clicked()'s own redirect) every ranged-click skill cast
+## too - so stacking two weak creeps in one column can't be used to
+## soak hits meant for a low-HP kill target hiding behind them.
 func _get_enemy_at(pos_index: int) -> Dictionary:
+	var lowest: Dictionary = {}
 	for enemy in _enemies:
-		if enemy["pos_index"] == pos_index and not _is_target_hidden(enemy):
-			return enemy
-	return {}
+		if enemy["pos_index"] != pos_index or _is_target_hidden(enemy):
+			continue
+		if lowest.is_empty() or float(enemy.get("current_hp", 0)) < float(lowest.get("current_hp", 0)):
+			lowest = enemy
+	return lowest
 
 
 ## True for the rival hero currently hidden by their own Shadow Dance or
@@ -6301,7 +6650,10 @@ func _show_damage_number(target_node: Control, amount: float, is_critical: bool 
 
 ## Same floating/fading style as _show_damage_number, but for text
 ## (e.g. "No enemy in range") shown over the hero instead of a number
-## over an enemy.
+## over an enemy. Holds still and fully readable for
+## MESSAGE_READ_HOLD_DURATION before it starts floating up and fading -
+## it used to start doing both the instant it appeared, which barely
+## gave the player time to read it before it was gone.
 func _show_message_over_hero(text: String) -> void:
 	var label := Label.new()
 	label.text = text
@@ -6313,6 +6665,7 @@ func _show_message_over_hero(text: String) -> void:
 	add_child(label)
 
 	var tween := create_tween()
+	tween.tween_interval(MESSAGE_READ_HOLD_DURATION)
 	tween.tween_property(label, "position:y", label.position.y - 40, 0.8)
 	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.8)
 	tween.finished.connect(label.queue_free)
@@ -6328,7 +6681,12 @@ func _kill_enemy(enemy: Dictionary) -> void:
 	_show_gold_gain(enemy["node"], gold_gain)
 
 	enemy["node"].queue_free()
+	if enemy.get("hp_label") != null:
+		enemy["hp_label"].queue_free()
+	if enemy.get("status_label") != null:
+		enemy["status_label"].queue_free()
 	_enemies.erase(enemy)
+	_refresh_enemy_overhead_labels()
 
 	if _enemies.is_empty():
 		_handle_victory()
@@ -6584,6 +6942,7 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_ice_shards_blocked_columns = []
 	_enemy_ice_shards_turns_remaining = 0
 	_enemy_ice_shards_duration_pending_start = false
+	_refresh_ice_shards_visuals()
 
 	_enemy_tag_team_active = false
 	_enemy_tag_team_bonus_damage = 0.0
@@ -6765,8 +7124,12 @@ func _end_turn() -> void:
 	# straight back to another _end_turn() call (Spirit Bear + enemy
 	# turn again) after a short pause, the same way a stunned enemy
 	# just loses its own turn to the player's own Pounce, rather than
-	# opening the action buttons only to lock them again next turn.
+	# opening the action buttons only to lock them again next turn. Name
+	# whichever effect is actually responsible so the player knows why,
+	# same as any other floating status message.
 	if _player_stun_turns_left > 0 or _cold_embrace_active:
+		var skip_reason: String = "Encased in ice" if _cold_embrace_active else "Stunned"
+		_show_message_over_hero(skip_reason + " - turn skipped")
 		get_tree().create_timer(0.9).timeout.connect(_end_turn)
 
 
@@ -6868,6 +7231,15 @@ func _enemy_turn() -> void:
 		var rooted: bool = _is_enemy_rooted(enemy) or _is_column_ice_shards_blocked(enemy["pos_index"])
 		if enemy.get("root_turns_left", 0) > 0:
 			enemy["root_turns_left"] -= 1
+		# Silence has nothing to gate for a regular creep - only
+		# _enemy_hero_turn() (the boss) ever checks _is_enemy_silenced()
+		# before attempting a skill cast - so unlike root above, there's
+		# no "consumed" moment to decrement it at here. Tick it down
+		# unconditionally instead (same as _enemy_hero_turn()'s own copy
+		# does for the boss), or a creep silenced by Entangle would carry
+		# it forever - never expiring since nothing ever "uses" it.
+		if enemy.get("silence_turns_left", 0) > 0:
+			enemy["silence_turns_left"] -= 1
 
 		if curse_active and not is_same(enemy, curse_target) and _distance(enemy["pos_index"], curse_target_pos) <= _winter_curse_range:
 			# Cursed: this enemy drops the hero/bear entirely for this
@@ -7698,6 +8070,7 @@ func _show_message_over_enemy(target_node: Control, text: String) -> void:
 	enemies_layer.add_child(label)
 
 	var tween := create_tween()
+	tween.tween_interval(MESSAGE_READ_HOLD_DURATION)
 	tween.tween_property(label, "position:y", label.position.y - 40, 0.8)
 	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.8)
 	tween.finished.connect(label.queue_free)
@@ -7980,7 +8353,12 @@ func _despawn_enemy_spirit_bear() -> void:
 		if existing["static"].get("is_enemy_spirit_bear", false):
 			if is_instance_valid(existing["node"]):
 				existing["node"].queue_free()
+			if is_instance_valid(existing.get("hp_label")):
+				existing["hp_label"].queue_free()
+			if is_instance_valid(existing.get("status_label")):
+				existing["status_label"].queue_free()
 			_enemies.erase(existing)
+	_refresh_enemy_overhead_labels()
 
 
 # ------------------------------------------------------------------
@@ -8723,6 +9101,7 @@ func _cast_enemy_ice_shards(enemy: Dictionary, level_data: Dictionary) -> void:
 	_enemy_ice_shards_blocked_columns = columns
 	_enemy_ice_shards_turns_remaining = int(level_data.get("duration", 0))
 	_enemy_ice_shards_duration_pending_start = true
+	_refresh_ice_shards_visuals()
 	_show_message_over_hero("Ice Shards!")
 
 
@@ -8744,6 +9123,7 @@ func _end_enemy_ice_shards() -> void:
 	_enemy_ice_shards_blocked_columns = []
 	_enemy_ice_shards_turns_remaining = 0
 	_enemy_ice_shards_duration_pending_start = false
+	_refresh_ice_shards_visuals()
 
 
 ## Whether `col` is currently walled off by the RIVAL's own Ice Shards -
@@ -9196,6 +9576,8 @@ func _move_enemy(enemy: Dictionary, new_pos: int) -> void:
 	if direction != 0:
 		var native_faces_right: bool = enemy["static"].get("is_hero_fight", false)
 		enemy["node"].flip_h = (direction < 0) if native_faces_right else (direction > 0)
+
+	_refresh_enemy_overhead_labels()
 
 
 const ATTACK_LUNGE_DISTANCE := 18.0

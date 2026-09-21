@@ -87,11 +87,20 @@ func _ready() -> void:
 		)
 
 
-## Gives both the Health and Mana Potion cards the same glowing
-## treatment every other forced button during the tutorial uses (see
-## TutorialManager.make_glow_style()) - both at once, since either can
-## be bought first here. Called once _cards is actually populated
-## (_refresh_page() has to have run already - see its own call site).
+## Gives both the Health and Mana Potion cards - and the details panel's
+## own Buy button - the same glowing treatment every other forced button
+## during the tutorial uses (see TutorialManager.make_glow_style()). All
+## three glow at once, since either potion can be bought first here, and
+## the actual purchase only happens once the player clicks Buy AFTER
+## selecting one - without its own glow, a player who'd only ever seen
+## the icon glow before this point had nothing marking the button that
+## actually completes the purchase. details_buy_button stays glowing
+## across selection changes since _refresh_details_panel() never touches
+## its stylebox overrides, only its text/visible/disabled state, and
+## starts glowing even while it's still hidden (nothing selected yet) -
+## harmless, since it just shows once the player picks an item. Called
+## once _cards is actually populated (_refresh_page() has to have run
+## already - see its own call site).
 func _tutorial_glow_forced_items() -> void:
 	for item_id in ["health", "mana"]:
 		if not _cards.has(item_id):
@@ -101,6 +110,12 @@ func _tutorial_glow_forced_items() -> void:
 		button.add_theme_stylebox_override("normal", glow_style)
 		button.add_theme_stylebox_override("hover", glow_style)
 		_tutorial_glow_tweens.append(TutorialManager.start_glow_pulse(glow_style, self))
+
+	var buy_glow_style: StyleBoxFlat = TutorialManager.make_glow_style()
+	details_buy_button.add_theme_stylebox_override("normal", buy_glow_style)
+	details_buy_button.add_theme_stylebox_override("hover", buy_glow_style)
+	details_buy_button.add_theme_stylebox_override("disabled", buy_glow_style)
+	_tutorial_glow_tweens.append(TutorialManager.start_glow_pulse(buy_glow_style, self))
 
 
 ## Undoes _tutorial_glow_forced_items() once both potions are bought -
@@ -112,6 +127,9 @@ func _tutorial_clear_glow() -> void:
 			var button: Button = _cards[item_id]["button"]
 			button.remove_theme_stylebox_override("normal")
 			button.remove_theme_stylebox_override("hover")
+	details_buy_button.remove_theme_stylebox_override("normal")
+	details_buy_button.remove_theme_stylebox_override("hover")
+	details_buy_button.remove_theme_stylebox_override("disabled")
 	for tween in _tutorial_glow_tweens:
 		if tween:
 			tween.kill()

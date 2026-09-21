@@ -464,10 +464,10 @@ var zones: Dictionary = {
 						"type": "standard",
 						"description": "Roots a targeted enemy in place - it can't move (though it can still attack if something is in range), and it's silenced so it can't cast skills while rooted. Also deals damage over time for the rooted duration.",
 						"levels": [
-							{"root_turns": 1, "silence_turns": 1, "dot_damage": 5, "dot_duration": 2, "mana_cost": 50, "cooldown": 3},
-							{"root_turns": 1, "silence_turns": 1, "dot_damage": 10, "dot_duration": 2, "mana_cost": 55, "cooldown": 3},
-							{"root_turns": 2, "silence_turns": 2, "dot_damage": 15, "dot_duration": 3, "mana_cost": 60, "cooldown": 4},
-							{"root_turns": 2, "silence_turns": 2, "dot_damage": 20, "dot_duration": 3, "mana_cost": 65, "cooldown": 4}
+							{"root_turns": 1, "silence_turns": 1, "dot_damage": 15, "dot_duration": 2, "mana_cost": 50, "cooldown": 3},
+							{"root_turns": 1, "silence_turns": 1, "dot_damage": 25, "dot_duration": 2, "mana_cost": 55, "cooldown": 3},
+							{"root_turns": 2, "silence_turns": 2, "dot_damage": 30, "dot_duration": 3, "mana_cost": 60, "cooldown": 4},
+							{"root_turns": 2, "silence_turns": 2, "dot_damage": 50, "dot_duration": 3, "mana_cost": 65, "cooldown": 4}
 						]
 					},
 					{
