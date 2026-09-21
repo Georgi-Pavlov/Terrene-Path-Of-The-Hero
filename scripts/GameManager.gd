@@ -1429,33 +1429,48 @@ var zones: Dictionary = {
 						"id": "scatterblast",
 						"name": "Scatterblast",
 						"type": "standard",
-						"description": "Fires a shotgun blast that deals damage to enemies, with extra effectiveness at point-blank range.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Fires a shotgun blast in the direction she's facing, dealing damage to every enemy within range.",
+						"levels": [
+							{"damage": 70, "range": 2, "mana_cost": 80, "cooldown": 6},
+							{"damage": 100, "range": 2, "mana_cost": 105, "cooldown": 6},
+							{"damage": 170, "range": 3, "mana_cost": 135, "cooldown": 7},
+							{"damage": 230, "range": 3, "mana_cost": 160, "cooldown": 7}
+						]
 					},
 					{
 						"id": "firesnap_cookie",
 						"name": "Firesnap Cookie",
 						"type": "standard",
-						"description": "Feeds a cookie to Mortimer (her toad) to cause a hop that stuns and damages enemies on landing.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Feeds a cookie to Mortimer (her pet) to cause a hop in the direction she's facing, damaging and stunning enemies around where he lands.",
+						"levels": [
+							{"jump_distance": 2, "damage": 60, "radius": 1, "stun_turns": 1, "mana_cost": 70, "cooldown": 5},
+							{"jump_distance": 2, "damage": 90, "radius": 1, "stun_turns": 1, "mana_cost": 90, "cooldown": 5},
+							{"jump_distance": 3, "damage": 120, "radius": 1, "stun_turns": 2, "mana_cost": 115, "cooldown": 6},
+							{"jump_distance": 3, "damage": 160, "radius": 1, "stun_turns": 2, "mana_cost": 140, "cooldown": 6}
+						]
 					},
 					{
 						"id": "lil_shredder",
 						"name": "Lil' Shredder",
 						"type": "standard",
-						"description": "Rapidly fires fixed-damage attacks with bonus range that reduce enemy armor.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Marks a target within normal attack range and fires 3 shots at it, each dealing a percentage of her own attack damage and shredding armor - the shredded armor returns after a duration.",
+						"levels": [
+							{"shots": 3, "damage_pct": 0.45, "armor_reduction_per_shot": 1, "duration": 1, "mana_cost": 80, "cooldown": 5},
+							{"shots": 3, "damage_pct": 0.55, "armor_reduction_per_shot": 2, "duration": 1, "mana_cost": 105, "cooldown": 5},
+							{"shots": 3, "damage_pct": 0.65, "armor_reduction_per_shot": 3.5, "duration": 2, "mana_cost": 130, "cooldown": 6},
+							{"shots": 3, "damage_pct": 0.75, "armor_reduction_per_shot": 5, "duration": 2, "mana_cost": 155, "cooldown": 6}
+						]
 					},
 					{
 						"id": "mortimer_kisses",
 						"name": "Mortimer Kisses",
 						"type": "ultimate",
-						"description": "Ultimate: launches a barrage of globs of firespit over a long distance, creating burning pools that deal initial and damage over time",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: marks a target within normal attack range, then channels for 3 turns - unable to move, act, or use items - firing one shot a turn that tracks the target (or its last known column, if it dies), dealing damage and burn to whoever it hits plus splash to the columns around it.",
+						"levels": [
+							{"hits": 3, "main_damage": 180, "splash_damage": 90, "burn_per_turn": 35, "burn_duration": 5, "mana_cost": 200, "cooldown": 10},
+							{"hits": 3, "main_damage": 260, "splash_damage": 130, "burn_per_turn": 50, "burn_duration": 5, "mana_cost": 270, "cooldown": 11},
+							{"hits": 3, "main_damage": 350, "splash_damage": 175, "burn_per_turn": 70, "burn_duration": 6, "mana_cost": 350, "cooldown": 12}
+						]
 					},
 				],
 				"level_up": {
@@ -1567,33 +1582,48 @@ var zones: Dictionary = {
 						"id": "mirror_image",
 						"name": "Mirror Image",
 						"type": "standard",
-						"description": "Creates illusions of Naga Siren that deal damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Creates 3 illusions of herself in the columns in front of and behind her - each enemy attacking her has a chance to hit an illusion instead, and every turn all surviving illusions strike the same random enemy in her own attack range.",
+						"levels": [
+							{"illusions": 3, "hp_pct": 0.35, "damage_pct": 0.25, "hit_chance_pct": 0.20, "duration": 2, "mana_cost": 70, "cooldown": 5},
+							{"illusions": 3, "hp_pct": 0.40, "damage_pct": 0.3, "hit_chance_pct": 0.25, "duration": 3, "mana_cost": 90, "cooldown": 5},
+							{"illusions": 3, "hp_pct": 0.45, "damage_pct": 0.35, "hit_chance_pct": 0.35, "duration": 3, "mana_cost": 115, "cooldown": 6},
+							{"illusions": 3, "hp_pct": 0.50, "damage_pct": 0.4, "hit_chance_pct": 0.45, "duration": 4, "mana_cost": 140, "cooldown": 6}
+						]
 					},
 					{
 						"id": "ensnare",
 						"name": "Ensnare",
 						"type": "standard",
-						"description": "Nets an enemy unit, stopping movement and blink abilities.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Nets an enemy within range, damaging it and rooting it in place - it can still attack and cast skills, just not move or jump.",
+						"levels": [
+							{"damage": 60, "range": 3, "root_turns": 1, "mana_cost": 60, "cooldown": 4},
+							{"damage": 100, "range": 4, "root_turns": 2, "mana_cost": 80, "cooldown": 4},
+							{"damage": 145, "range": 5, "root_turns": 2, "mana_cost": 105, "cooldown": 5},
+							{"damage": 200, "range": 6, "root_turns": 3, "mana_cost": 130, "cooldown": 5}
+						]
 					},
 					{
 						"id": "rip_tide",
 						"name": "Rip Tide",
-						"type": "standard",
-						"description": "Passive: attacks from Naga and her illusions reduce enemy armor and deal AoE damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: her own Attacks splash AoE damage to nearby enemies, and boosts Mirror Image's illusions - more damage at every level, +1 turn of duration from level 3, and one extra illusion at level 4.",
+						"levels": [
+							{"aoe_damage_pct": 0.15, "radius": 1, "illusion_damage_bonus_pct": 0.02, "illusion_duration_bonus": 0, "extra_illusion": 0},
+							{"aoe_damage_pct": 0.20, "radius": 1, "illusion_damage_bonus_pct": 0.03, "illusion_duration_bonus": 0, "extra_illusion": 0},
+							{"aoe_damage_pct": 0.25, "radius": 1, "illusion_damage_bonus_pct": 0.04, "illusion_duration_bonus": 1, "extra_illusion": 0},
+							{"aoe_damage_pct": 0.30, "radius": 1, "illusion_damage_bonus_pct": 0.05, "illusion_duration_bonus": 1, "extra_illusion": 1}
+						]
 					},
 					{
 						"id": "song_of_the_siren",
 						"name": "Song of the Siren",
 						"type": "ultimate",
-						"description": "Ultimate: puts all nearby enemies into a deep sleep",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: stuns every enemy within radius of Naga and reduces their armor for the stun's duration - she and her illusions can still move and attack normally while it holds.",
+						"levels": [
+							{"stun_turns": 3, "radius": 3, "armor_reduction": 5, "mana_cost": 200, "cooldown": 9},
+							{"stun_turns": 3, "radius": 3, "armor_reduction": 8, "mana_cost": 260, "cooldown": 10},
+							{"stun_turns": 4, "radius": 4, "armor_reduction": 12, "mana_cost": 330, "cooldown": 11}
+						]
 					},
 				],
 				"level_up": {
@@ -1626,33 +1656,48 @@ var zones: Dictionary = {
 						"id": "guardian_sprint",
 						"name": "Guardian Sprint",
 						"type": "standard",
-						"description": "Grants bonus movement speed, phase movement, and slow resistance.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Grants bonus movement for the duration - if an enemy is in the way when she moves, she stops on it and deals damage.",
+						"levels": [
+							{"bonus_movement": 1, "duration": 1, "charge_damage_pct": 0.40, "mana_cost": 50, "cooldown": 4},
+							{"bonus_movement": 2, "duration": 2, "charge_damage_pct": 0.55, "mana_cost": 70, "cooldown": 4},
+							{"bonus_movement": 2, "duration": 2, "charge_damage_pct": 0.70, "mana_cost": 90, "cooldown": 5},
+							{"bonus_movement": 3, "duration": 3, "charge_damage_pct": 0.90, "mana_cost": 110, "cooldown": 5}
+						]
 					},
 					{
 						"id": "slithereen_crush",
 						"name": "Slithereen Crush",
 						"type": "standard",
-						"description": "Slams the ground to stun and damage enemies.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Slams the ground, damaging and stunning every enemy within radius of Slardar.",
+						"levels": [
+							{"damage": 90, "radius": 1, "stun_turns": 1, "mana_cost": 70, "cooldown": 4},
+							{"damage": 140, "radius": 1, "stun_turns": 1, "mana_cost": 95, "cooldown": 4},
+							{"damage": 200, "radius": 1, "stun_turns": 2, "mana_cost": 125, "cooldown": 5},
+							{"damage": 270, "radius": 1, "stun_turns": 2, "mana_cost": 155, "cooldown": 5}
+						]
 					},
 					{
 						"id": "bash_of_the_deep",
 						"name": "Bash of the Deep",
-						"type": "standard",
-						"description": "Passive: triggers a physical bash and bonus damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: every few Attacks, the next one deals bonus damage and knocks the target back.",
+						"levels": [
+							{"attacks_required": 3, "bonus_damage_pct": 0.40, "knockback": 1},
+							{"attacks_required": 3, "bonus_damage_pct": 0.60, "knockback": 1},
+							{"attacks_required": 2, "bonus_damage_pct": 0.80, "knockback": 1},
+							{"attacks_required": 2, "bonus_damage_pct": 1.00, "knockback": 1}
+						]
 					},
 					{
 						"id": "corrosive_haze",
 						"name": "Corrosive Haze",
 						"type": "ultimate",
-						"description": "Ultimate: reduces enemy armor and provides true sight.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: marks a target within range, reducing its armor and increasing the damage it takes from her own attacks and skills for the duration.",
+						"levels": [
+							{"armor_reduction": 6, "bonus_damage_pct": 0.10, "duration": 4, "range": 4, "mana_cost": 150, "cooldown": 8},
+							{"armor_reduction": 9, "bonus_damage_pct": 0.15, "duration": 5, "range": 5, "mana_cost": 200, "cooldown": 9},
+							{"armor_reduction": 12, "bonus_damage_pct": 0.20, "duration": 6, "range": 6, "mana_cost": 250, "cooldown": 10}
+						]
 					},
 				],
 				"level_up": {

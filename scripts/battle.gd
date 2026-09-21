@@ -109,6 +109,11 @@ const GHOSTSHIP_TRAVEL_DURATION := 0.6
 # height, since it's a planted marker rather than a combatant.
 const CHAKRAM_IMAGE_PATH := "res://assets/heroes skills/Timbersaw_Chakram.png"
 
+# Naga Siren's Mirror Image (see _spawn_illusion_node()) fades every
+# illusion's copy of the hero's own portrait to this alpha, so the real
+# hero still reads clearly among his own decoys.
+const HERO_ILLUSION_ALPHA := 0.45
+
 # Winter Wyvern's Cold Embrace (see _activate_cold_embrace()) always
 # uses this art for the hero's portrait while it's active, regardless
 # of skill level - reverted back to the hero's own normal image
@@ -244,6 +249,25 @@ var _living_armor_turns_remaining: int = 0
 var _living_armor_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
+# Slardar's Guardian Sprint: a self-cast that arms this level's own
+# bonus_movement/charge_damage_pct for `level_data.duration` turns -
+# doesn't move the hero itself (casting just consumes the turn like any
+# other self-buff), it only changes what his NEXT normal moves do (see
+# _hero_move()'s own read of _guardian_sprint_turns_remaining). While
+# active, a move adds bonus_movement to the usual distance AND always
+# stops on the first enemy in its path (the melee "stop on top of an
+# enemy" rule _melee_move_target() already uses, applied here
+# regardless of range_type), dealing charge_damage_pct of a freshly-
+# rolled hero Attack to whatever it stopped on - no stun, just the hit.
+# Same "casting turn doesn't count" pattern as every other duration-
+# based buff (see _tick_guardian_sprint()).
+# ------------------------------------------------------------------
+var _guardian_sprint_turns_remaining: int = 0
+var _guardian_sprint_bonus_movement: int = 0
+var _guardian_sprint_charge_damage_pct: float = 0.0
+var _guardian_sprint_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
 # Timbersaw's Reactive Armor: a passive - no cast, no cooldown/mana
 # spend of its own. Every hit the hero takes (see apply_damage())
 # earns one stack, each with its OWN independent turns-remaining
@@ -296,6 +320,59 @@ var _cold_embrace_active: bool = false
 var _cold_embrace_heal_per_turn: float = 0.0
 var _cold_embrace_turns_remaining: int = 0
 var _cold_embrace_duration_pending_start: bool = false
+
+# ------------------------------------------------------------------
+# Snapfire's ultimate, Mortimer Kisses: a targeted channel, not a
+# self-cast buff like Cold Embrace above, but locked out the same way -
+# move, attack, skill, and item are all disabled for its whole
+# duration (same 7 check sites Cold Embrace already touches: _populate_
+# item_grid(), _on_item_pressed(), _on_skill_pressed(), _hero_move(),
+# _on_attack_pressed(), _update_action_buttons(), _apply_tutorial_
+# gate()). Unlike Cold Embrace, an unable-to-act turn here doesn't just
+# skip - it AUTO-FIRES one shot instead, from _end_turn()'s own tail
+# (see the block right before it reopens the action buttons), for
+# level_data.hits total shots counting the cast turn's own immediate
+# one (_resolve_mortimer_kisses_cast() fires that first one directly;
+# _mortimer_kisses_turns_left only tracks the REMAINING auto-fired
+# ones). _mortimer_marked_enemy is a live Dictionary reference into
+# _enemies - reading its own "pos_index" tracks it turn to turn while
+# it's alive, and keeps returning wherever it died once it isn't (see
+# _fire_mortimer_kisses_shot()'s own comment - _kill_enemy() only ever
+# removes a dead enemy from the _enemies array, it never mutates the
+# Dictionary's own fields).
+# ------------------------------------------------------------------
+var _mortimer_kisses_active: bool = false
+var _mortimer_kisses_turns_left: int = 0
+var _mortimer_marked_enemy: Dictionary = {}
+var _mortimer_kisses_level_data: Dictionary = {}
+
+# ------------------------------------------------------------------
+# Naga Siren's Mirror Image: a self-cast that spawns this level's own
+# `illusions` count (always 3) of decoys, one in the column immediately
+# in front of the hero, one immediately behind, and a third doubling up
+# randomly on whichever of those two columns (see _activate_mirror_
+# image()) - each a Dictionary of {pos_index, current_hp, max_hp, node}
+# in `_illusions`, own HP pool sized off `hp_pct` of the hero's own max
+# HP. While any are up, apply_damage() (every hit that would otherwise
+# land on the hero, from any source) rolls `hit_chance_pct` to redirect
+# the ENTIRE hit onto a random living illusion instead - a full
+# redirect, not a split, and completely bypassing the hero's own
+# defensive mechanics (Reactive Armor stacks, Borrowed Time, Aphotic
+# Shield) since nothing actually touched him this time. Every hero turn
+# that isn't the casting one, every surviving illusion also strikes the
+# SAME randomly-picked living enemy within the hero's own attack range
+# for `damage_pct` of a freshly-rolled hero Attack each (see
+# _fire_mirror_image_attack(), called from _tick_mirror_image()) - same
+# "casting turn doesn't count" pattern as every other duration-based
+# buff. Ends (despawning every surviving illusion) once the duration
+# runs out; recasting mid-duration replaces the set outright, same as
+# Living Armor/Chakram's own "recast overwrites" reasoning.
+# ------------------------------------------------------------------
+var _illusions: Array = []
+var _illusion_damage_pct: float = 0.0
+var _illusion_hit_chance_pct: float = 0.0
+var _illusions_turns_remaining: int = 0
+var _illusions_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
 # Winter Wyvern's ultimate, Winter's Curse: freezes a target enemy
@@ -505,6 +582,12 @@ var _borrowed_time_duration_pending_start: bool = false
 # above, so just the one counter.
 var _tidebringer_attack_count: int = 0
 
+# Slardar's Bash of the Deep - same "count plain Attacks toward a
+# threshold, consume them all once reached" idiom as Tidebringer's own
+# counter just above (see _maybe_consume_bash_of_the_deep_stack(),
+# called from _apply_hero_attack()).
+var _bash_of_the_deep_attack_count: int = 0
+
 # ------------------------------------------------------------------
 # A rival hero's own skills, during a hero fight (_in_hero_fight) -
 # see _enemy_hero_turn()/_cast_enemy_skill() and everything below it.
@@ -622,6 +705,24 @@ var _enemy_borrowed_time_duration_pending_start: bool = false
 # player instead (see _maybe_consume_enemy_tidebringer_stack(), called
 # from _resolve_enemy_hero_attack()).
 var _enemy_tidebringer_attack_count: int = 0
+
+# Slardar's Bash of the Deep, on the rival - same "count plain Attacks
+# toward a threshold, consume them all once reached" idiom as
+# Tidebringer's own counter just above (see
+# _maybe_consume_enemy_bash_of_the_deep_stack(), called from
+# _resolve_enemy_hero_attack()).
+var _enemy_bash_of_the_deep_attack_count: int = 0
+
+# Slardar's Guardian Sprint, on the rival - mirrors the player's own
+# _guardian_sprint_bonus_movement/_guardian_sprint_charge_damage_pct/
+# _guardian_sprint_turns_remaining/_guardian_sprint_duration_pending_
+# start fields exactly: a self-buff that boosts the rival's own NEXT
+# moves (see _enemy_hero_turn()'s own movement fallback) rather than an
+# instant leap - doesn't move the rival itself when cast.
+var _enemy_guardian_sprint_bonus_movement: int = 0
+var _enemy_guardian_sprint_charge_damage_pct: float = 0.0
+var _enemy_guardian_sprint_turns_remaining: int = 0
+var _enemy_guardian_sprint_duration_pending_start: bool = false
 
 # Kunkka's X Marks the Spot, on the rival - unlike the player's own
 # copy, the target is always the player (the only other participant in
@@ -749,6 +850,53 @@ var _enemy_reactive_armor_stack_turns: Array[int] = []
 # chakram().
 var _enemy_chakram: Dictionary = {}
 
+# Snapfire's ultimate, Mortimer Kisses, on the rival - mirrors the
+# player's own _mortimer_kisses_active/_mortimer_kisses_turns_left/
+# _mortimer_kisses_level_data field shape (see that block's own comment
+# for the full lock-site list): channels for `hits` turns, unable to
+# move/attack/cast another skill/use items for the duration - see
+# _enemy_hero_turn()'s own top-of-function lockout. Unlike the player's
+# own _mortimer_marked_enemy, there's no separate "marked enemy"
+# reference to hold here - the only possible target in a hero fight is
+# the player himself, tracked live via _hero_pos_index, which (unlike a
+# creep) never needs a "last known column" fallback since the battle
+# would already be over if he'd died.
+var _enemy_mortimer_kisses_active: bool = false
+var _enemy_mortimer_kisses_turns_left: int = 0
+var _enemy_mortimer_kisses_level_data: Dictionary = {}
+
+# Naga Siren's Mirror Image, cast by the rival - mirrors the player's own
+# _illusions/_illusion_damage_pct/_illusion_hit_chance_pct/_illusions_
+# turns_remaining/_illusions_duration_pending_start fields exactly (see
+# that block's own comment above): each entry in _enemy_illusions is a
+# {pos_index, current_hp, max_hp, node} Dictionary, own HP pool sized off
+# `hp_pct` of the boss's own effective max HP. While any are up,
+# _deal_fixed_damage_to_enemy() rolls `hit_chance_pct` to redirect a hit
+# meant for the boss onto a random surviving illusion instead - see that
+# function's own comment. Every rival turn that isn't the casting one,
+# every surviving illusion also strikes the player for `damage_pct` of a
+# freshly-rolled rival Attack each (see _fire_enemy_mirror_image_
+# attack(), called from _tick_enemy_mirror_image()). Rip Tide's own
+# bonuses (extra_illusion, illusion_damage_bonus_pct, illusion_duration_
+# bonus) are folded straight in at cast time, read fresh off
+# _get_enemy_rip_tide_level_data() - a no-op while the rival hasn't
+# learned it, same "empty means locked" convention every other auto-
+# triggered skill's own level-data getter uses.
+var _enemy_illusions: Array = []
+var _enemy_illusion_damage_pct: float = 0.0
+var _enemy_illusion_hit_chance_pct: float = 0.0
+var _enemy_illusions_turns_remaining: int = 0
+var _enemy_illusions_duration_pending_start: bool = false
+
+# Set by _deal_fixed_damage_to_enemy() every time it redirects a hit
+# onto one of the boss's own illusions instead of the boss itself -
+# reset to {} at the top of every one of its calls, so this only ever
+# reflects the MOST RECENT call's own outcome. Read right after by
+# _apply_hero_attack() so Bash of the Deep's own knockback (which
+# needs to know WHAT actually got hit) can move the illusion that took
+# the hit instead of the boss that didn't.
+var _last_enemy_illusion_redirect: Dictionary = {}
+
 # ------------------------------------------------------------------
 # What the rival's skills above do TO THE PLAYER. All of this only
 # ever gets set during a hero fight and is reset by
@@ -859,6 +1007,37 @@ var _player_leech_seed_dot_turns_left: int = 0
 var _player_overgrowth_dot_damage: float = 0.0
 var _player_overgrowth_dot_turns_left: int = 0
 
+# Snapfire's Lil' Shredder, cast by the rival on the player - mirrors
+# the player-side per-enemy armor_reduction/armor_reduction_turns_left
+# fields (see _resolve_lil_shredder_cast()), just held as battle-local
+# vars since there's only one player to track them on. Folded into
+# _hero_armor() as a straight subtraction, same "runtime field, never
+# touching the static template" reasoning the enemy-side version uses.
+var _player_armor_reduction: float = 0.0
+var _player_armor_reduction_turns_left: int = 0
+
+# Slardar's ultimate, Corrosive Haze, cast by the rival on the player -
+# mirrors the player-side per-enemy "corrosive_haze_bonus_pct" field
+# (see _resolve_corrosive_haze_cast()), just held as a battle-local var
+# since there's only one player to track it on. Read by apply_damage()
+# to boost every hit the player takes from the rival's own attacks/
+# skills, mirroring _deal_fixed_damage_to_enemy()'s own "is_hero_action"
+# check. Shares _player_armor_reduction_turns_left above as its own
+# turns-left counter, same "share the shred's own timer" convention the
+# player-side copy uses (see _resolve_corrosive_haze_cast()'s own
+# comment) - Corrosive Haze's own armor_reduction half is folded
+# straight into that same shared field, additively, rather than getting
+# a second one of its own.
+var _player_corrosive_haze_bonus_pct: float = 0.0
+
+# Snapfire's ultimate, Mortimer Kisses, cast by the rival on the player -
+# mirrors the player-side per-enemy mortimer_burn_dot_damage/mortimer_
+# burn_dot_turns_left fields (see _fire_mortimer_kisses_shot()), just
+# held as battle-local vars since there's only one player to track them
+# on.
+var _player_mortimer_burn_dot_damage: float = 0.0
+var _player_mortimer_burn_dot_turns_left: int = 0
+
 # ------------------------------------------------------------------
 # Ranged-hero target selection: when true, the enemies in
 # _valid_targets are highlighted and clickable; clicking one resolves
@@ -931,6 +1110,30 @@ var _pending_timber_chain_level_data: Dictionary = {}
 # targeting() opens targeting until a target is actually clicked
 # (_resolve_chakram_cast()).
 var _pending_chakram_level_data: Dictionary = {}
+
+# Snapfire's Lil' Shredder, held the same way as every other targeted
+# skill's own pending level data above, from the moment _start_lil_
+# shredder_targeting() opens targeting until a target is actually
+# clicked (_resolve_lil_shredder_cast()).
+var _pending_lil_shredder_level_data: Dictionary = {}
+
+# Snapfire's Mortimer Kisses, held the same way as every other targeted
+# skill's own pending level data above, from the moment _start_
+# mortimer_kisses_targeting() opens targeting until a target is
+# actually clicked (_resolve_mortimer_kisses_cast()).
+var _pending_mortimer_kisses_level_data: Dictionary = {}
+
+# Naga Siren's Ensnare, held the same way as every other targeted
+# skill's own pending level data above, from the moment _start_ensnare_
+# targeting() opens targeting until a target is actually clicked
+# (_resolve_ensnare_cast()).
+var _pending_ensnare_level_data: Dictionary = {}
+
+# Slardar's Corrosive Haze, held the same way as every other targeted
+# skill's own pending level data above, from the moment _start_
+# corrosive_haze_targeting() opens targeting until a target is actually
+# clicked (_resolve_corrosive_haze_cast()).
+var _pending_corrosive_haze_level_data: Dictionary = {}
 
 # Ancient Apparition's Cold Feet, held the same way as every other
 # targeted skill's own pending level data above, from the moment
@@ -1033,6 +1236,9 @@ const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
 	"ice_shards", "snowball", "tag_team", "walrus_punch",
 	"nature's_guise", "leech_seed", "living_armor", "overgrowth",
 	"whirling_death", "timber_chain", "chakram",
+	"scatterblast", "firesnap_cookie", "lil_shredder", "mortimer_kisses",
+	"mirror_image", "ensnare", "song_of_the_siren",
+	"guardian_sprint", "slithereen_crush", "corrosive_haze",
 ]
 
 # Reinforcements: if the hero hasn't cleared every enemy within
@@ -1198,7 +1404,7 @@ func _hero_max_hp() -> float:
 ## active.
 func _hero_armor() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor + _living_armor_bonus_armor + _reactive_armor_bonus_armor() - _player_essence_shift_penalty.get("armor", 0.0)
+	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor + _living_armor_bonus_armor + _reactive_armor_bonus_armor() - _player_essence_shift_penalty.get("armor", 0.0) - _player_armor_reduction
 
 
 ## Savage Roar's current level data ({} if not learned yet) - looked
@@ -1714,7 +1920,7 @@ func _populate_item_grid() -> void:
 				# hero) - a stunned hero loses the turn entirely, same as
 				# a stunned enemy loses its own (see _enemy_turn()'s stun
 				# check), so there's nothing left for him to spend it on.
-				btn.disabled = _battle_over or _has_acted_this_turn or _cold_embrace_active or _player_stun_turns_left > 0
+				btn.disabled = _battle_over or _has_acted_this_turn or _cold_embrace_active or _player_stun_turns_left > 0 or _mortimer_kisses_active
 				btn.pressed.connect(_on_item_pressed.bind(item_id))
 				# Lets _apply_tutorial_gate() find this button again by
 				# item id without needing its own tracking dict, the way
@@ -1742,7 +1948,7 @@ func _refresh_gold_label() -> void:
 
 
 func _on_item_pressed(item_id: String) -> void:
-	if _battle_over or _has_acted_this_turn or _cold_embrace_active or _player_stun_turns_left > 0:
+	if _battle_over or _has_acted_this_turn or _cold_embrace_active or _player_stun_turns_left > 0 or _mortimer_kisses_active:
 		return
 	if not PlayerManager.use_item(item_id):
 		return
@@ -2030,6 +2236,10 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 		_show_message_over_hero("Encased in ice!")
 		return
 
+	if _mortimer_kisses_active:
+		_show_message_over_hero("Focused on Mortimer Kisses!")
+		return
+
 	if _player_silence_turns_left > 0:
 		_show_message_over_hero("Silenced!")
 		return
@@ -2069,6 +2279,56 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 				return
 		"whirling_death":
 			if not _cast_whirling_death(level_data):
+				# No enemies in range - same as above, no-op.
+				return
+		"scatterblast":
+			if not _cast_scatterblast(level_data):
+				# No enemies in range - same as above, no-op.
+				return
+		"firesnap_cookie":
+			_activate_firesnap_cookie(level_data)
+		"lil_shredder":
+			if not _start_lil_shredder_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_lil_shredder_cast), not here.
+			return
+		"mortimer_kisses":
+			if not _start_mortimer_kisses_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_mortimer_kisses_cast), not here.
+			return
+		"mirror_image":
+			_activate_mirror_image(level_data)
+		"guardian_sprint":
+			_activate_guardian_sprint(level_data)
+		"slithereen_crush":
+			if not _cast_slithereen_crush(level_data):
+				# No enemies in range - same as above, no-op.
+				return
+		"corrosive_haze":
+			if not _start_corrosive_haze_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_corrosive_haze_cast), not here.
+			return
+		"ensnare":
+			if not _start_ensnare_targeting(level_data):
+				# No enemy in range - nothing happened, same as above.
+				return
+			# Same deferred-spend pattern as every other targeted skill
+			# above - the mana/cooldown/turn spend happens once the
+			# click resolves (_resolve_ensnare_cast), not here.
+			return
+		"song_of_the_siren":
+			if not _cast_song_of_the_siren(level_data):
 				# No enemies in range - same as above, no-op.
 				return
 		"timber_chain":
@@ -2372,6 +2632,10 @@ func _cast_dark_pact(level_data: Dictionary) -> bool:
 	var pact_damage: float = _roll_hero_damage() * multiplier
 	for enemy in targets:
 		_deal_fixed_damage_to_enemy(enemy, pact_damage)
+	# Self-centered on the hero, same as the check above - a rival's own
+	# illusion (Naga Siren's Mirror Image) can be in range independently
+	# of whether the boss itself currently is.
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, pact_damage)
 
 	return true
 
@@ -2398,8 +2662,265 @@ func _cast_whirling_death(level_data: Dictionary) -> bool:
 	var whirling_damage: float = float(level_data.get("damage", 0))
 	for enemy in targets:
 		_deal_fixed_damage_to_enemy(enemy, whirling_damage)
+	# Self-centered on the hero, same as the check above - a rival's own
+	# illusion (Naga Siren's Mirror Image) can be in range independently
+	# of whether the boss itself currently is.
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, whirling_damage)
 
 	return true
+
+
+## Slardar's Slithereen Crush: deals `level_data.damage` and stuns
+## (target["stun_turns_left"], same shared field Pounce's/Torrent's own
+## stun use) every enemy within `level_data.radius` columns of Slardar -
+## same shape as _cast_whirling_death() above, just with a stun folded
+## in and only ever stunning a hit that actually left the target alive.
+## Returns false (no mana/turn/cooldown spent) if nothing is in range.
+func _cast_slithereen_crush(level_data: Dictionary) -> bool:
+	var radius: int = int(level_data.get("radius", 0))
+	var targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+			targets.append(enemy)
+
+	if targets.is_empty():
+		_show_message_over_hero("No enemies in range")
+		return false
+
+	var crush_damage: float = float(level_data.get("damage", 0))
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	for enemy in targets:
+		_deal_fixed_damage_to_enemy(enemy, crush_damage)
+		if enemy.get("current_hp", 0) > 0:
+			enemy["stun_turns_left"] = stun_turns
+	# Self-centered on the hero, same as the check above - a rival's own
+	# illusion (Naga Siren's Mirror Image) can be in range independently
+	# of whether the boss itself currently is. The rival's own Spirit
+	# Bear needs no equivalent call - it's a genuine _enemies entry
+	# (see _summon_enemy_spirit_bear()), so the `targets` loop above
+	# already caught it, stun included.
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, crush_damage)
+
+	return true
+
+
+## Naga Siren's ultimate, Song of the Siren: stuns (target["stun_turns_
+## left"], same shared field Pounce's/Torrent's/Firesnap Cookie's own
+## stun use) and shreds the armor (target["armor_reduction"]/
+## "armor_reduction_turns_left", the same per-instance runtime fields
+## Lil' Shredder's own shred uses - stacking additively with any
+## already on a target, but refreshing (not adding to) the turns left,
+## same "reapplying overwrites the timer" convention every other
+## refreshable debuff in this file uses) of every enemy within this
+## level's own radius of the hero's CURRENT position, both for this
+## level's own stun_turns. Purely offensive - no damage of its own, and
+## nothing about the hero himself changes (he and his illusions can
+## still move/attack normally the whole time, unlike Mortimer Kisses'
+## own channel). Returns false (no mana/turn/cooldown spent) if nothing
+## is in range.
+func _cast_song_of_the_siren(level_data: Dictionary) -> bool:
+	var radius: int = int(level_data.get("radius", 0))
+	var targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+			targets.append(enemy)
+
+	if targets.is_empty():
+		_show_message_over_hero("No enemies in range")
+		return false
+
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	var armor_reduction: float = float(level_data.get("armor_reduction", 0))
+	for enemy in targets:
+		enemy["stun_turns_left"] = stun_turns
+		enemy["armor_reduction"] = float(enemy.get("armor_reduction", 0.0)) + armor_reduction
+		enemy["armor_reduction_turns_left"] = stun_turns
+
+	_show_message_over_hero("Song of the Siren!")
+	return true
+
+
+## Snapfire's Scatterblast: fires straight in whatever direction she's
+## currently facing (hero_image.flip_h, kept up to date by _hero_move()/
+## every other repositioning skill that sets it), dealing
+## level_data.damage to every enemy within level_data.range columns
+## AHEAD of her in that direction only - unlike Whirling Death's/Dark
+## Pact's own radius checks above, which look every direction at once,
+## an enemy behind her (or sharing her own column) is never hit. Returns
+## false (no mana/turn/cooldown spent) if nothing is in range.
+func _cast_scatterblast(level_data: Dictionary) -> bool:
+	var range_columns: int = int(level_data.get("range", 0))
+	var direction: int = -1 if hero_image.flip_h else 1
+
+	var targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		# 0 = sharing Snapfire's own column (point-blank - still in front
+		# of the blast regardless of which way she's facing), up through
+		# range_columns strictly ahead in her facing direction.
+		var ahead: int = (enemy["pos_index"] - _hero_pos_index) * direction
+		if ahead >= 0 and ahead <= range_columns:
+			targets.append(enemy)
+
+	if targets.is_empty():
+		_show_message_over_hero("No enemies in range")
+		return false
+
+	var scatter_damage: float = float(level_data.get("damage", 0))
+	for enemy in targets:
+		_deal_fixed_damage_to_enemy(enemy, scatter_damage)
+	# Same directional cone as the check above - a rival's own illusion
+	# (Naga Siren's Mirror Image) ahead of the hero can be caught in it
+	# independently of whether the boss itself currently is.
+	_deal_directional_aoe_damage_to_enemy_illusions(_hero_pos_index, direction, range_columns, scatter_damage)
+
+	_play_scatterblast_effect(direction, range_columns)
+
+	return true
+
+
+## Purely cosmetic: a one-shot cone of particles bursting from
+## Snapfire's own position out toward `direction` (+1 right, -1 left),
+## sized to travel roughly `range_columns` columns before fading -
+## visualizes Scatterblast's blast. The damage above has already fully
+## resolved by the time this plays; it never gates on this. First
+## particle-based effect in this file - every other one-shot visual
+## (Ghostship's flight, Spirit Bear's summon) is a plain TextureRect
+## tween instead, since there's no shotgun-pellet art asset to tween in
+## the same way.
+func _play_scatterblast_effect(direction: int, range_columns: int) -> void:
+	var lifetime: float = 0.35
+	var travel_distance: float = _grid_unit() * maxf(1.0, float(range_columns))
+
+	var particles := CPUParticles2D.new()
+	particles.position = hero_image.position + hero_image.size / 2.0
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 40
+	particles.lifetime = lifetime
+	particles.explosiveness = 1.0
+	particles.direction = Vector2(direction, 0)
+	particles.spread = 18.0
+	particles.gravity = Vector2.ZERO
+	particles.initial_velocity_min = travel_distance / lifetime * 0.7
+	particles.initial_velocity_max = travel_distance / lifetime * 1.1
+	particles.scale_amount_min = 4.0
+	particles.scale_amount_max = 8.0
+	particles.color = Color(1.0, 0.65, 0.15, 1.0)
+	add_child(particles)
+	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# render at the hero/enemy layer, not on top of every UI panel.
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+
+
+## Snapfire's Firesnap Cookie: hops level_data.jump_distance columns in
+## whatever direction she's currently facing (hero_image.flip_h, same
+## convention Scatterblast reads), same move-distance rules
+## (board edge/Ice Shards wall, ranged-vs-melee straight-through-or-
+## stop-on-enemy) as a normal move (see _hero_move()) - then, on
+## landing, deals level_data.damage and stuns for level_data.stun_turns
+## every enemy within level_data.radius columns of wherever she ends
+## up, if any (there doesn't need to be one for the hop itself to
+## happen - unlike Pounce, this never "fails" for lack of a target).
+## Only stuns a hit enemy that's still alive - a dead one has already
+## been removed from _enemies by _deal_fixed_damage_to_enemy's kill
+## check.
+func _activate_firesnap_cookie(level_data: Dictionary) -> void:
+	var jump_distance: int = int(level_data.get("jump_distance", 0))
+	var direction: int = -1 if hero_image.flip_h else 1
+
+	if _is_ranged_hero():
+		_hero_pos_index = _ranged_move_target(_hero_pos_index, direction, jump_distance)
+	else:
+		_hero_pos_index = _melee_move_target(_hero_pos_index, direction, jump_distance)
+	_update_hero_position()
+
+	var radius: int = int(level_data.get("radius", 0))
+	var damage: float = float(level_data.get("damage", 0))
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	for enemy in _enemies.duplicate():
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+			_deal_fixed_damage_to_enemy(enemy, damage)
+			if enemy.get("current_hp", 0) > 0:
+				enemy["stun_turns_left"] = stun_turns
+	# Centered on the landing spot, same as the check above - a rival's
+	# own illusion (Naga Siren's Mirror Image) can be in range
+	# independently of whether the boss itself currently is.
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, damage)
+
+
+## Resolves an Ensnare cast on `target`: `level_data.damage` (mitigated
+## by the target's own armor via _deal_fixed_damage_to_enemy(), same
+## helper Dark Pact/Torrent/Ghostship use) plus a root for this level's
+## own `root_turns` - reusing _apply_root() with no `silence_turns`/
+## `dot_damage`/`dot_duration` keys in `level_data` (all default to 0
+## there), so unlike Entangle this only ever roots, never silences or
+## burns - a rooted enemy can still attack and cast skills, just not
+## move or jump (see _is_enemy_rooted()'s own call sites in
+## _enemy_turn()/_enemy_hero_turn(), which only ever gate movement
+## branches). Only roots if the hit actually left it alive.
+func _resolve_ensnare_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var damage: float = float(level_data.get("damage", 0))
+	_deal_fixed_damage_to_enemy(target, damage)
+	if target.get("current_hp", 0) > 0:
+		_apply_root(target, level_data)
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["ensnare"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("ensnare", _skill_cooldowns["ensnare"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Resolves a Corrosive Haze cast on `target`: reduces its armor by
+## this level's own `armor_reduction` (target["armor_reduction"], the
+## same per-instance runtime field Lil' Shredder's own shred and Song
+## of the Siren use - stacking additively with any already on it) and
+## marks it with `bonus_damage_pct` (target["corrosive_haze_bonus_pct"],
+## read by _deal_fixed_damage_to_enemy() to boost every hit it takes
+## from the hero's own attacks/skills - overwritten outright on
+## recast, not stacked, since a second mark isn't meant to double the
+## vulnerability). Both share `duration`'s own turns-left counter
+## (target["armor_reduction_turns_left"]) - see
+## _tick_enemy_turn_start_effects()'s own comment on why that's fine to
+## share with Lil' Shredder's shred. Deals no damage of its own - a
+## pure debuff.
+func _resolve_corrosive_haze_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	target["armor_reduction"] = float(target.get("armor_reduction", 0.0)) + float(level_data.get("armor_reduction", 0))
+	target["corrosive_haze_bonus_pct"] = float(level_data.get("bonus_damage_pct", 0.0))
+	target["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
+
+	_show_message_over_hero("Corrosive Haze!")
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["corrosive_haze"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("corrosive_haze", _skill_cooldowns["corrosive_haze"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
 
 
 ## Resolves an Entangle cast once the player has clicked a target
@@ -2480,6 +3001,10 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 				continue
 			if _distance(enemy["pos_index"], target_pos) <= radius:
 				_deal_fixed_damage_to_enemy(enemy, damage)
+		# Centered on the target's own column, same as the splash above -
+		# a rival's own illusion (Naga Siren's Mirror Image) can be in
+		# range independently of whether the boss itself currently is.
+		_deal_aoe_damage_to_enemy_illusions(target_pos, radius, damage)
 
 	# No Shadow Dance check here, unlike Entangle's own resolve - that
 	# only ever matters for Slark's own kit, and Torrent belongs to
@@ -2593,6 +3118,10 @@ func _resolve_ghostship_cast(target: Dictionary, level_data: Dictionary) -> void
 			hit_targets.append(enemy)
 	for enemy in hit_targets:
 		_deal_fixed_damage_to_enemy(enemy, damage)
+	# The ship sails the whole line from the hero's own column to the
+	# target's - a rival's own illusion (Naga Siren's Mirror Image)
+	# standing anywhere along that path can still be caught in it.
+	_deal_line_aoe_damage_to_enemy_illusions(_hero_pos_index, target["pos_index"], damage)
 
 	_play_ghostship_animation(_hero_pos_index, target["pos_index"])
 
@@ -2642,6 +3171,10 @@ func _resolve_timber_chain_cast(target: Dictionary, level_data: Dictionary) -> v
 			hit_targets.append(enemy)
 	for enemy in hit_targets:
 		_deal_fixed_damage_to_enemy(enemy, damage)
+	# Same line as above (captured before the pull below can move the
+	# hero off start_col) - a rival's own illusion (Naga Siren's Mirror
+	# Image) standing anywhere along it can still be caught in it.
+	_deal_line_aoe_damage_to_enemy_illusions(start_col, end_col, damage)
 
 	# The chain's own damage still reaches every enemy across the full
 	# line above (a magical effect, not the hero physically walking it)
@@ -2703,6 +3236,10 @@ func _resolve_chakram_cast(target: Dictionary, level_data: Dictionary) -> void:
 			hit_targets.append(enemy)
 	for enemy in hit_targets:
 		_deal_fixed_damage_to_enemy(enemy, cast_damage)
+	# Planted at the target's own position at this moment - a rival's
+	# own illusion (Naga Siren's Mirror Image) there (or nearby) takes
+	# the same initial burst.
+	_deal_aoe_damage_to_enemy_illusions(pos_index, radius, cast_damage)
 
 	_despawn_chakram()
 	_chakram = {
@@ -2787,6 +3324,10 @@ func _tick_chakram() -> void:
 			_deal_fixed_damage_to_enemy(enemy, damage_per_turn)
 			if _battle_over:
 				return
+	# Same FIXED planted position as the check above - a rival's own
+	# illusion can be in range independently of whether the boss itself
+	# currently is.
+	_deal_aoe_damage_to_enemy_illusions(pos_index, radius, damage_per_turn)
 
 	_chakram["turns_remaining"] = int(_chakram["turns_remaining"]) - 1
 	if int(_chakram["turns_remaining"]) <= 0:
@@ -2940,6 +3481,509 @@ func _resolve_chilling_touch_cast(target: Dictionary, level_data: Dictionary) ->
 	_mark_turn_used()
 
 
+## Resolves a Lil' Shredder cast on `target`: fires this level's own
+## `shots` count of separately-rolled hits at it (each
+## _roll_hero_damage() * damage_pct, same "own roll per shot" idiom
+## Whirling Death/Dark Pact use for "one roll shared across many
+## targets" just inverted here into "many rolls at one target"), each
+## shot ALSO stacking armor_reduction_per_shot onto `target`'s own
+## armor_reduction - a per-instance runtime field folded into
+## _deal_fixed_damage_to_enemy()'s own armor calc, never touching
+## target["static"]'s shared template armor - so a later shot in the
+## SAME volley already lands harder than the first, having shredded
+## some of the target's armor away. Stops early if `target` dies
+## partway through. The whole stack's own duration (this level's own
+## `duration`, in the target's own upcoming turns) is only set once,
+## after the last shot connects - see _tick_enemy_turn_start_effects()'s
+## own comment for why the casting round is never counted against it
+## for free, with no separate "pending start" flag needed here.
+func _resolve_lil_shredder_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	var shots: int = int(level_data.get("shots", 3))
+	var damage_pct: float = float(level_data.get("damage_pct", 0))
+	var armor_reduction_per_shot: float = float(level_data.get("armor_reduction_per_shot", 0))
+	var target_pos_index: int = target["pos_index"]
+
+	for i in range(shots):
+		if target.get("current_hp", 0) <= 0:
+			break
+		var shot_damage: float = _roll_hero_damage() * damage_pct
+		_deal_fixed_damage_to_enemy(target, shot_damage)
+		_play_lil_shredder_shot_effect(target_pos_index, i * 0.15)
+		if target.get("current_hp", 0) <= 0:
+			break
+		target["armor_reduction"] = float(target.get("armor_reduction", 0.0)) + armor_reduction_per_shot
+
+	if target.get("current_hp", 0) > 0:
+		target["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["lil_shredder"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("lil_shredder", _skill_cooldowns["lil_shredder"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Purely cosmetic: schedules one small impact-spark burst at
+## `target_pos_index` after `delay` seconds - called once per shot from
+## _resolve_lil_shredder_cast() with a slight stagger (0, 0.15, 0.3s) so
+## the 3 shots read as a rapid volley instead of one simultaneous flash.
+## The damage above has already fully resolved by the time each of
+## these plays; none of this ever gates it. Guards _battle_over at fire
+## time since the delay can outlive the battle (a scene change from the
+## last shot's own kill, say) - same reasoning every other delayed
+## cleanup in this file already follows.
+func _play_lil_shredder_shot_effect(target_pos_index: int, delay: float) -> void:
+	get_tree().create_timer(maxf(delay, 0.01)).timeout.connect(_spawn_lil_shredder_impact.bind(target_pos_index))
+
+
+func _spawn_lil_shredder_impact(target_pos_index: int) -> void:
+	if _battle_over:
+		return
+
+	var lifetime: float = 0.2
+
+	var particles := CPUParticles2D.new()
+	particles.position = Vector2(_index_to_x(target_pos_index) + _grid_unit() / 2.0, _creature_y() + get_viewport_rect().size.y / 8.0)
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 14
+	particles.lifetime = lifetime
+	particles.explosiveness = 1.0
+	particles.direction = Vector2(0, -1)
+	particles.spread = 70.0
+	particles.gravity = Vector2.ZERO
+	particles.initial_velocity_min = 60.0
+	particles.initial_velocity_max = 120.0
+	particles.scale_amount_min = 2.0
+	particles.scale_amount_max = 4.0
+	particles.color = Color(1.0, 0.85, 0.3, 1.0)
+	add_child(particles)
+	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# render at the hero/enemy layer, not on top of every UI panel.
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+
+
+# ------------------------------------------------------------------
+# Snapfire's ultimate, Mortimer Kisses (see the field comment above
+# _mortimer_kisses_active for the overall channel shape).
+# ------------------------------------------------------------------
+
+## Snapfire's Mortimer Kisses target picking: same "normal attack
+## range" gate (_hero_attack_column_range()) every other attack-range
+## targeted skill uses - marking a target for the whole channel is the
+## only click involved; the following shots never need another one.
+## Returns false (and shows a message) if nothing is in range.
+func _start_mortimer_kisses_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "mortimer_kisses"
+	_pending_mortimer_kisses_level_data = level_data
+	_highlight_valid_targets()
+	return true
+
+
+## Resolves a Mortimer Kisses cast on `target`: marks it, fires the
+## FIRST of this level's own `hits` shots immediately (right now, as
+## part of this cast, same as any other instant skill), and arms
+## _mortimer_kisses_turns_left with however many are left (hits - 1) -
+## _end_turn()'s own tail auto-fires the rest, one per hero turn, with
+## every other action locked out for as long as any remain (see
+## _mortimer_kisses_active's own field comment for the full list of
+## lock sites). Always "succeeds" once a target's been marked - there's
+## nothing further for this cast itself to fail on.
+func _resolve_mortimer_kisses_cast(target: Dictionary, level_data: Dictionary) -> void:
+	var generation_before: int = _stage_generation
+
+	_mortimer_marked_enemy = target
+	_mortimer_kisses_level_data = level_data
+	_mortimer_kisses_active = true
+	_mortimer_kisses_turns_left = int(level_data.get("hits", 1)) - 1
+
+	_fire_mortimer_kisses_shot()
+
+	var mana_cost: float = float(level_data.get("mana_cost", 0))
+	spend_mana(mana_cost)
+	_skill_cooldowns["mortimer_kisses"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("mortimer_kisses", _skill_cooldowns["mortimer_kisses"])
+	_refresh_skill_cooldown_labels()
+
+	if _battle_over or _stage_generation != generation_before:
+		return
+
+	_mark_turn_used()
+
+
+## Fires one Mortimer Kisses shot: the impact column is always
+## `_mortimer_marked_enemy`'s own "pos_index" - while it's alive that
+## tracks it turn to turn (a live Dictionary reference into _enemies),
+## and once it's dead _kill_enemy() never mutates that field further,
+## so it keeps reading as wherever it died - "the last column that the
+## enemy occupied" falls out for free. Deals this level's own
+## main_damage plus a refreshed burn DoT to whoever's standing on that
+## column RIGHT NOW (_get_enemy_at() - not necessarily the marked enemy
+## itself, if it died and something else moved onto that spot), and
+## splash_damage (no burn) to anything exactly 1 column either side of
+## it. Always plays the lava-pool impact visual at that column, even if
+## nothing was actually standing there to hit.
+func _fire_mortimer_kisses_shot() -> void:
+	var level_data: Dictionary = _mortimer_kisses_level_data
+	var impact_pos: int = int(_mortimer_marked_enemy.get("pos_index", _hero_pos_index))
+
+	var main_damage: float = float(level_data.get("main_damage", 0))
+	var splash_damage: float = float(level_data.get("splash_damage", 0))
+	var burn_per_turn: float = float(level_data.get("burn_per_turn", 0))
+	var burn_duration: int = int(level_data.get("burn_duration", 0))
+
+	var main_target: Dictionary = _get_enemy_at(impact_pos)
+	if not main_target.is_empty():
+		_deal_fixed_damage_to_enemy(main_target, main_damage)
+		if main_target.get("current_hp", 0) > 0 and burn_per_turn > 0.0:
+			main_target["mortimer_burn_dot_damage"] = burn_per_turn
+			main_target["mortimer_burn_dot_turns_left"] = burn_duration
+
+	for enemy in _enemies.duplicate():
+		if _is_target_hidden(enemy):
+			continue
+		if is_same(enemy, main_target):
+			continue
+		if _distance(enemy["pos_index"], impact_pos) == 1:
+			_deal_fixed_damage_to_enemy(enemy, splash_damage)
+
+	# A rival's own illusion (Naga Siren's Mirror Image) exactly on the
+	# impact column takes main_damage, one column either side takes
+	# splash_damage - same split as the regular-enemy checks above,
+	# rather than the single flat radius _deal_aoe_damage_to_enemy_
+	# illusions() would give (which can't tell "the impact column
+	# itself" apart from "one column over").
+	if not _enemy_illusions.is_empty():
+		var boss: Dictionary = _get_hero_fight_boss()
+		if not boss.is_empty():
+			var boss_armor: float = _enemy_hero_effective_armor(boss)
+			for illusion in _enemy_illusions.duplicate():
+				var illusion_dist: int = _distance(illusion["pos_index"], impact_pos)
+				if illusion_dist == 0:
+					_deal_damage_to_enemy_illusion(illusion, _apply_armor_reduction(main_damage, boss_armor))
+				elif illusion_dist == 1:
+					_deal_damage_to_enemy_illusion(illusion, _apply_armor_reduction(splash_damage, boss_armor))
+
+	_play_mortimer_kisses_impact_effect(impact_pos)
+
+
+## Ends the Mortimer Kisses channel - called once its last shot has
+## fired (see _end_turn()'s own tail). Clears every bit of state the
+## lock/auto-fire logic reads, so a stale reference to a long-dead
+## `_mortimer_marked_enemy` can never leak into some later, unrelated
+## check.
+func _end_mortimer_kisses() -> void:
+	_mortimer_kisses_active = false
+	_mortimer_kisses_turns_left = 0
+	_mortimer_marked_enemy = {}
+	_mortimer_kisses_level_data = {}
+	_show_message_over_hero("Mortimer Kisses ends")
+
+
+## Purely cosmetic: a brief burning/lava-pool flare at `pos_index` -
+## visualizes each of Mortimer Kisses' own shots landing. The damage
+## above has already fully resolved by the time this plays; it never
+## gates on this. Same CPUParticles2D one-shot-burst recipe as Lil'
+## Shredder's own impact spark, just wider, slower, and colored like
+## fire/lava rather than a gunshot's spark.
+func _play_mortimer_kisses_impact_effect(pos_index: int) -> void:
+	var lifetime: float = 0.7
+	var column_width: float = _grid_unit()
+
+	var particles := CPUParticles2D.new()
+	particles.position = Vector2(_index_to_x(pos_index) + column_width / 2.0, _creature_y() + get_viewport_rect().size.y / 4.0)
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 70
+	particles.lifetime = lifetime
+	particles.explosiveness = 0.85
+	# Spread across the whole column's own width rather than bursting
+	# from a single point, so the pool visually covers the column it
+	# hit instead of just its center.
+	particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	particles.emission_rect_extents = Vector2(column_width / 2.0, 16.0)
+	particles.direction = Vector2(0, -1)
+	particles.spread = 100.0
+	particles.gravity = Vector2.ZERO
+	particles.initial_velocity_min = 30.0
+	particles.initial_velocity_max = 90.0
+	particles.scale_amount_min = 10.0
+	particles.scale_amount_max = 20.0
+	particles.color = Color(1.0, 0.35, 0.05, 1.0)
+	add_child(particles)
+	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# render at the hero/enemy layer, not on top of every UI panel.
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+
+
+# ------------------------------------------------------------------
+# Naga Siren's Mirror Image (see the field comment above _illusions for
+# the overall shape).
+# ------------------------------------------------------------------
+
+## Activates Mirror Image: replaces any illusions already up outright
+## (_end_mirror_image() first - recasting mid-duration just resets the
+## set, nothing carries over), then spawns this level's own `illusions`
+## count of decoys - one immediately in front of the hero, one
+## immediately behind (both clamped to the grid, so at the very edge a
+## decoy can end up sharing the hero's own column instead of going out
+## of bounds), and any beyond those first two doubling up randomly on
+## one of those same two columns. "Front"/"behind" follows the hero's
+## own CURRENT facing (hero_image.flip_h, same convention Scatterblast/
+## Firesnap Cookie already read) rather than a fixed board direction.
+## Rip Tide's own bonuses (extra_illusion, illusion_damage_bonus_pct,
+## illusion_duration_bonus) are folded straight in here, read fresh off
+## _get_rip_tide_level_data() at cast time - a no-op contribution while
+## that skill isn't learned, same "empty means locked" convention every
+## other auto-triggered skill's own level-data getter uses. Always
+## "succeeds" - self-cast, no target or range requirement, same as
+## every other self-cast buff.
+func _activate_mirror_image(level_data: Dictionary) -> void:
+	_end_mirror_image()
+
+	var rip_tide_level_data: Dictionary = _get_rip_tide_level_data()
+
+	var direction: int = -1 if hero_image.flip_h else 1
+	var front_pos: int = clampi(_hero_pos_index + direction, 0, GRID_COLUMNS - 1)
+	var behind_pos: int = clampi(_hero_pos_index - direction, 0, GRID_COLUMNS - 1)
+
+	var illusions_count: int = int(level_data.get("illusions", 3)) + int(rip_tide_level_data.get("extra_illusion", 0))
+	var illusion_hp: float = _hero_max_hp() * float(level_data.get("hp_pct", 0.0))
+
+	for i in range(illusions_count):
+		var pos: int
+		if i == 0:
+			pos = front_pos
+		elif i == 1:
+			pos = behind_pos
+		else:
+			pos = front_pos if randf() < 0.5 else behind_pos
+		_illusions.append({
+			"pos_index": pos,
+			"current_hp": illusion_hp,
+			"max_hp": illusion_hp,
+			"node": _spawn_illusion_node(pos),
+		})
+
+	_illusion_damage_pct = float(level_data.get("damage_pct", 0.0)) + float(rip_tide_level_data.get("illusion_damage_bonus_pct", 0.0))
+	_illusion_hit_chance_pct = float(level_data.get("hit_chance_pct", 0.0))
+	_illusions_turns_remaining = int(level_data.get("duration", 0)) + int(rip_tide_level_data.get("illusion_duration_bonus", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking (and the illusions only start attacking) from the turn
+	# after (see _tick_mirror_image()), same as every other duration-
+	# based buff.
+	_illusions_duration_pending_start = true
+
+	_show_message_over_hero("Mirror Image!")
+
+
+## Purely visual: a copy of the hero's own current portrait, faded to
+## HERO_ILLUSION_ALPHA so the real hero still reads clearly among his
+## own decoys, positioned on `pos_index`'s own column at the same
+## size/scale _set_hero_image() already gives hero_image itself.
+func _spawn_illusion_node(pos_index: int) -> TextureRect:
+	var tex_rect := TextureRect.new()
+	tex_rect.texture = hero_image.texture
+	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+	tex_rect.size = hero_image.size
+	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tex_rect.flip_h = hero_image.flip_h
+	tex_rect.modulate = Color(1, 1, 1, HERO_ILLUSION_ALPHA)
+	tex_rect.position = Vector2(_index_to_x(pos_index), _creature_y())
+	add_child(tex_rect)
+	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# render at the hero/enemy layer, not on top of every UI panel.
+	move_child(tex_rect, enemies_layer.get_index() + 1)
+	return tex_rect
+
+
+## Ticks Mirror Image's duration down once per End Turn, same timing
+## (and same "the casting turn doesn't count" skip) as every other
+## duration-based buff - firing the illusions' own attack
+## (_fire_mirror_image_attack()) on every tick that actually counts
+## against the duration, then ending the effect once it runs out. A
+## no-op once every illusion has already died in combat (see
+## _kill_illusion()) even if the duration itself hasn't run out yet.
+func _tick_mirror_image() -> void:
+	if _illusions.is_empty():
+		return
+
+	if _illusions_duration_pending_start:
+		_illusions_duration_pending_start = false
+		return
+
+	_fire_mirror_image_attack()
+
+	_illusions_turns_remaining -= 1
+	if _illusions_turns_remaining <= 0:
+		_end_mirror_image()
+
+
+## Every surviving illusion strikes the SAME randomly-picked living,
+## targetable enemy within the hero's own normal attack range
+## (_hero_attack_column_range(), same reach a plain Attack/most of his
+## skills use) - each illusion rolling its own hero-damage instance
+## (_roll_hero_damage()) scaled by _illusion_damage_pct, same "own roll
+## per hit" idiom Lil' Shredder's own shots use, mitigated by the
+## target's own armor via _deal_fixed_damage_to_enemy(). Stops early if
+## that focus-fire kills the target partway through - a no-op if
+## nothing is in range this turn.
+func _fire_mirror_image_attack() -> void:
+	var col_range: int = _hero_attack_column_range()
+	var targets: Array = []
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			targets.append(enemy)
+
+	if targets.is_empty():
+		return
+
+	var target: Dictionary = targets[randi() % targets.size()]
+	for illusion in _illusions.duplicate():
+		if target.get("current_hp", 0) <= 0:
+			break
+		var illusion_damage: float = _roll_hero_damage() * _illusion_damage_pct
+		_deal_fixed_damage_to_enemy(target, illusion_damage)
+		if _battle_over:
+			return
+
+
+## Ends Mirror Image, despawning every surviving illusion - called both
+## when its duration runs out (_tick_mirror_image()) and defensively at
+## the top of _activate_mirror_image() so a recast mid-duration never
+## leaks the old set's nodes. Only shows the "fades" message if there
+## was actually something to end (so casting it fresh, with nothing yet
+## up to replace, stays silent).
+func _end_mirror_image() -> void:
+	var had_illusions: bool = not _illusions.is_empty()
+	for illusion in _illusions:
+		if is_instance_valid(illusion.get("node")):
+			illusion["node"].queue_free()
+	_illusions.clear()
+	_illusion_damage_pct = 0.0
+	_illusion_hit_chance_pct = 0.0
+	_illusions_turns_remaining = 0
+	_illusions_duration_pending_start = false
+
+	if had_illusions:
+		_show_message_over_hero("Mirror Image fades")
+
+
+## Applies `amount` of already-mitigated damage to `illusion` - the
+## illusion-side equivalent of _deal_damage_to_bear(), just against the
+## `_illusions` array instead of the single `_bear` dict. Called from
+## apply_damage() whenever a hit redirects onto an illusion instead of
+## the hero.
+func _deal_damage_to_illusion(illusion: Dictionary, amount: float) -> void:
+	illusion["current_hp"] = float(illusion.get("current_hp", 0.0)) - amount
+	if is_instance_valid(illusion.get("node")):
+		_show_damage_number(illusion["node"], amount)
+	if illusion["current_hp"] <= 0:
+		_kill_illusion(illusion)
+
+
+## Removes one illusion that's died in combat - used both here (a
+## redirected hit finishing it off) and, in principle, anywhere else an
+## illusion's HP could hit 0. Doesn't end Mirror Image outright even if
+## this was the last one; _tick_mirror_image()'s own early-empty check
+## just makes every remaining tick (attack + duration decrement) a
+## no-op until the duration itself finally runs out.
+func _kill_illusion(illusion: Dictionary) -> void:
+	if is_instance_valid(illusion.get("node")):
+		illusion["node"].queue_free()
+	_illusions.erase(illusion)
+
+
+## Any enemy AoE skill that damages the hero over an area should ALSO
+## independently hit every surviving illusion within that same area -
+## illusions are real occupants of their own columns, not something
+## folded into apply_damage()'s own redirect-chance roll (that roll
+## only ever fires for a hit actually landing on the hero; an AoE's
+## OTHER victims, illusions included, are unconditional collateral, not
+## a chance). Called alongside (never instead of) whatever apply_damage()
+## call the AoE skill already makes for the hero himself - see each
+## enemy skill cast function's own call site. `amount` is the RAW,
+## pre-mitigation damage the AoE deals to the hero - each illusion
+## mitigates it separately via the hero's own armor, same as apply_
+## damage()'s own redirect roll does, since an illusion is a copy of
+## him, not a separate combatant with its own defense stat. A no-op
+## while no illusions are up.
+func _deal_aoe_damage_to_illusions(center_pos_index: int, radius: int, amount: float) -> void:
+	if _illusions.is_empty() or amount <= 0.0:
+		return
+
+	var mitigated: float = _apply_armor_reduction(amount, _hero_armor())
+	for illusion in _illusions.duplicate():
+		if _distance(illusion["pos_index"], center_pos_index) <= radius:
+			_deal_damage_to_illusion(illusion, mitigated)
+
+
+## The line-shaped equivalent of _deal_aoe_damage_to_illusions() above -
+## for Ghostship's/Timber Chain's own "every column between the caster
+## and the target, inclusive of both ends" line, rather than a radius
+## around one point. Same "amount is raw, each illusion mitigates it
+## separately via the hero's own armor" contract.
+func _deal_line_aoe_damage_to_illusions(start_pos_index: int, end_pos_index: int, amount: float) -> void:
+	if _illusions.is_empty() or amount <= 0.0:
+		return
+
+	var start_col: int = mini(start_pos_index, end_pos_index)
+	var end_col: int = maxi(start_pos_index, end_pos_index)
+	var mitigated: float = _apply_armor_reduction(amount, _hero_armor())
+	for illusion in _illusions.duplicate():
+		var pos: int = illusion["pos_index"]
+		if pos >= start_col and pos <= end_col:
+			_deal_damage_to_illusion(illusion, mitigated)
+
+
+## The directional-cone equivalent of the two AoE-shape helpers above -
+## for a rival Scatterblast's own "every column strictly ahead of the
+## caster, in whichever direction it's facing, up to range_columns"
+## cone (same shape _cast_scatterblast()'s own "ahead" check uses for
+## the player's copy), rather than a radius or a line between two
+## points. Same "amount is raw, each illusion mitigates it separately
+## via the hero's own armor" contract.
+func _deal_directional_aoe_damage_to_illusions(origin_pos_index: int, direction: int, range_columns: int, amount: float) -> void:
+	if _illusions.is_empty() or amount <= 0.0:
+		return
+
+	var mitigated: float = _apply_armor_reduction(amount, _hero_armor())
+	for illusion in _illusions.duplicate():
+		var ahead: int = (illusion["pos_index"] - origin_pos_index) * direction
+		if ahead >= 0 and ahead <= range_columns:
+			_deal_damage_to_illusion(illusion, mitigated)
+
+
 ## Resolves an Ice Blast cast on `target`: `level_data.damage` to
 ## `target` and every OTHER living, targetable enemy within
 ## `level_data.radius` columns of it (mirroring Dark Pact's/Torrent's
@@ -2973,6 +4017,10 @@ func _resolve_ice_blast_cast(target: Dictionary, level_data: Dictionary) -> void
 			enemy["ice_blast_dot_damage"] = dot_damage
 			enemy["ice_blast_dot_turns_left"] = dot_duration
 			enemy["ice_blast_execute_pct"] = execute_pct
+	# Centered on the target's own column, same as the check above - a
+	# rival's own illusion (Naga Siren's Mirror Image) can be in range
+	# independently of whether the boss itself currently is.
+	_deal_aoe_damage_to_enemy_illusions(target_pos, radius, damage)
 
 	if target.get("current_hp", 0) > 0:
 		target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
@@ -3011,6 +4059,10 @@ func _resolve_splinter_blast_cast(target: Dictionary, level_data: Dictionary) ->
 			continue
 		if _distance(enemy["pos_index"], target_pos) <= splinter_range:
 			_deal_fixed_damage_to_enemy(enemy, splinter_damage)
+	# Centered on the target's own column, same as the check above - a
+	# rival's own illusion (Naga Siren's Mirror Image) can be in range
+	# independently of whether the boss itself currently is.
+	_deal_aoe_damage_to_enemy_illusions(target_pos, splinter_range, splinter_damage)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -3094,6 +4146,10 @@ func _resolve_crystal_nova_cast(target: Dictionary, level_data: Dictionary) -> v
 				continue
 			if _distance(enemy["pos_index"], target_pos) <= radius:
 				_deal_fixed_damage_to_enemy(enemy, damage)
+		# Centered on the target's own column, same as the splash above -
+		# a rival's own illusion (Naga Siren's Mirror Image) can be in
+		# range independently of whether the boss itself currently is.
+		_deal_aoe_damage_to_enemy_illusions(target_pos, radius, damage)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -3235,6 +4291,154 @@ func _apply_cleaver_cleave(target: Dictionary, attack_damage: float) -> void:
 
 
 # ------------------------------------------------------------------
+# Naga Siren's Rip Tide - a passive, so unlike every cast skill above
+# there's no button/cast/mana/cooldown for it. Two independent halves:
+# a Tidebringer/Cleaver-style AoE splash off the hero's own plain
+# Attacks (_apply_rip_tide_cleave(), called from _apply_hero_attack()),
+# and a set of flat bonuses folded into Mirror Image's own cast
+# (_activate_mirror_image() reads _get_rip_tide_level_data() itself -
+# see that function's own comment) rather than anything ticked or
+# tracked here.
+# ------------------------------------------------------------------
+
+## Rip Tide's level data for whatever level the player has it at right
+## now - {} if it isn't learned at all (level 0), the same "empty means
+## locked" convention every other auto-triggered skill's own
+## _get_*_level_data() helper uses.
+func _get_rip_tide_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("rip_tide")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "rip_tide":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Rip Tide's own AoE splash: identical shape to Tidebringer's/
+## Cleaver's own cleave above (% of the attack's own raw damage, before
+## the main target's own armor reduces it, splashed to every OTHER
+## living enemy within `radius` columns, each mitigated by its own
+## armor separately) but keyed off this level's own aoe_damage_pct/
+## radius rather than a flat item bonus or a consumed stack - independent
+## of and stacks with Tidebringer's/Cleaver's, same as those two already
+## stack with each other. A no-op while the skill isn't learned.
+func _apply_rip_tide_cleave(target: Dictionary, attack_damage: float) -> void:
+	var level_data: Dictionary = _get_rip_tide_level_data()
+	if level_data.is_empty():
+		return
+
+	var cleave_damage: float = attack_damage * float(level_data.get("aoe_damage_pct", 0.0))
+	if cleave_damage <= 0.0:
+		return
+
+	var radius: int = int(level_data.get("radius", 0))
+	var target_pos: int = target["pos_index"]
+	for enemy in _enemies:
+		if is_same(enemy, target) or _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], target_pos) <= radius:
+			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
+
+
+# ------------------------------------------------------------------
+# Slardar's Bash of the Deep - a passive, so unlike every cast skill
+# above there's no button/cast/mana/cooldown for it. Counts the hero's
+# own plain Attacks toward this level's own attacks_required threshold
+# (same "build a stack, consume it all once the threshold's reached"
+# idiom Tidebringer's own _maybe_consume_tidebringer_stack() uses,
+# just under its own counter rather than a per-enemy one - there's
+# only one hero to track this on), then _apply_hero_attack() itself
+# folds the returned level data's own bonus_damage_pct into that SAME
+# attack's damage (see its own comment) and knocks the target back
+# afterward.
+# ------------------------------------------------------------------
+
+## Bash of the Deep's level data for whatever level the player has it
+## at right now - {} if it isn't learned at all (level 0), the same
+## "empty means locked" convention every other auto-triggered skill's
+## own _get_*_level_data() helper uses.
+func _get_bash_of_the_deep_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("bash_of_the_deep")
+	if level <= 0:
+		return {}
+	for skill in _hero_static.get("skills", []):
+		if skill.get("id", "") == "bash_of_the_deep":
+			return GameManager.get_skill_level_data(skill, level)
+	return {}
+
+
+## Called on every plain hero Attack (see _apply_hero_attack()): builds
+## one stack, or - once this level's own attacks_required is reached -
+## consumes them all and returns the level data for that same Attack to
+## apply its bonus/knockback with. Returns {} (a no-op contribution)
+## every other Attack, and while the skill isn't learned at all.
+func _maybe_consume_bash_of_the_deep_stack() -> Dictionary:
+	var level_data: Dictionary = _get_bash_of_the_deep_level_data()
+	if level_data.is_empty():
+		return {}
+
+	_bash_of_the_deep_attack_count += 1
+	if _bash_of_the_deep_attack_count < int(level_data.get("attacks_required", 1)):
+		return {}
+
+	_bash_of_the_deep_attack_count = 0
+	return level_data
+
+
+## Knocks `target` back this level's own `knockback` columns, away from
+## the hero (his current facing, hero_image.flip_h) - stopping early at
+## the board edge or another enemy already occupying the next column,
+## same rules Walrus Punch's own knockback follows, just without that
+## ultimate's own wall-bonus-damage/stun/animated-slide flourishes
+## (this is a passive proc off a plain Attack, not its own cast).
+## Repositions instantly via _move_enemy(), the same helper regular
+## enemy AI movement already uses.
+func _apply_bash_of_the_deep_knockback(target: Dictionary, level_data: Dictionary) -> void:
+	var knockback_columns: int = int(level_data.get("knockback", 0))
+	var direction: int = -1 if hero_image.flip_h else 1
+	var pos: int = target["pos_index"]
+
+	for i in range(knockback_columns):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if not _get_enemy_at(next_pos).is_empty():
+			break
+		pos = next_pos
+
+	if pos != target["pos_index"]:
+		_move_enemy(target, pos)
+
+
+## The illusion-side equivalent of _apply_bash_of_the_deep_knockback()
+## above, for when the triggering hit actually landed on one of the
+## boss's own illusions instead (see _apply_hero_attack()'s own read of
+## _last_enemy_illusion_redirect). Same movement rule, just repositioning
+## an illusion dict directly instead of going through _move_enemy() -
+## that helper assumes an "static"/is_hero_fight-flavored enemy entry,
+## which an illusion (a plain {pos_index, current_hp, max_hp, node}
+## dict, never added to _enemies) doesn't have.
+func _apply_bash_of_the_deep_illusion_knockback(illusion: Dictionary, level_data: Dictionary) -> void:
+	var knockback_columns: int = int(level_data.get("knockback", 0))
+	var direction: int = -1 if hero_image.flip_h else 1
+	var pos: int = illusion["pos_index"]
+
+	for i in range(knockback_columns):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if not _get_enemy_at(next_pos).is_empty():
+			break
+		pos = next_pos
+
+	if pos != illusion["pos_index"]:
+		illusion["pos_index"] = pos
+		if is_instance_valid(illusion.get("node")):
+			illusion["node"].position = Vector2(_index_to_x(pos), _creature_y())
+
+
+# ------------------------------------------------------------------
 # Crystal Maiden's Arcane Aura - a passive, so unlike every cast skill
 # above there's no button/cast/mana/cooldown for it (see
 # _populate_skill_buttons()'s "passive" branch); it just regenerates
@@ -3312,6 +4516,10 @@ func _tick_freezing_field() -> void:
 			_deal_fixed_damage_to_enemy(enemy, _freezing_field_damage_per_turn)
 			if _battle_over:
 				return
+	# Self-centered on the hero's CURRENT position, same as the check
+	# above - a rival's own illusion (Naga Siren's Mirror Image) can be
+	# in range independently of whether the boss itself currently is.
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, _freezing_field_radius, _freezing_field_damage_per_turn)
 
 	_freezing_field_turns_remaining -= 1
 	if _freezing_field_turns_remaining <= 0:
@@ -3877,6 +5085,12 @@ func _activate_overgrowth(level_data: Dictionary) -> void:
 			enemy["overgrowth_dot_damage"] = dot_damage
 			enemy["overgrowth_dot_turns_left"] = root_duration
 
+	# A rival's own illusion (Naga Siren's Mirror Image) has no root/DoT
+	# of its own to carry the way a regular enemy does above - just a
+	# one-time hit for whatever's caught in the burst, centered on the
+	# hero's own position, same as the check above.
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, dot_damage)
+
 	_show_message_over_hero("Overgrowth!")
 
 
@@ -3966,11 +5180,41 @@ func _apply_root(target: Dictionary, level_data: Dictionary) -> void:
 ## actually consumed, the same "check with the CURRENT value, use it,
 ## decrement after" pattern stun_turns_left already uses in _enemy_turn().
 func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
+	# Lil' Shredder's armor shred and Slardar's Corrosive Haze both
+	# write "armor_reduction" (Corrosive Haze also "corrosive_haze_
+	# bonus_pct", see _deal_fixed_damage_to_enemy()'s own read of it) -
+	# cast during the PLAYER's turn, but only ever ticked here (the
+	# start of THIS enemy's own turn), so the round either was cast in
+	# is never counted against duration for free, no separate "pending
+	# start" flag needed (see _resolve_lil_shredder_cast()'s own
+	# comment). Both share the one counter/expiry, same "reapplying
+	# overwrites the timer" convention every other refreshable debuff in
+	# this file already uses - a rare edge case if both ever land on the
+	# same enemy at once, not worth a second counter for.
+	if enemy.get("armor_reduction_turns_left", 0) > 0:
+		enemy["armor_reduction_turns_left"] -= 1
+		if enemy.get("armor_reduction_turns_left", 0) <= 0:
+			enemy["armor_reduction"] = 0.0
+			enemy["corrosive_haze_bonus_pct"] = 0.0
+
+	# Mortimer Kisses' burn: re-armed (both damage and turns_left) by
+	# every main-hit shot that lands on this enemy (see
+	# _fire_mortimer_kisses_shot()), never by its splash - so "the DoT
+	# duration starts from the first hit" falls out for free here too,
+	# same reasoning the armor shred block above already spells out.
+	if enemy.get("mortimer_burn_dot_turns_left", 0) > 0:
+		enemy["mortimer_burn_dot_turns_left"] -= 1
+		var mortimer_burn_dot: float = float(enemy.get("mortimer_burn_dot_damage", 0))
+		if mortimer_burn_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, mortimer_burn_dot, false, false)
+			if _battle_over or enemy.get("current_hp", 0) <= 0:
+				return
+
 	if enemy.get("entangle_dot_turns_left", 0) > 0:
 		enemy["entangle_dot_turns_left"] -= 1
 		var entangle_dot: float = float(enemy.get("entangle_dot_damage", 0))
 		if entangle_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, entangle_dot)
+			_deal_fixed_damage_to_enemy(enemy, entangle_dot, false, false)
 			if _battle_over or enemy.get("current_hp", 0) <= 0:
 				return
 
@@ -3979,7 +5223,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 			enemy["curse_dot_turns_left"] -= 1
 			var curse_dot: float = float(enemy.get("curse_dot_damage", 0))
 			if curse_dot > 0.0:
-				_deal_fixed_damage_to_enemy(enemy, curse_dot)
+				_deal_fixed_damage_to_enemy(enemy, curse_dot, false, false)
 				if _battle_over or enemy.get("current_hp", 0) <= 0:
 					return
 		if enemy.get("curse_dot_turns_left", 0) <= 0:
@@ -3990,7 +5234,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 		enemy["cold_feet_dot_turns_left"] -= 1
 		var cold_feet_dot: float = float(enemy.get("cold_feet_dot_damage", 0))
 		if cold_feet_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, cold_feet_dot)
+			_deal_fixed_damage_to_enemy(enemy, cold_feet_dot, false, false)
 			if _battle_over or enemy.get("current_hp", 0) <= 0:
 				return
 
@@ -3998,7 +5242,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 		enemy["ice_vortex_dot_turns_left"] -= 1
 		var ice_vortex_dot: float = float(enemy.get("ice_vortex_dot_damage", 0))
 		if ice_vortex_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, ice_vortex_dot)
+			_deal_fixed_damage_to_enemy(enemy, ice_vortex_dot, false, false)
 			if _battle_over or enemy.get("current_hp", 0) <= 0:
 				return
 
@@ -4006,7 +5250,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 		enemy["ice_blast_dot_turns_left"] -= 1
 		var ice_blast_dot: float = float(enemy.get("ice_blast_dot_damage", 0))
 		if ice_blast_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, ice_blast_dot)
+			_deal_fixed_damage_to_enemy(enemy, ice_blast_dot, false, false)
 			if _battle_over or enemy.get("current_hp", 0) <= 0:
 				return
 
@@ -4028,7 +5272,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 		enemy["frostbite_dot_turns_left"] -= 1
 		var frostbite_dot: float = float(enemy.get("frostbite_dot_damage", 0))
 		if frostbite_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, frostbite_dot)
+			_deal_fixed_damage_to_enemy(enemy, frostbite_dot, false, false)
 			if _battle_over or enemy.get("current_hp", 0) <= 0:
 				return
 
@@ -4036,7 +5280,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 		enemy["leech_seed_dot_turns_left"] -= 1
 		var leech_seed_dot: float = float(enemy.get("leech_seed_dot_damage", 0))
 		if leech_seed_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, leech_seed_dot)
+			_deal_fixed_damage_to_enemy(enemy, leech_seed_dot, false, false)
 			if _battle_over:
 				return
 		var leech_seed_heal: float = float(enemy.get("leech_seed_heal_per_turn", 0))
@@ -4049,7 +5293,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 		enemy["overgrowth_dot_turns_left"] -= 1
 		var overgrowth_dot: float = float(enemy.get("overgrowth_dot_damage", 0))
 		if overgrowth_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, overgrowth_dot)
+			_deal_fixed_damage_to_enemy(enemy, overgrowth_dot, false, false)
 
 
 ## The player-side mirror of _tick_enemy_turn_start_effects(): every
@@ -4065,12 +5309,16 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 ## CASTER - the rival - not the player, so this heals the boss directly
 ## via _get_hero_fight_boss() each tick instead of calling heal()), and
 ## Overgrowth's own DoT (its root shares _player_root_turns_left above,
-## the same field Entangle's own root already ticks down). Called once,
-## right where the player's own new turn opens in _end_turn() - before
-## he gets to act. Unlike the enemy-side version, nothing here needs to
-## bail out mid-function on a kill: apply_damage() never frees nodes or
-## changes scenes the way killing an enemy can, so _end_turn() just
-## checks the hero's HP once, right after calling this.
+## the same field Entangle's own root already ticks down), Snapfire's
+## Lil' Shredder armor reduction (a plain countdown, zeroing the
+## reduction itself once it runs out - no damage of its own to deal,
+## just folded into _hero_armor() for as long as it's up), and Mortimer
+## Kisses' own burn DoT. Called once, right where the player's own new
+## turn opens in _end_turn() - before he gets to act. Unlike the
+## enemy-side version, nothing here needs to bail out mid-function on a
+## kill: apply_damage() never frees nodes or changes scenes the way
+## killing an enemy can, so _end_turn() just checks the hero's HP once,
+## right after calling this.
 func _tick_player_turn_start_effects() -> void:
 	if _player_root_turns_left > 0:
 		_player_root_turns_left -= 1
@@ -4139,6 +5387,17 @@ func _tick_player_turn_start_effects() -> void:
 		_player_overgrowth_dot_turns_left -= 1
 		if _player_overgrowth_dot_damage > 0.0:
 			apply_damage(_player_overgrowth_dot_damage)
+
+	if _player_armor_reduction_turns_left > 0:
+		_player_armor_reduction_turns_left -= 1
+		if _player_armor_reduction_turns_left <= 0:
+			_player_armor_reduction = 0.0
+			_player_corrosive_haze_bonus_pct = 0.0
+
+	if _player_mortimer_burn_dot_turns_left > 0:
+		_player_mortimer_burn_dot_turns_left -= 1
+		if _player_mortimer_burn_dot_damage > 0.0:
+			apply_damage(_player_mortimer_burn_dot_damage)
 
 
 ## Whether `enemy` is currently rooted by Entangle and therefore can't
@@ -4384,8 +5643,9 @@ func _activate_cold_embrace(level_data: Dictionary) -> void:
 ## of whose battle it runs in - plus every debuff a rival hero fight
 ## boss could have inflicted (root, silence, Entangle's/Curse of
 ## Avernus's/Cold Feet's/Ice Vortex's/Ice Blast's/Frostbite's/Leech
-## Seed's/Overgrowth's damage-over-time, Ice Blast's execute threshold,
-## Pounce's/Torrent's stun, and a hostile Essence Shift's stat penalty) -
+## Seed's/Overgrowth's/Mortimer Kisses' burn damage-over-time, Ice
+## Blast's execute threshold, Pounce's/Torrent's stun, Lil' Shredder's
+## own armor reduction, and a hostile Essence Shift's stat penalty) -
 ## the same field list _reset_enemy_hero_state() clears fresh for each
 ## new hero fight.
 func _dispel_all_hero_effects() -> void:
@@ -4430,6 +5690,11 @@ func _dispel_all_hero_effects() -> void:
 	_player_leech_seed_dot_turns_left = 0
 	_player_overgrowth_dot_damage = 0.0
 	_player_overgrowth_dot_turns_left = 0
+	_player_armor_reduction = 0.0
+	_player_armor_reduction_turns_left = 0
+	_player_corrosive_haze_bonus_pct = 0.0
+	_player_mortimer_burn_dot_damage = 0.0
+	_player_mortimer_burn_dot_turns_left = 0
 
 	_refresh_bars()
 
@@ -4782,6 +6047,47 @@ func _deal_damage_to_bear(amount: float) -> void:
 		_kill_bear()
 
 
+## Any enemy AoE skill that damages the hero over an area should ALSO
+## independently hit the Spirit Bear if it's standing within that same
+## area - same reasoning as the illusion-side equivalent
+## (_deal_aoe_damage_to_illusions()), just against the single `_bear`
+## dict instead of the `_illusions` array. Unlike that helper, `amount`
+## is passed straight to _deal_damage_to_bear() un-mitigated - the bear
+## has its own armor stat (set at summon time), not the hero's, and
+## that function already mitigates with it internally. A no-op while no
+## bear is out.
+func _deal_aoe_damage_to_bear(center_pos_index: int, radius: int, amount: float) -> void:
+	if not _is_bear_alive() or amount <= 0.0:
+		return
+	if _distance(_bear["pos_index"], center_pos_index) <= radius:
+		_deal_damage_to_bear(amount)
+
+
+## The line-shaped equivalent of _deal_aoe_damage_to_bear() above - for
+## Ghostship's/Timber Chain's own "every column between the caster and
+## the target, inclusive of both ends" line. Same "amount is raw, the
+## bear mitigates it with its own armor" contract.
+func _deal_line_aoe_damage_to_bear(start_pos_index: int, end_pos_index: int, amount: float) -> void:
+	if not _is_bear_alive() or amount <= 0.0:
+		return
+	var start_col: int = mini(start_pos_index, end_pos_index)
+	var end_col: int = maxi(start_pos_index, end_pos_index)
+	var pos: int = _bear["pos_index"]
+	if pos >= start_col and pos <= end_col:
+		_deal_damage_to_bear(amount)
+
+
+## The directional-cone equivalent of the two AoE-shape helpers above -
+## for a rival Scatterblast's own facing-based cone. Same "amount is
+## raw, the bear mitigates it with its own armor" contract.
+func _deal_directional_aoe_damage_to_bear(origin_pos_index: int, direction: int, range_columns: int, amount: float) -> void:
+	if not _is_bear_alive() or amount <= 0.0:
+		return
+	var ahead: int = (_bear["pos_index"] - origin_pos_index) * direction
+	if ahead >= 0 and ahead <= range_columns:
+		_deal_damage_to_bear(amount)
+
+
 ## The bear falls - unlike _kill_enemy(), this never grants XP or
 ## gold, since it's the hero's own summon rather than a foe. Losing it
 ## also costs the hero a chunk of his own HP (see
@@ -4827,7 +6133,10 @@ func _bear_turn() -> void:
 
 	var target: Dictionary = _get_enemy_at(_bear["pos_index"])
 	if not target.is_empty():
-		_deal_fixed_damage_to_enemy(target, _roll_bear_damage())
+		# The bear's own attack, not the hero's - Corrosive Haze's own
+		# bonus (see _deal_fixed_damage_to_enemy()'s own is_hero_action
+		# param) never applies to it.
+		_deal_fixed_damage_to_enemy(target, _roll_bear_damage(), false, false)
 		return
 
 	var nearest: Dictionary = {}
@@ -4910,6 +6219,8 @@ func _tick_skill_cooldowns() -> void:
 	_tick_curse_of_avernus_effects()
 	_tick_reactive_armor_stacks()
 	_tick_chakram()
+	_tick_mirror_image()
+	_tick_guardian_sprint()
 	_tick_enemy_passive_regen()
 
 	if _in_hero_fight:
@@ -4933,6 +6244,8 @@ func _tick_skill_cooldowns() -> void:
 		_tick_enemy_reactive_armor_stacks()
 		_apply_enemy_reactive_armor_regen()
 		_tick_enemy_chakram()
+		_tick_enemy_mirror_image()
+		_tick_enemy_guardian_sprint()
 
 
 # ------------------------------------------------------------------
@@ -5090,6 +6403,10 @@ func _end_aphotic_shield(exploded: bool) -> void:
 			targets.append(enemy)
 	for enemy in targets:
 		_deal_fixed_damage_to_enemy(enemy, aoe_damage)
+	# Self-centered on the hero, same as the check above - a rival's own
+	# illusion (Naga Siren's Mirror Image) can be in range independently
+	# of whether the boss itself currently is.
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, aoe_damage)
 
 	_show_message_over_hero("Shield shattered!")
 
@@ -5285,6 +6602,31 @@ func _end_borrowed_time() -> void:
 func apply_damage(amount: float) -> float:
 	if _cold_embrace_active:
 		return 0.0
+
+	# Slardar's Corrosive Haze: boosts every hit the player takes from the
+	# rival's own attacks/skills by this level's own bonus_damage_pct -
+	# applied to the RAW amount, before armor mitigation and before
+	# Mirror Image's own redirect just below, mirroring
+	# _deal_fixed_damage_to_enemy()'s own "is_hero_action" check (the
+	# mark is about how fragile the PLAYER is, not about whatever ends up
+	# absorbing the hit). 0.0 (a no-op) while nothing has marked him.
+	if _player_corrosive_haze_bonus_pct > 0.0:
+		amount *= (1.0 + _player_corrosive_haze_bonus_pct)
+
+	# Mirror Image: every hit that would otherwise land on the hero, from
+	# ANY source, has a chance to be redirected onto a random surviving
+	# illusion instead - a full redirect, not a split, and completely
+	# bypassing every one of the hero's own defensive mechanics below
+	# (Reactive Armor's stack, Savage Roar, Borrowed Time, Aphotic
+	# Shield) since nothing actually touched him this time. Uses the
+	# hero's own armor for mitigation, same as if he'd taken it himself -
+	# an illusion is a copy of him, not a separate combatant with its
+	# own defense stat.
+	if not _illusions.is_empty() and randf() < _illusion_hit_chance_pct:
+		var illusion: Dictionary = _illusions[randi() % _illusions.size()]
+		var illusion_damage: float = _apply_armor_reduction(amount, _hero_armor())
+		_deal_damage_to_illusion(illusion, illusion_damage)
+		return illusion_damage
 
 	var reduced: float = _apply_armor_reduction(amount, _hero_armor())
 	# Reactive Armor stacks off of this hit landing - added only after
@@ -5614,6 +6956,81 @@ func _ranged_move_target(start: int, direction: int, distance: int) -> int:
 	return pos
 
 
+## Guardian Sprint's own movement rule: walks up to `distance` columns
+## from `start` in `direction`, stopping early at the board edge, a
+## rival's Ice Shards wall, OR - unlike a plain ranged move, and
+## regardless of the hero's own range_type - the first enemy's column
+## along the way, same "stop on top of an enemy" rule
+## _melee_move_target() already uses. Returns both the landing column
+## and whatever enemy it stopped on ({} if it ran the full distance
+## clean), for _hero_move() to deal Guardian Sprint's own charge_damage
+## to.
+func _guardian_sprint_move_target(start: int, direction: int, distance: int) -> Dictionary:
+	var pos: int = start
+	var hit_enemy: Dictionary = {}
+
+	for i in range(distance):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if _is_column_ice_shards_blocked(next_pos):
+			break
+		pos = next_pos
+
+		var enemy_here: Dictionary = _get_enemy_at(pos)
+		if not enemy_here.is_empty():
+			hit_enemy = enemy_here
+			break
+
+	return {"pos": pos, "hit_enemy": hit_enemy}
+
+
+## Activates Guardian Sprint: arms this level's own bonus_movement/
+## charge_damage_pct for `level_data.duration` turns. Doesn't move the
+## hero himself - only _hero_move()'s own read of
+## _guardian_sprint_turns_remaining changes what his NEXT normal moves
+## do. Always "succeeds" - no target or range requirement, same as
+## every other self-cast buff.
+func _activate_guardian_sprint(level_data: Dictionary) -> void:
+	_guardian_sprint_bonus_movement = int(level_data.get("bonus_movement", 0))
+	_guardian_sprint_charge_damage_pct = float(level_data.get("charge_damage_pct", 0.0))
+	_guardian_sprint_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_guardian_sprint()), same as
+	# every other duration-based buff. The bonus itself is already live
+	# the instant this returns, same as Living Armor's own bonus_armor -
+	# only the countdown toward it running out is delayed.
+	_guardian_sprint_duration_pending_start = true
+
+	_show_message_over_hero("Guardian Sprint!")
+
+
+## Ticks Guardian Sprint's duration down once per End Turn, same timing
+## (and same "the casting turn doesn't count" skip) as every other
+## duration-based buff.
+func _tick_guardian_sprint() -> void:
+	if _guardian_sprint_turns_remaining <= 0:
+		return
+
+	if _guardian_sprint_duration_pending_start:
+		_guardian_sprint_duration_pending_start = false
+		return
+
+	_guardian_sprint_turns_remaining -= 1
+	if _guardian_sprint_turns_remaining <= 0:
+		_end_guardian_sprint()
+
+
+## Ends Guardian Sprint once its duration runs out.
+func _end_guardian_sprint() -> void:
+	_guardian_sprint_turns_remaining = 0
+	_guardian_sprint_bonus_movement = 0
+	_guardian_sprint_charge_damage_pct = 0.0
+	_guardian_sprint_duration_pending_start = false
+
+	_show_message_over_hero("Guardian Sprint wears off")
+
+
 func _hero_move(direction: int) -> void:
 	if _battle_over or _has_acted_this_turn:
 		return
@@ -5626,15 +7043,28 @@ func _hero_move(direction: int) -> void:
 		_show_message_over_hero("Encased in ice!")
 		return
 
+	if _mortimer_kisses_active:
+		_show_message_over_hero("Focused on Mortimer Kisses!")
+		return
+
 	if _is_column_enemy_ice_shards_blocked(_hero_pos_index):
 		_show_message_over_hero("Frozen in place!")
 		return
 
 	_cancel_targeting()
 
+	var generation_before: int = _stage_generation
 	var distance: int = _hero_move_distance()
 
-	if _is_ranged_hero():
+	if _guardian_sprint_turns_remaining > 0:
+		distance += _guardian_sprint_bonus_movement
+		var sprint_result: Dictionary = _guardian_sprint_move_target(_hero_pos_index, direction, distance)
+		_hero_pos_index = int(sprint_result["pos"])
+		var charged_enemy: Dictionary = sprint_result["hit_enemy"]
+		if not charged_enemy.is_empty():
+			var charge_damage: float = _roll_hero_damage() * _guardian_sprint_charge_damage_pct
+			_deal_fixed_damage_to_enemy(charged_enemy, charge_damage)
+	elif _is_ranged_hero():
 		_hero_pos_index = _ranged_move_target(_hero_pos_index, direction, distance)
 	else:
 		_hero_pos_index = _melee_move_target(_hero_pos_index, direction, distance)
@@ -5644,6 +7074,15 @@ func _hero_move(direction: int) -> void:
 	hero_image.flip_h = direction < 0
 
 	_update_hero_position()
+
+	# A Guardian Sprint charge landing the killing blow could clear the
+	# stage (or win a hero fight) and move on to a fresh encounter -
+	# same bail-out every skill resolver already uses before spending
+	# the turn, needed here for the first time since this is the first
+	# path through _hero_move() that can ever deal damage.
+	if _battle_over or _stage_generation != generation_before:
+		return
+
 	_mark_turn_used()
 
 
@@ -5676,6 +7115,10 @@ func _on_attack_pressed() -> void:
 
 	if _cold_embrace_active:
 		_show_message_over_hero("Encased in ice!")
+		return
+
+	if _mortimer_kisses_active:
+		_show_message_over_hero("Focused on Mortimer Kisses!")
 		return
 
 	if _is_ranged_hero():
@@ -5868,6 +7311,57 @@ func _start_ghostship_targeting(level_data: Dictionary) -> bool:
 	_targeting_mode = true
 	_targeting_purpose = "ghostship"
 	_pending_ghostship_level_data = level_data
+	_highlight_valid_targets()
+	return true
+
+
+## Slardar's Corrosive Haze target picking: same column-range/highlight
+## mechanism as every other targeted skill above, using this level's
+## own `range` field (4-6 columns, growing with level). Returns false
+## (and shows a message) if nothing is in range.
+func _start_corrosive_haze_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 4))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "corrosive_haze"
+	_pending_corrosive_haze_level_data = level_data
+	_highlight_valid_targets()
+	return true
+
+
+## Naga Siren's Ensnare target picking: same column-range/highlight
+## mechanism as every other targeted skill above, using this level's
+## own `range` field (3-6 columns, growing with level) rather than the
+## hero's normal attack range - Ensnare reaches further than a plain
+## Attack. Returns false (and shows a message) if nothing is in range.
+func _start_ensnare_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = int(level_data.get("range", 3))
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "ensnare"
+	_pending_ensnare_level_data = level_data
 	_highlight_valid_targets()
 	return true
 
@@ -6112,6 +7606,33 @@ func _start_crystal_nova_targeting(level_data: Dictionary) -> bool:
 	return true
 
 
+## Snapfire's Lil' Shredder target picking: same "normal attack range"
+## gate (_hero_attack_column_range()) every other attack-range targeted
+## skill above uses - Lil' Shredder is a volley of shots at ONE marked
+## target, not an extended-range skill of its own, so it shares the
+## plain Attack's own reach rather than a level-specific `range` field.
+## Returns false (and shows a message) if nothing is in range.
+func _start_lil_shredder_targeting(level_data: Dictionary) -> bool:
+	_cancel_targeting()
+
+	var col_range: int = _hero_attack_column_range()
+	for enemy in _enemies:
+		if _is_target_hidden(enemy):
+			continue
+		if _distance(enemy["pos_index"], _hero_pos_index) <= col_range:
+			_valid_targets.append(enemy)
+
+	if _valid_targets.is_empty():
+		_show_message_over_hero("No enemy in range")
+		return false
+
+	_targeting_mode = true
+	_targeting_purpose = "lil_shredder"
+	_pending_lil_shredder_level_data = level_data
+	_highlight_valid_targets()
+	return true
+
+
 ## Crystal Maiden's Frostbite target picking: same column-range/
 ## highlight mechanism as every other "normal attack range" targeted
 ## skill above (_hero_attack_column_range()). Returns false (and shows
@@ -6335,8 +7856,12 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	var torrent_level_data: Dictionary = _pending_torrent_level_data
 	var xmarks_level_data: Dictionary = _pending_xmarks_level_data
 	var ghostship_level_data: Dictionary = _pending_ghostship_level_data
+	var corrosive_haze_level_data: Dictionary = _pending_corrosive_haze_level_data
+	var ensnare_level_data: Dictionary = _pending_ensnare_level_data
 	var timber_chain_level_data: Dictionary = _pending_timber_chain_level_data
 	var chakram_level_data: Dictionary = _pending_chakram_level_data
+	var lil_shredder_level_data: Dictionary = _pending_lil_shredder_level_data
+	var mortimer_kisses_level_data: Dictionary = _pending_mortimer_kisses_level_data
 	var cold_feet_level_data: Dictionary = _pending_cold_feet_level_data
 	var ice_vortex_level_data: Dictionary = _pending_ice_vortex_level_data
 	var chilling_touch_level_data: Dictionary = _pending_chilling_touch_level_data
@@ -6361,10 +7886,18 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		_resolve_xmarks_cast(enemy, xmarks_level_data)
 	elif purpose == "ghostship":
 		_resolve_ghostship_cast(enemy, ghostship_level_data)
+	elif purpose == "corrosive_haze":
+		_resolve_corrosive_haze_cast(enemy, corrosive_haze_level_data)
+	elif purpose == "ensnare":
+		_resolve_ensnare_cast(enemy, ensnare_level_data)
 	elif purpose == "timber_chain":
 		_resolve_timber_chain_cast(enemy, timber_chain_level_data)
 	elif purpose == "chakram":
 		_resolve_chakram_cast(enemy, chakram_level_data)
+	elif purpose == "lil_shredder":
+		_resolve_lil_shredder_cast(enemy, lil_shredder_level_data)
+	elif purpose == "mortimer_kisses":
+		_resolve_mortimer_kisses_cast(enemy, mortimer_kisses_level_data)
 	elif purpose == "cold_feet":
 		_resolve_cold_feet_cast(enemy, cold_feet_level_data)
 	elif purpose == "ice_vortex":
@@ -6430,8 +7963,19 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# total), same as Shadow Dance's own one-shot bonus above.
 	var tidebringer_level_data: Dictionary = _maybe_consume_tidebringer_stack()
 	var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
+	# Bash of the Deep counts this Attack toward its own threshold too,
+	# same idea as Tidebringer's stack just above - once reached, this
+	# hit's own damage is boosted by a PERCENTAGE of itself (folded in
+	# below, after the roll - unlike Tidebringer's flat pre-roll bonus),
+	# and the target gets knocked back afterward (see
+	# _apply_bash_of_the_deep_knockback(), called once the target's
+	# final position actually matters again, after every cleave above
+	# that reads it has already resolved).
+	var bash_level_data: Dictionary = _maybe_consume_bash_of_the_deep_stack()
 
 	var attack_damage: float = _roll_hero_damage(shadow_dance_bonus + tidebringer_bonus)
+	if not bash_level_data.is_empty():
+		attack_damage += attack_damage * float(bash_level_data.get("bonus_damage_pct", 0.0))
 	var mitigated_damage: float = _deal_fixed_damage_to_enemy(target, attack_damage)
 	_apply_essence_shift_steal(target)
 	# Arctic Burn's bonus_damage is already folded into the roll above
@@ -6458,6 +8002,29 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# Tidebringer's: both can splash off the same Attack if the player
 	# has both.
 	_apply_cleaver_cleave(target, attack_damage)
+
+	# Rip Tide's own AoE splash - a no-op unless the skill is learned
+	# (see _apply_rip_tide_cleave()'s own gate). Independent of and
+	# stacks with Tidebringer's/Cleaver's above.
+	_apply_rip_tide_cleave(target, attack_damage)
+
+	# Bash of the Deep's own knockback - after every cleave above that
+	# reads target["pos_index"] as ITS OWN splash center, so none of
+	# them end up centered on where the target gets shoved to instead
+	# of where it actually stood when hit. A no-op unless this attack
+	# is the one that triggered the stack (see
+	# _maybe_consume_bash_of_the_deep_stack()). If the hit actually
+	# landed on one of the boss's own illusions instead of the boss
+	# itself (Naga Siren's Mirror Image redirect, see
+	# _deal_fixed_damage_to_enemy()'s own comment), knock THAT back
+	# instead - "target" never took the hit at all this time, so
+	# shoving it would move something the attack never touched.
+	if not bash_level_data.is_empty():
+		if not _last_enemy_illusion_redirect.is_empty():
+			if _last_enemy_illusion_redirect.get("current_hp", 0) > 0:
+				_apply_bash_of_the_deep_illusion_knockback(_last_enemy_illusion_redirect, bash_level_data)
+		elif target.get("current_hp", 0) > 0:
+			_apply_bash_of_the_deep_knockback(target, bash_level_data)
 
 	if shadow_dance_bonus > 0.0:
 		_end_shadow_dance()
@@ -6507,11 +8074,61 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## `is_critical` just forwards to _show_damage_number()'s own bigger-
 ## and-golden-with-a-"!" treatment (see Walrus Punch's own
 ## _resolve_walrus_punch_cast()) - it has no effect on the damage math
-## itself, only how the number reads.
-func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical: bool = false) -> float:
-	var enemy_armor: float = float(target["static"].get("armor", 0)) + _enemy_hero_bonus_armor(target)
-	var mitigated: float = _apply_armor_reduction(amount, enemy_armor)
+## itself, only how the number reads. `is_hero_action` gates Slardar's
+## own Corrosive Haze bonus (see below) - true for every hero attack/
+## skill call site (the overwhelming majority, so it defaults true),
+## false only at the handful of calls that AREN'T the hero's own doing:
+## a DoT tick (_tick_enemy_turn_start_effects()), the Spirit Bear's own
+## attack (_bear_turn()), and another creep piling onto a Winter's
+## Curse target (_enemy_turn()'s own curse redirect).
+func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical: bool = false, is_hero_action: bool = true) -> float:
+	# Slardar's Corrosive Haze: boosts every hit THIS specific marked
+	# target takes from the hero's own attacks/skills by this level's
+	# own bonus_damage_pct - applied to the RAW amount, before armor
+	# mitigation and before Mirror Image's own redirect just below, so
+	# a hit that ends up landing on one of the boss's own illusions
+	# instead still carries the mark's bonus (the mark is about how
+	# fragile the TARGET is, not about whatever ends up absorbing the
+	# hit).
+	if is_hero_action:
+		var vulnerability_pct: float = float(target.get("corrosive_haze_bonus_pct", 0.0))
+		if vulnerability_pct > 0.0:
+			amount *= (1.0 + vulnerability_pct)
+
 	var is_boss: bool = target["static"].get("is_hero_fight_boss", false)
+
+	# Reset on every call, whoever it's for - _apply_hero_attack() reads
+	# this right after its own call here to tell "the boss actually took
+	# it" apart from "it got redirected onto an illusion instead" (see
+	# that function's own Bash of the Deep knockback comment), so a
+	# stale value from some EARLIER, unrelated call must never survive
+	# to be misread as this one's outcome.
+	_last_enemy_illusion_redirect = {}
+
+	# Naga Siren's Mirror Image, cast by the rival - every hit that would
+	# otherwise land on the boss has a chance to be redirected onto a
+	# random surviving illusion instead, mirroring the player's own
+	# apply_damage() redirect (see that function's own comment) - a full
+	# redirect, not a split, bypassing Reactive Armor's stack/Savage
+	# Roar/Borrowed Time/Aphotic Shield since nothing actually touched
+	# the boss this time. Uses the boss's own armor for mitigation, same
+	# as if it had taken the hit itself.
+	if is_boss and not _enemy_illusions.is_empty() and randf() < _enemy_illusion_hit_chance_pct:
+		var illusion: Dictionary = _enemy_illusions[randi() % _enemy_illusions.size()]
+		var illusion_damage: float = _apply_armor_reduction(amount, _enemy_hero_effective_armor(target))
+		_deal_damage_to_enemy_illusion(illusion, illusion_damage, is_critical)
+		_last_enemy_illusion_redirect = illusion
+		return illusion_damage
+
+	# Snapfire's Lil' Shredder is the only thing that ever writes
+	# "armor_reduction" (see _resolve_lil_shredder_cast()/
+	# _tick_enemy_turn_start_effects()'s own revert) - a per-INSTANCE
+	# runtime field on this one spawned enemy, never on target["static"]
+	# itself, since that dictionary can be shared across every enemy
+	# spawned from the same zone template (mutating it would debuff
+	# every enemy of that type, not just this one).
+	var enemy_armor: float = float(target["static"].get("armor", 0)) + _enemy_hero_bonus_armor(target) - float(target.get("armor_reduction", 0.0))
+	var mitigated: float = _apply_armor_reduction(amount, enemy_armor)
 	if is_boss:
 		mitigated *= (1.0 - _enemy_savage_roar_damage_reduction_pct)
 
@@ -6963,6 +8580,12 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_reactive_armor_stack_turns = []
 	_despawn_enemy_chakram()
 
+	_enemy_mortimer_kisses_active = false
+	_enemy_mortimer_kisses_turns_left = 0
+	_enemy_mortimer_kisses_level_data = {}
+
+	_end_enemy_mirror_image()
+
 	var stats: Dictionary = hero_static.get("stats", {})
 	_enemy_max_mana = float(stats.get("mana", 0))
 	_enemy_current_mana = _enemy_max_mana
@@ -6996,6 +8619,14 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_player_leech_seed_dot_turns_left = 0
 	_player_overgrowth_dot_damage = 0.0
 	_player_overgrowth_dot_turns_left = 0
+	_player_armor_reduction = 0.0
+	_player_armor_reduction_turns_left = 0
+	_player_corrosive_haze_bonus_pct = 0.0
+	_player_mortimer_burn_dot_damage = 0.0
+	_player_mortimer_burn_dot_turns_left = 0
+
+	_end_enemy_guardian_sprint()
+	_enemy_bash_of_the_deep_attack_count = 0
 
 
 func _update_stage_label() -> void:
@@ -7111,6 +8742,39 @@ func _end_turn() -> void:
 	# active - same timing/stacking relationship as Arcane Aura's and
 	# the baseline regen above.
 	_apply_reactive_armor_regen()
+
+	# Mortimer Kisses' channel: the hero's new turn is opening right
+	# here, same point X Marks the Spot's own teleport claims for free
+	# above - except this doesn't just do something for free, it
+	# consumes the ENTIRE turn on an automatic shot, same as a stunned/
+	# Cold-Embraced turn being skipped below, just with a shot fired
+	# instead of nothing happening. Never falls through to the normal
+	# "reopen the action buttons" code beneath it while a shot remains -
+	# only once _fire_mortimer_kisses_shot() has fired the LAST one
+	# (_end_mortimer_kisses() clears _mortimer_kisses_active) does
+	# control reach the ordinary turn-opening logic below, exactly as if
+	# the channel had never been active this turn.
+	if _mortimer_kisses_active:
+		var generation_before: int = _stage_generation
+		_fire_mortimer_kisses_shot()
+		_mortimer_kisses_turns_left -= 1
+		if _mortimer_kisses_turns_left <= 0:
+			_end_mortimer_kisses()
+
+		# A kill from that shot (or its splash) could have cleared the
+		# stage/won a hero fight and moved on to a fresh encounter -
+		# same bail-out reasoning _end_turn()'s own top-of-function
+		# comment already gives for the general case: scheduling
+		# another _end_turn() timer here would fire after this node (or
+		# this fight's own state) has already moved on.
+		if _battle_over or _stage_generation != generation_before:
+			return
+
+		if _mortimer_kisses_active:
+			_has_acted_this_turn = true
+			_update_action_buttons()
+			get_tree().create_timer(0.9).timeout.connect(_end_turn)
+			return
 
 	_has_acted_this_turn = false
 	_update_action_buttons()
@@ -7252,7 +8916,9 @@ func _enemy_turn() -> void:
 			if enemy_type == "range":
 				if _distance(enemy["pos_index"], curse_target_pos) <= RANGE_ENEMY_ATTACK_RANGE:
 					_play_enemy_attack_lunge(enemy)
-					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
+					# Another creep's own attack, not the hero's - Corrosive
+					# Haze's own bonus never applies to it.
+					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier, false, false)
 				elif not rooted:
 					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
 					var next_pos: int = enemy["pos_index"] + step
@@ -7261,7 +8927,8 @@ func _enemy_turn() -> void:
 			elif enemy_type == "mele":
 				if enemy["pos_index"] == curse_target_pos:
 					_play_enemy_attack_lunge(enemy)
-					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier)
+					# Same reasoning as the ranged branch above.
+					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier, false, false)
 				elif not rooted:
 					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
 					var next_pos: int = enemy["pos_index"] + step
@@ -7381,6 +9048,19 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 	if _enemy_cold_embrace_active:
 		return
 
+	# Mortimer Kisses' channel: consumes this ENTIRE turn on an automatic
+	# shot instead of the normal potion/skill/attack/move decision below
+	# - no move, no attack, no other skill, no item, mirroring the
+	# player's own copy (_end_turn()'s own "the hero's new turn is
+	# opening right here" tail). Never falls through to anything else
+	# below while a shot remains.
+	if _enemy_mortimer_kisses_active:
+		_fire_enemy_mortimer_kisses_shot()
+		_enemy_mortimer_kisses_turns_left -= 1
+		if _enemy_mortimer_kisses_turns_left <= 0:
+			_end_enemy_mortimer_kisses()
+		return
+
 	# If X Marks the Spot marked the player last turn, this is the
 	# rival's own "next turn" - teleport now, for free, then fall
 	# straight through to everything below so it can still act (skill,
@@ -7427,7 +9107,7 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 		if skill_id != "":
 			_cast_enemy_skill(enemy, skill_id)
 			return
-		elif _enemy_has_unaffordable_ready_skill(enemy_type, hero_distance) and _enemy_potion_mana_count > 0:
+		elif _enemy_has_unaffordable_ready_skill(enemy_type, hero_distance, enemy) and _enemy_potion_mana_count > 0:
 			_drink_enemy_mana_potion()
 			return
 
@@ -7449,9 +9129,23 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 	if not hero_hidden and not rooted:
 		var step: int = _step_toward(enemy["pos_index"], _hero_pos_index)
 		if step != 0:
-			var next_pos: int = enemy["pos_index"] + step
-			if not _is_column_ice_shards_blocked(next_pos):
-				_move_enemy(enemy, next_pos)
+			# Slardar's Guardian Sprint boosts this same fallback move,
+			# same "changes what the NEXT normal move does" shape the
+			# player's own copy has in _hero_move() - a no-op walk of 1
+			# column, same as every other enemy, while it isn't active.
+			if _enemy_guardian_sprint_turns_remaining > 0:
+				var sprint_distance: int = 1 + _enemy_guardian_sprint_bonus_movement
+				var sprint_result: Dictionary = _enemy_guardian_sprint_move_target(enemy["pos_index"], step, sprint_distance)
+				var landing_pos: int = int(sprint_result["pos"])
+				if landing_pos != enemy["pos_index"]:
+					_move_enemy(enemy, landing_pos)
+				if bool(sprint_result["hit_player"]):
+					var charge_damage: float = _roll_enemy_hero_damage(enemy) * _enemy_guardian_sprint_charge_damage_pct
+					apply_damage(charge_damage)
+			else:
+				var next_pos: int = enemy["pos_index"] + step
+				if not _is_column_ice_shards_blocked(next_pos):
+					_move_enemy(enemy, next_pos)
 
 
 ## Heals the boss for the Health Potion's own flat value (same item
@@ -7505,7 +9199,18 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	var attacking_from_enemy_natures_guise: bool = _enemy_natures_guise_active
 	var tidebringer_level_data: Dictionary = _maybe_consume_enemy_tidebringer_stack()
 	var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
-	var mitigated: float = apply_damage(_roll_enemy_hero_damage(enemy, shadow_bonus + tidebringer_bonus))
+	# Bash of the Deep counts this Attack toward its own threshold too,
+	# same idea as Tidebringer's stack just above - once reached, this
+	# hit's own damage is boosted by a PERCENTAGE of itself (folded in
+	# below, after the roll - unlike Tidebringer's flat pre-roll bonus),
+	# and the player gets knocked back afterward (see
+	# _apply_enemy_bash_of_the_deep_knockback(), called once apply_
+	# damage() has already resolved).
+	var bash_level_data: Dictionary = _maybe_consume_enemy_bash_of_the_deep_stack()
+	var attack_damage: float = _roll_enemy_hero_damage(enemy, shadow_bonus + tidebringer_bonus)
+	if not bash_level_data.is_empty():
+		attack_damage += attack_damage * float(bash_level_data.get("bonus_damage_pct", 0.0))
+	var mitigated: float = apply_damage(attack_damage)
 
 	_apply_enemy_essence_shift_steal()
 	_apply_enemy_spirit_link_lifesteal(enemy, mitigated)
@@ -7518,6 +9223,15 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 		# cleave has nothing else to reach; only its bonus damage
 		# (already folded into the roll above) applies.
 		_show_message_over_hero("Tidebringer!")
+
+	# Bash of the Deep's own knockback - after essence shift/lifesteal/
+	# curse of avernus above, same "resolve every OTHER effect of the hit
+	# before shoving the target somewhere else" ordering
+	# _apply_hero_attack()'s own player-side copy follows. A no-op unless
+	# this attack is the one that triggered the stack, and only if the
+	# player actually survived it.
+	if not bash_level_data.is_empty() and _recruited.get("current_hp", 0) > 0:
+		_apply_enemy_bash_of_the_deep_knockback(enemy, bash_level_data)
 
 	if _enemy_shadow_dance_active and shadow_bonus > 0.0:
 		_end_enemy_shadow_dance()
@@ -7648,6 +9362,12 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			# damage/healing back to full, no extra total value over
 			# letting the existing one run its course.
 			return _player_leech_seed_dot_turns_left <= 0
+		"mortimer_kisses":
+			# Purely defensive/documentation consistency, mirroring Cold
+			# Embrace's own case above - _enemy_hero_turn()'s own top-of-
+			# function lockout already returns before this could ever be
+			# QUERIED while the channel is active in practice.
+			return not _enemy_mortimer_kisses_active
 		_:
 			return true
 
@@ -7661,7 +9381,10 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 ## the other four checks. `ignore_range` is only ever true for that
 ## combo-readiness question - the real candidate loop below always
 ## leaves it false, so nothing here changes for any existing hero.
-func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: int, ignore_range: bool = false) -> bool:
+## `enemy` is only ever read by _enemy_skill_in_range()'s own
+## Scatterblast special-case (its own facing/position, for the
+## directional check) - every other skill's range check ignores it.
+func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: int, enemy: Dictionary, ignore_range: bool = false) -> bool:
 	if PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id) <= 0:
 		return false
 	if _enemy_skill_cooldowns.get(skill_id, 0) > 0:
@@ -7671,7 +9394,7 @@ func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: 
 	var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 	if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
 		return false
-	if not ignore_range and not _enemy_skill_in_range(skill_id, enemy_type, hero_distance):
+	if not ignore_range and not _enemy_skill_in_range(skill_id, enemy_type, hero_distance, enemy):
 		return false
 	return true
 
@@ -7702,7 +9425,7 @@ func _pick_enemy_ready_skill(enemy: Dictionary, enemy_type: String, hero_distanc
 	var candidates: Array = []
 
 	for skill_id in ENEMY_KNOWN_SKILL_IDS:
-		if not _is_enemy_skill_ready(skill_id, enemy_type, hero_distance):
+		if not _is_enemy_skill_ready(skill_id, enemy_type, hero_distance, enemy):
 			continue
 		var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 		candidates.append({"id": skill_id, "score": EnemySkillAI.evaluate_skill(skill_id, level_data, context)})
@@ -7722,7 +9445,7 @@ func _pick_enemy_ready_skill(enemy: Dictionary, enemy_type: String, hero_distanc
 ## checked once _pick_enemy_ready_skill() has already come up empty, so
 ## this only needs to explain WHY it came up empty (mana, specifically)
 ## rather than re-picking anything.
-func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int) -> bool:
+func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int, enemy: Dictionary) -> bool:
 	for skill_id in ENEMY_KNOWN_SKILL_IDS:
 		if PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id) <= 0:
 			continue
@@ -7730,7 +9453,7 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int)
 			continue
 		if not _enemy_skill_worth_casting(skill_id):
 			continue
-		if not _enemy_skill_in_range(skill_id, enemy_type, hero_distance):
+		if not _enemy_skill_in_range(skill_id, enemy_type, hero_distance, enemy):
 			continue
 		var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 		if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
@@ -7814,6 +9537,56 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int)
 ##     modifier()) for its own qualitative "a hero was hit" value;
 ##     EnemyHeroManager's own _build_npc_ai_context() reports false
 ##     instead, since the simulation's own targets are always creeps.
+##   - target_armor: the player's own current _hero_armor() (already
+##     folding in every buff/debuff currently on him, Lil' Shredder's own
+##     armor reduction included) - for Snapfire's own Lil' Shredder (see
+##     EnemySkillAI's own _snapfire_lil_shredder_modifier()), which
+##     values shredding a heavily-armored target more than a lightly-
+##     armored one. EnemyHeroManager's own _build_npc_ai_context() reads
+##     a creep target's own static armor instead, since the simulation
+##     has no per-turn buff/debuff armor system of its own.
+##   - illusions_active/illusion_count/illusion_turns_remaining/illusion_
+##     total_damage_per_turn: Naga Siren's own Mirror Image, live off
+##     _enemy_illusions - for EnemySkillAI's own _naga_mirror_image_
+##     modifier()/_naga_ensnare_modifier()/_naga_song_of_the_siren_
+##     modifier()/_naga_basic_attack_modifier(), all of which read this
+##     turn's illusion state to score their own Mirror Image synergy (see
+##     each one's own docstring). illusion_total_damage_per_turn is the
+##     WHOLE squad's own expected hit next turn (_roll_enemy_hero_damage()
+##     x _enemy_illusion_damage_pct x illusion count), not a per-illusion
+##     figure, so callers never have to re-multiply by illusion_count
+##     themselves.
+##   - rip_tide_illusion_damage_bonus_pct/rip_tide_extra_illusion/rip_
+##     tide_illusion_duration_bonus/rip_tide_aoe_damage_pct: Naga Siren's
+##     own Rip Tide, read fresh off _get_enemy_rip_tide_level_data() -
+##     Rip Tide is passive and never itself a scored candidate (see
+##     EnemySkillAI's own header comment), so its bonuses only ever reach
+##     Mirror Image/Song of the Siren/a plain Attack through these four
+##     fields. All 0/0.0 while the rival hasn't learned it.
+##   - hero_move_distance: the rival's own baseline per-turn movement (1 -
+##     every enemy always takes exactly one column per turn, see
+##     _hero_move_distance()'s own header comment) before Guardian
+##     Sprint's own bonus - for Slardar's own reach math.
+##   - sprint_bonus_movement/sprint_charge_damage_pct: Guardian Sprint's
+##     CURRENT level, read fresh off _get_enemy_skill_level_data() - 0/0.0
+##     while unlearned. Guardian Sprint is scored as a candidate only on
+##     the turn it's actually cast, so other skills (Corrosive Haze's own
+##     reach check, a plain Attack's own knockback-wash check) need these
+##     independently of whatever Sprint itself is being scored with.
+##   - bash_attacks_required/bash_current_progress/bash_bonus_damage_pct/
+##     bash_knockback: Slardar's own Bash of the Deep, read fresh off
+##     _get_enemy_bash_of_the_deep_level_data()/_enemy_bash_of_the_deep_
+##     attack_count - passive and never itself a scored candidate (see
+##     EnemySkillAI's own header comment), so its progression only ever
+##     reaches Guardian Sprint/Slithereen Crush/Corrosive Haze/a plain
+##     Attack through these fields. All 0/0.0 while unlearned.
+##   - crush_radius/crush_damage: Slithereen Crush's CURRENT level, read
+##     fresh off _get_enemy_skill_level_data() - for Guardian Sprint's/
+##     Corrosive Haze's own combo bonuses, same reasoning as Sprint's own
+##     fields above.
+##   - target_marked_bonus_pct: whether the player is CURRENTLY Corrosive
+##     Haze-marked, and by how much (_player_corrosive_haze_bonus_pct) -
+##     for a plain Attack's own synergy bonus.
 func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distance: int) -> Dictionary:
 	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 	var current_hp: float = float(enemy.get("current_hp", 0.0))
@@ -7843,8 +9616,8 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 		"tidebringer_ready": tidebringer_ready,
 		"tidebringer_bonus_damage": float(tidebringer_level_data.get("bonus_damage", 0.0)),
 		"tidebringer_cleave_targets": 0,
-		"kunkka_torrent_combo_ready": _is_enemy_skill_ready("torrent", enemy_type, hero_distance, true),
-		"kunkka_ghostship_combo_ready": _is_enemy_skill_ready("ghostship", enemy_type, hero_distance, true),
+		"kunkka_torrent_combo_ready": _is_enemy_skill_ready("torrent", enemy_type, hero_distance, enemy, true),
+		"kunkka_ghostship_combo_ready": _is_enemy_skill_ready("ghostship", enemy_type, hero_distance, enemy, true),
 		"in_attack_range_now": hero_distance <= base_attack_range,
 		"in_attack_range_with_arctic_burn_bonus": hero_distance <= (base_attack_range + _enemy_arctic_burn_bonus_range),
 		"arctic_burn_active": _enemy_arctic_burn_active,
@@ -7858,6 +9631,25 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 		"reactive_armor_stacks": _enemy_reactive_armor_stack_turns.size(),
 		"reactive_armor_max_stacks": int(_get_enemy_reactive_armor_level_data().get("max_stacks", 0)),
 		"target_is_hero": true,
+		"target_armor": _hero_armor(),
+		"illusions_active": not _enemy_illusions.is_empty(),
+		"illusion_count": _enemy_illusions.size(),
+		"illusion_turns_remaining": _enemy_illusions_turns_remaining,
+		"illusion_total_damage_per_turn": _roll_enemy_hero_damage(enemy) * _enemy_illusion_damage_pct * float(_enemy_illusions.size()),
+		"rip_tide_illusion_damage_bonus_pct": float(_get_enemy_rip_tide_level_data().get("illusion_damage_bonus_pct", 0.0)),
+		"rip_tide_extra_illusion": int(_get_enemy_rip_tide_level_data().get("extra_illusion", 0)),
+		"rip_tide_illusion_duration_bonus": int(_get_enemy_rip_tide_level_data().get("illusion_duration_bonus", 0)),
+		"rip_tide_aoe_damage_pct": float(_get_enemy_rip_tide_level_data().get("aoe_damage_pct", 0.0)),
+		"hero_move_distance": 1,
+		"sprint_bonus_movement": int(_get_enemy_skill_level_data("guardian_sprint").get("bonus_movement", 0)),
+		"sprint_charge_damage_pct": float(_get_enemy_skill_level_data("guardian_sprint").get("charge_damage_pct", 0.0)),
+		"bash_attacks_required": int(_get_enemy_bash_of_the_deep_level_data().get("attacks_required", 0)),
+		"bash_current_progress": _enemy_bash_of_the_deep_attack_count,
+		"bash_bonus_damage_pct": float(_get_enemy_bash_of_the_deep_level_data().get("bonus_damage_pct", 0.0)),
+		"bash_knockback": int(_get_enemy_bash_of_the_deep_level_data().get("knockback", 0)),
+		"crush_radius": int(_get_enemy_skill_level_data("slithereen_crush").get("radius", 0)),
+		"crush_damage": float(_get_enemy_skill_level_data("slithereen_crush").get("damage", 0.0)),
+		"target_marked_bonus_pct": _player_corrosive_haze_bonus_pct,
 	}
 
 
@@ -7887,13 +9679,32 @@ func _enemy_has_harmful_debuff(enemy: Dictionary) -> bool:
 
 ## True if a rival hero of `enemy_type`, `hero_distance` columns from
 ## the player, can currently reach the player with `skill_id` - see
-## EnemySkillRange for which skills need this check and why.
-func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: int) -> bool:
+## EnemySkillRange for which skills need this check and why. `enemy` is
+## only ever read by the Scatterblast special-case below (its own
+## position/facing, for the directional check) - every other skill's
+## check below ignores it entirely, same as EnemySkillRange.is_in_range()
+## itself.
+func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: int, enemy: Dictionary) -> bool:
 	if not EnemySkillRange.requires_range_check(skill_id):
 		return true
 
 	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
 	var level_data: Dictionary = GameManager.get_skill_level_data(_find_enemy_skill(skill_id), level)
+
+	if skill_id == "scatterblast":
+		# Directional, not a plain "distance <= radius/attack_range"
+		# check - mirrors the player's own _cast_scatterblast()'s "ahead"
+		# math exactly: only in range if the player is ahead of the
+		# rival in whichever direction it's CURRENTLY facing
+		# (enemy["node"].flip_h, kept up to date by _move_enemy()), never
+		# behind or on the wrong side of a shared column. See
+		# EnemySkillRange's own header comment for why this never
+		# reaches its generic is_in_range() chain at all.
+		var range_columns: int = int(level_data.get("range", 0))
+		var direction: int = -1 if bool(enemy["node"].flip_h) else 1
+		var ahead: int = (_hero_pos_index - int(enemy["pos_index"])) * direction
+		return ahead >= 0 and ahead <= range_columns
+
 	# Torrent's/X Marks the Spot's/Ghostship's/Cold Feet's own targeting
 	# range lives in a "range" field rather than "radius" (Torrent's
 	# separate, level-4-only splash radius); Pounce's own leap reach
@@ -7988,6 +9799,26 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 			_cast_enemy_timber_chain(enemy, level_data)
 		"chakram":
 			_cast_enemy_chakram(enemy, level_data)
+		"scatterblast":
+			_cast_enemy_scatterblast(enemy, level_data)
+		"firesnap_cookie":
+			_cast_enemy_firesnap_cookie(enemy, level_data)
+		"lil_shredder":
+			_cast_enemy_lil_shredder(enemy, level_data)
+		"mortimer_kisses":
+			_cast_enemy_mortimer_kisses(level_data)
+		"mirror_image":
+			_cast_enemy_mirror_image(enemy, level_data)
+		"ensnare":
+			_cast_enemy_ensnare(level_data)
+		"song_of_the_siren":
+			_cast_enemy_song_of_the_siren(enemy, level_data)
+		"guardian_sprint":
+			_cast_enemy_guardian_sprint(level_data)
+		"slithereen_crush":
+			_cast_enemy_slithereen_crush(enemy, level_data)
+		"corrosive_haze":
+			_cast_enemy_corrosive_haze(level_data)
 
 	# Shadow Dance/Nature's Guise only break from casting ANOTHER skill
 	# (or attacking, handled separately in _resolve_enemy_hero_attack()),
@@ -8108,7 +9939,13 @@ func _shake_screen() -> void:
 ## the player is guaranteed to be in range.
 func _cast_enemy_dark_pact(enemy: Dictionary, level_data: Dictionary) -> void:
 	var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
-	apply_damage(_roll_enemy_hero_damage(enemy) * multiplier)
+	var pact_damage: float = _roll_enemy_hero_damage(enemy) * multiplier
+	apply_damage(pact_damage)
+	# Dark Pact is centered on the CASTER's own column, not the
+	# player's - an illusion standing near the rival (not necessarily
+	# near the hero) can still be caught in it.
+	_deal_aoe_damage_to_illusions(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage)
+	_deal_aoe_damage_to_bear(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage)
 
 
 func _cast_enemy_pounce(enemy: Dictionary, level_data: Dictionary) -> void:
@@ -8552,6 +10389,8 @@ func _tick_enemy_aphotic_shield() -> void:
 ## simplification for a rival hero (see _cast_enemy_dark_pact()).
 func _end_enemy_aphotic_shield(exploded: bool) -> void:
 	var aoe_damage: float = _enemy_aphotic_shield_aoe_damage
+	var radius: int = _enemy_aphotic_shield_radius
+	var boss: Dictionary = _get_hero_fight_boss()
 
 	_enemy_aphotic_shield_active = false
 	_enemy_aphotic_shield_hp = 0.0
@@ -8562,6 +10401,12 @@ func _end_enemy_aphotic_shield(exploded: bool) -> void:
 
 	if exploded and not _is_hero_hidden():
 		apply_damage(aoe_damage)
+		# The explosion is centered on the boss's own column, not the
+		# player's - an illusion standing near him can still be caught
+		# in it.
+		if not boss.is_empty():
+			_deal_aoe_damage_to_illusions(boss["pos_index"], radius, aoe_damage)
+			_deal_aoe_damage_to_bear(boss["pos_index"], radius, aoe_damage)
 
 
 # ------------------------------------------------------------------
@@ -8574,7 +10419,14 @@ func _end_enemy_aphotic_shield(exploded: bool) -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_torrent(level_data: Dictionary) -> void:
-	apply_damage(float(level_data.get("damage", 0)))
+	var damage: float = float(level_data.get("damage", 0))
+	apply_damage(damage)
+	# Torrent's own splash radius is centered on the impact point (the
+	# player, the only possible target here) - an illusion near the
+	# player can still be caught in it even though the single-hit
+	# simplification above skips it for other creeps.
+	_deal_aoe_damage_to_illusions(_hero_pos_index, int(level_data.get("radius", 0)), damage)
+	_deal_aoe_damage_to_bear(_hero_pos_index, int(level_data.get("radius", 0)), damage)
 	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 	_show_message_over_hero("Stunned!")
 
@@ -8640,7 +10492,14 @@ func _cast_enemy_xmarks() -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_ghostship(enemy: Dictionary, level_data: Dictionary) -> void:
-	apply_damage(float(level_data.get("damage", 0)))
+	var damage: float = float(level_data.get("damage", 0))
+	apply_damage(damage)
+	# The ship sails the whole line from the rival's own column to the
+	# player's - an illusion standing anywhere along that path can still
+	# be caught in it, same as every enemy along the player's own
+	# Ghostship's path.
+	_deal_line_aoe_damage_to_illusions(enemy["pos_index"], _hero_pos_index, damage)
+	_deal_line_aoe_damage_to_bear(enemy["pos_index"], _hero_pos_index, damage)
 	_play_ghostship_animation(enemy["pos_index"], _hero_pos_index)
 
 
@@ -8819,7 +10678,13 @@ func _cast_enemy_chilling_touch(enemy: Dictionary, level_data: Dictionary) -> vo
 # ------------------------------------------------------------------
 
 func _cast_enemy_ice_blast(level_data: Dictionary) -> void:
-	apply_damage(float(level_data.get("damage", 0)))
+	var damage: float = float(level_data.get("damage", 0))
+	apply_damage(damage)
+	# Ice Blast's own splash radius is centered on the impact point (the
+	# player, the only possible target here) - an illusion near the
+	# player can still be caught in it.
+	_deal_aoe_damage_to_illusions(_hero_pos_index, int(level_data.get("radius", 0)), damage)
+	_deal_aoe_damage_to_bear(_hero_pos_index, int(level_data.get("radius", 0)), damage)
 	_player_ice_blast_dot_damage = float(level_data.get("dot_damage", 0))
 	_player_ice_blast_dot_turns_left = int(level_data.get("dot_duration", 0))
 	_player_ice_blast_execute_pct = float(level_data.get("execute_pct", 0.0))
@@ -8886,6 +10751,12 @@ func _end_enemy_arctic_burn() -> void:
 
 func _cast_enemy_splinter_blast(level_data: Dictionary) -> void:
 	apply_damage(float(level_data.get("damage", 0)))
+	# Splinter Blast's own splash (its lighter splinter_damage, not the
+	# main hit) is centered on the impact point (the player, the only
+	# possible target here) - an illusion near the player can still be
+	# caught in it.
+	_deal_aoe_damage_to_illusions(_hero_pos_index, int(level_data.get("splinter_range", 0)), float(level_data.get("splinter_damage", 0)))
+	_deal_aoe_damage_to_bear(_hero_pos_index, int(level_data.get("splinter_range", 0)), float(level_data.get("splinter_damage", 0)))
 
 
 # ------------------------------------------------------------------
@@ -9008,7 +10879,14 @@ func _cast_enemy_winters_curse(level_data: Dictionary) -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_crystal_nova(level_data: Dictionary) -> void:
-	apply_damage(float(level_data.get("damage", 0)))
+	var damage: float = float(level_data.get("damage", 0))
+	apply_damage(damage)
+	# Crystal Nova's own splash (the same damage as the main hit) is
+	# centered on the impact point (the player, the only possible
+	# target here) - an illusion near the player can still be caught
+	# in it.
+	_deal_aoe_damage_to_illusions(_hero_pos_index, int(level_data.get("radius", 0)), damage)
+	_deal_aoe_damage_to_bear(_hero_pos_index, int(level_data.get("radius", 0)), damage)
 	_show_message_over_hero("Crystal Nova!")
 
 
@@ -9057,8 +10935,14 @@ func _tick_enemy_freezing_field() -> void:
 		return
 
 	var boss: Dictionary = _get_hero_fight_boss()
-	if not boss.is_empty() and _distance(boss["pos_index"], _hero_pos_index) <= _enemy_freezing_field_radius:
-		apply_damage(_enemy_freezing_field_damage_per_turn)
+	if not boss.is_empty():
+		if _distance(boss["pos_index"], _hero_pos_index) <= _enemy_freezing_field_radius:
+			apply_damage(_enemy_freezing_field_damage_per_turn)
+		# Centered on the boss's own CURRENT position, same as the hero
+		# check above - an illusion can be in range independently of
+		# whether the hero himself currently is.
+		_deal_aoe_damage_to_illusions(boss["pos_index"], _enemy_freezing_field_radius, _enemy_freezing_field_damage_per_turn)
+		_deal_aoe_damage_to_bear(boss["pos_index"], _enemy_freezing_field_radius, _enemy_freezing_field_damage_per_turn)
 
 	_enemy_freezing_field_turns_remaining -= 1
 	if _enemy_freezing_field_turns_remaining <= 0:
@@ -9375,12 +11259,19 @@ func _end_enemy_living_armor() -> void:
 
 func _cast_enemy_overgrowth(enemy: Dictionary, level_data: Dictionary) -> void:
 	var radius: int = int(level_data.get("radius", 0))
+	var dot_damage: float = float(level_data.get("dot_damage", 0))
 	if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
-		var dot_damage: float = float(level_data.get("dot_damage", 0))
 		var root_duration: int = int(level_data.get("root_duration", 0))
 		_player_root_turns_left = root_duration
 		_player_overgrowth_dot_damage = dot_damage
 		_player_overgrowth_dot_turns_left = root_duration
+
+	# Illusions have no root/DoT of their own to carry the way the hero
+	# does above - just a one-time hit for whatever's caught in the
+	# burst, centered on the caster's own column, same as the check
+	# above.
+	_deal_aoe_damage_to_illusions(enemy["pos_index"], radius, dot_damage)
+	_deal_aoe_damage_to_bear(enemy["pos_index"], radius, dot_damage)
 
 	_show_message_over_hero("Overgrowth!")
 
@@ -9407,8 +11298,14 @@ func _cast_enemy_overgrowth(enemy: Dictionary, level_data: Dictionary) -> void:
 
 func _cast_enemy_whirling_death(enemy: Dictionary, level_data: Dictionary) -> void:
 	var radius: int = int(level_data.get("radius", 0))
+	var damage: float = float(level_data.get("damage", 0))
 	if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
-		apply_damage(float(level_data.get("damage", 0)))
+		apply_damage(damage)
+	# Centered on the caster's own column, same as the check above - an
+	# illusion can be in range independently of whether the player
+	# himself currently is.
+	_deal_aoe_damage_to_illusions(enemy["pos_index"], radius, damage)
+	_deal_aoe_damage_to_bear(enemy["pos_index"], radius, damage)
 	_show_message_over_hero("Whirling Death!")
 
 
@@ -9424,7 +11321,15 @@ func _cast_enemy_whirling_death(enemy: Dictionary, level_data: Dictionary) -> vo
 # ------------------------------------------------------------------
 
 func _cast_enemy_timber_chain(enemy: Dictionary, level_data: Dictionary) -> void:
-	apply_damage(float(level_data.get("damage", 0)))
+	var damage: float = float(level_data.get("damage", 0))
+	apply_damage(damage)
+	# The chain reaches the whole line from the rival's own column to
+	# the player's - an illusion standing anywhere along that path can
+	# still be caught in it, same as every enemy along the player's own
+	# Timber Chain's path. Read BEFORE the rival's own pull below moves
+	# it off "enemy["pos_index"]".
+	_deal_line_aoe_damage_to_illusions(enemy["pos_index"], _hero_pos_index, damage)
+	_deal_line_aoe_damage_to_bear(enemy["pos_index"], _hero_pos_index, damage)
 
 	var chain_direction: int = _step_toward(enemy["pos_index"], _hero_pos_index)
 	var landing_pos: int = enemy["pos_index"]
@@ -9510,7 +11415,13 @@ func _apply_enemy_reactive_armor_regen() -> void:
 
 func _cast_enemy_chakram(enemy: Dictionary, level_data: Dictionary) -> void:
 	var pos_index: int = _hero_pos_index
-	apply_damage(float(level_data.get("cast_damage", 0)))
+	var cast_damage: float = float(level_data.get("cast_damage", 0))
+	var radius: int = int(level_data.get("radius", 0))
+	apply_damage(cast_damage)
+	# Planted at the player's own position at cast time - an illusion
+	# there (or nearby) takes the same initial burst.
+	_deal_aoe_damage_to_illusions(pos_index, radius, cast_damage)
+	_deal_aoe_damage_to_bear(pos_index, radius, cast_damage)
 
 	_despawn_enemy_chakram()
 	_enemy_chakram = {
@@ -9542,8 +11453,14 @@ func _tick_enemy_chakram() -> void:
 
 	var pos_index: int = int(_enemy_chakram["pos_index"])
 	var radius: int = int(_enemy_chakram["radius"])
+	var damage_per_turn: float = float(_enemy_chakram["damage_per_turn"])
 	if _distance(_hero_pos_index, pos_index) <= radius:
-		apply_damage(float(_enemy_chakram["damage_per_turn"]))
+		apply_damage(damage_per_turn)
+	# Centered on the same FIXED planted position as the check above -
+	# an illusion can be in range independently of whether the player
+	# himself currently is.
+	_deal_aoe_damage_to_illusions(pos_index, radius, damage_per_turn)
+	_deal_aoe_damage_to_bear(pos_index, radius, damage_per_turn)
 
 	_enemy_chakram["turns_remaining"] = int(_enemy_chakram["turns_remaining"]) - 1
 	if int(_enemy_chakram["turns_remaining"]) <= 0:
@@ -9562,6 +11479,677 @@ func _despawn_enemy_chakram() -> void:
 	if is_instance_valid(_enemy_chakram.get("node")):
 		_enemy_chakram["node"].queue_free()
 	_enemy_chakram = {}
+
+
+# ------------------------------------------------------------------
+# Snapfire's Scatterblast, cast by the rival - mirrors the player's own
+# _cast_scatterblast(): `level_data.damage` to the player, straight
+# ahead of the rival in whichever direction it's currently facing. The
+# directional "is the player actually ahead" check already happened
+# before this was ever picked as a candidate (see _enemy_skill_in_
+# range()'s own "scatterblast" case), so by the time this runs it's
+# guaranteed to land - a plain hit, same as every other rival nuke.
+# ------------------------------------------------------------------
+
+func _cast_enemy_scatterblast(enemy: Dictionary, level_data: Dictionary) -> void:
+	var damage: float = float(level_data.get("damage", 0))
+	apply_damage(damage)
+	# Directional, not a radius - same "ahead of the caster, in whichever
+	# direction it's facing" cone _enemy_skill_in_range()'s own
+	# Scatterblast case already checks against the player.
+	var direction: int = -1 if bool(enemy["node"].flip_h) else 1
+	_deal_directional_aoe_damage_to_illusions(int(enemy["pos_index"]), direction, int(level_data.get("range", 0)), damage)
+	_deal_directional_aoe_damage_to_bear(int(enemy["pos_index"]), direction, int(level_data.get("range", 0)), damage)
+	_show_message_over_hero("Scatterblast!")
+
+
+# ------------------------------------------------------------------
+# Snapfire's Firesnap Cookie, cast by the rival - mirrors the player's
+# own _activate_firesnap_cookie(): hops `jump_distance` columns in
+# whichever direction the rival is currently facing (walked one column
+# at a time here, stopping early at the board edge or a player-cast Ice
+# Shards wall - Snapfire's own range_type is always "Range", so this
+# never needs the melee "stop on top of an enemy" rule the way a
+# point-blank hero's own copy would), then - on landing - deals damage
+# and stuns the player if they're within `radius` columns of wherever it
+# ends up. Never "fails" for lack of a target, same as the player's own
+# copy - the hop itself always happens.
+# ------------------------------------------------------------------
+
+func _cast_enemy_firesnap_cookie(enemy: Dictionary, level_data: Dictionary) -> void:
+	var jump_distance: int = int(level_data.get("jump_distance", 0))
+	var direction: int = -1 if bool(enemy["node"].flip_h) else 1
+
+	var landing_pos: int = enemy["pos_index"]
+	for i in range(jump_distance):
+		var next_pos: int = landing_pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if _is_column_ice_shards_blocked(next_pos):
+			break
+		landing_pos = next_pos
+
+	_move_enemy(enemy, landing_pos)
+
+	var radius: int = int(level_data.get("radius", 0))
+	var damage: float = float(level_data.get("damage", 0))
+	if _distance(_hero_pos_index, landing_pos) <= radius:
+		apply_damage(damage)
+		if _recruited.get("current_hp", 0) > 0:
+			_player_stun_turns_left = int(level_data.get("stun_turns", 0))
+	# Centered on the landing spot, same as the check above - an
+	# illusion can be in range independently of whether the player
+	# himself currently is.
+	_deal_aoe_damage_to_illusions(landing_pos, radius, damage)
+	_deal_aoe_damage_to_bear(landing_pos, radius, damage)
+
+	_show_message_over_hero("Firesnap Cookie!")
+
+
+# ------------------------------------------------------------------
+# Snapfire's Lil' Shredder, cast by the rival - mirrors the player's own
+# _resolve_lil_shredder_cast(): fires this level's own `shots` count of
+# separately-rolled hits at the player (each _roll_enemy_hero_damage()
+# times damage_pct), each shot ALSO stacking armor_reduction_per_shot
+# onto _player_armor_reduction - a battle-local runtime value folded
+# into _hero_armor() as a straight subtraction, mirroring the player-
+# side per-enemy "armor_reduction" field - so a later shot in the SAME
+# volley already lands harder than the first, having shredded some of
+# the player's armor away already. Stops early if the player dies
+# partway through. The whole stack's own duration (this level's own
+# `duration`) is only set once, after the last shot connects, same "the
+# casting round is never counted against it for free" reasoning
+# _tick_player_turn_start_effects() already follows for every other
+# duration-based effect.
+# ------------------------------------------------------------------
+
+func _cast_enemy_lil_shredder(enemy: Dictionary, level_data: Dictionary) -> void:
+	var shots: int = int(level_data.get("shots", 3))
+	var damage_pct: float = float(level_data.get("damage_pct", 0))
+	var armor_reduction_per_shot: float = float(level_data.get("armor_reduction_per_shot", 0))
+
+	for i in range(shots):
+		if _recruited.get("current_hp", 0) <= 0:
+			break
+		var shot_damage: float = _roll_enemy_hero_damage(enemy) * damage_pct
+		apply_damage(shot_damage)
+		if _recruited.get("current_hp", 0) <= 0:
+			break
+		_player_armor_reduction += armor_reduction_per_shot
+
+	if _recruited.get("current_hp", 0) > 0:
+		_player_armor_reduction_turns_left = int(level_data.get("duration", 0))
+
+	_show_message_over_hero("Lil' Shredder!")
+
+
+# ------------------------------------------------------------------
+# Naga Siren's passive, Rip Tide, on the rival - mirrors the player's own
+# _get_rip_tide_level_data(). Never a scored candidate of its own (see
+# EnemySkillAI's own header comment) - its bonuses only ever reach Mirror
+# Image/Song of the Siren/a plain Attack through _build_enemy_ai_
+# context()'s own "rip_tide_*" fields. Its AoE splash (aoe_damage_pct/
+# radius) never has an actual second target to reach in a real hero fight
+# (there's only ever the one player to hit - same "no cleave" collapse
+# Dark Pact's/Ghostship's/Whirling Death's own rival copies already have,
+# see _cast_enemy_dark_pact()'s own docstring), so unlike the player's
+# own _apply_rip_tide_cleave() there's no enemy-side cleave function here
+# at all - "rip_tide_aoe_damage_pct" only ever feeds EnemySkillAI's own
+# scoring (a splash EnemyHeroManager's own multi-enemy simulation CAN
+# actually land, via its own "no columns, hit everyone" fallback - see
+# that file's own "song_of_the_siren"/rip-tide-flavored comment).
+# ------------------------------------------------------------------
+
+## Rip Tide's level data for whatever level the rival has it at right
+## now - {} if it isn't learned at all (level 0), the same "empty means
+## locked" convention every other auto-triggered skill's own _get_enemy_
+## *_level_data() helper uses.
+func _get_enemy_rip_tide_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "rip_tide")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_enemy_skill("rip_tide")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+# ------------------------------------------------------------------
+# Naga Siren's Mirror Image, cast by the rival - mirrors the player's own
+# _activate_mirror_image()/_spawn_illusion_node()/_tick_mirror_image()/
+# _fire_mirror_image_attack()/_end_mirror_image()/_deal_damage_to_
+# illusion()/_kill_illusion(). Unlike the player's own copy (which spawns
+# decoys in the columns immediately in front of and behind the hero),
+# there's only one possible target in a hero fight (the player), so
+# _fire_enemy_mirror_image_attack() collapses to a single "every
+# surviving illusion hits the player" loop rather than picking among
+# multiple enemies, same "no cleave" simplification every other rival
+# AoE cast already uses.
+# ------------------------------------------------------------------
+
+func _cast_enemy_mirror_image(enemy: Dictionary, level_data: Dictionary) -> void:
+	_end_enemy_mirror_image()
+
+	var rip_tide_level_data: Dictionary = _get_enemy_rip_tide_level_data()
+
+	var direction: int = -1 if bool(enemy["node"].flip_h) else 1
+	var caster_pos: int = int(enemy["pos_index"])
+	var front_pos: int = clampi(caster_pos + direction, 0, GRID_COLUMNS - 1)
+	var behind_pos: int = clampi(caster_pos - direction, 0, GRID_COLUMNS - 1)
+
+	var illusions_count: int = int(level_data.get("illusions", 3)) + int(rip_tide_level_data.get("extra_illusion", 0))
+	var illusion_hp: float = _enemy_hero_effective_max_hp(enemy) * float(level_data.get("hp_pct", 0.0))
+
+	for i in range(illusions_count):
+		var pos: int
+		if i == 0:
+			pos = front_pos
+		elif i == 1:
+			pos = behind_pos
+		else:
+			pos = front_pos if randf() < 0.5 else behind_pos
+		_enemy_illusions.append({
+			"pos_index": pos,
+			"current_hp": illusion_hp,
+			"max_hp": illusion_hp,
+			"node": _spawn_enemy_illusion_node(pos, enemy["node"]),
+		})
+
+	_enemy_illusion_damage_pct = float(level_data.get("damage_pct", 0.0)) + float(rip_tide_level_data.get("illusion_damage_bonus_pct", 0.0))
+	_enemy_illusion_hit_chance_pct = float(level_data.get("hit_chance_pct", 0.0))
+	_enemy_illusions_turns_remaining = int(level_data.get("duration", 0)) + int(rip_tide_level_data.get("illusion_duration_bonus", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking (and the illusions only start attacking) from the turn
+	# after (see _tick_enemy_mirror_image()), same as every other
+	# duration-based buff.
+	_enemy_illusions_duration_pending_start = true
+
+	_show_message_over_hero("Mirror Image!")
+
+
+## Purely visual: a copy of `source_node`'s own current texture, faded to
+## HERO_ILLUSION_ALPHA so the real boss still reads clearly among its own
+## decoys, positioned on `pos_index`'s own column - mirrors the player's
+## own _spawn_illusion_node() exactly, just reading `source_node`'s own
+## texture/flip_h/size instead of hero_image's.
+func _spawn_enemy_illusion_node(pos_index: int, source_node: TextureRect) -> TextureRect:
+	var tex_rect := TextureRect.new()
+	tex_rect.texture = source_node.texture
+	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
+	tex_rect.size = source_node.size
+	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tex_rect.flip_h = source_node.flip_h
+	tex_rect.modulate = Color(1, 1, 1, HERO_ILLUSION_ALPHA)
+	tex_rect.position = Vector2(_index_to_x(pos_index), _creature_y())
+	add_child(tex_rect)
+	move_child(tex_rect, enemies_layer.get_index() + 1)
+	return tex_rect
+
+
+## Ticks the rival's Mirror Image duration down once per End Turn, same
+## timing (and same "the casting turn doesn't count" skip) as every other
+## duration-based buff - firing the illusions' own attack
+## (_fire_enemy_mirror_image_attack()) on every tick that actually counts
+## against the duration, then ending the effect once it runs out. A no-op
+## once every illusion has already died in combat, and while none are up
+## at all.
+func _tick_enemy_mirror_image() -> void:
+	if _enemy_illusions.is_empty():
+		return
+
+	if _enemy_illusions_duration_pending_start:
+		_enemy_illusions_duration_pending_start = false
+		return
+
+	_fire_enemy_mirror_image_attack()
+
+	_enemy_illusions_turns_remaining -= 1
+	if _enemy_illusions_turns_remaining <= 0:
+		_end_enemy_mirror_image()
+
+
+## Every surviving illusion strikes the player - the only possible target
+## in a hero fight - each illusion rolling its own rival-damage instance
+## (_roll_enemy_hero_damage()) scaled by _enemy_illusion_damage_pct, same
+## "own roll per hit" idiom the player's own _fire_mirror_image_attack()
+## uses, mitigated by the player's own current armor via apply_damage().
+## Stops early if that focus-fire finishes the player off partway
+## through.
+func _fire_enemy_mirror_image_attack() -> void:
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty():
+		return
+	for illusion in _enemy_illusions.duplicate():
+		if _recruited.get("current_hp", 0) <= 0:
+			break
+		var illusion_damage: float = _roll_enemy_hero_damage(boss) * _enemy_illusion_damage_pct
+		apply_damage(illusion_damage)
+
+
+## Ends the rival's Mirror Image, despawning every surviving illusion -
+## called both when its duration runs out (_tick_enemy_mirror_image())
+## and defensively at the top of _cast_enemy_mirror_image() so a recast
+## mid-duration never leaks the old set's nodes, and from
+## _reset_enemy_hero_state() so a set from a PREVIOUS hero fight never
+## lingers into a new one.
+func _end_enemy_mirror_image() -> void:
+	for illusion in _enemy_illusions:
+		if is_instance_valid(illusion.get("node")):
+			illusion["node"].queue_free()
+	_enemy_illusions.clear()
+	_enemy_illusion_damage_pct = 0.0
+	_enemy_illusion_hit_chance_pct = 0.0
+	_enemy_illusions_turns_remaining = 0
+	_enemy_illusions_duration_pending_start = false
+
+
+## Applies `amount` of already-mitigated damage to `illusion` - the
+## rival-side equivalent of the player's own _deal_damage_to_illusion(),
+## just against _enemy_illusions instead of _illusions. Called from
+## _deal_fixed_damage_to_enemy() whenever a hit redirects onto an
+## illusion instead of the boss itself.
+func _deal_damage_to_enemy_illusion(illusion: Dictionary, amount: float, is_critical: bool = false) -> void:
+	illusion["current_hp"] = float(illusion.get("current_hp", 0.0)) - amount
+	if is_instance_valid(illusion.get("node")):
+		_show_damage_number(illusion["node"], amount, is_critical)
+	if illusion["current_hp"] <= 0:
+		_kill_enemy_illusion(illusion)
+
+
+## Removes one illusion that's died in combat - the rival-side mirror of
+## the player's own _kill_illusion(). Doesn't end Mirror Image outright
+## even if this was the last one; _tick_enemy_mirror_image()'s own
+## early-empty check just makes every remaining tick a no-op until the
+## duration itself finally runs out.
+func _kill_enemy_illusion(illusion: Dictionary) -> void:
+	if is_instance_valid(illusion.get("node")):
+		illusion["node"].queue_free()
+	_enemy_illusions.erase(illusion)
+
+
+## The boss's own effective armor for mitigating a hit onto one of its
+## illusions - base armor plus its own borrowed bonuses (Reactive
+## Armor's stack, Essence Shift, etc., via _enemy_hero_bonus_armor())
+## minus Lil' Shredder's own shred, same three terms
+## _deal_fixed_damage_to_enemy()'s own redirect branch already reads.
+## An illusion is a copy of the boss, not a separate combatant with its
+## own defense stat, so it mitigates exactly as if the boss had taken
+## the hit itself.
+func _enemy_hero_effective_armor(boss: Dictionary) -> float:
+	return float(boss["static"].get("armor", 0)) + _enemy_hero_bonus_armor(boss) - float(boss.get("armor_reduction", 0.0))
+
+
+## Any player AoE skill that damages the boss over an area should ALSO
+## independently hit every surviving enemy illusion within that same
+## area - the mirror of _deal_aoe_damage_to_illusions() for the rival's
+## own Mirror Image. `amount` is the RAW, pre-mitigation damage the AoE
+## would deal to the boss - each illusion mitigates it separately via
+## the boss's own effective armor (_enemy_hero_effective_armor()). A
+## no-op while no enemy illusions are up or there's no boss to read
+## armor from (i.e. outside a hero fight).
+func _deal_aoe_damage_to_enemy_illusions(center_pos_index: int, radius: int, amount: float) -> void:
+	if _enemy_illusions.is_empty() or amount <= 0.0:
+		return
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty():
+		return
+
+	var mitigated: float = _apply_armor_reduction(amount, _enemy_hero_effective_armor(boss))
+	for illusion in _enemy_illusions.duplicate():
+		if _distance(illusion["pos_index"], center_pos_index) <= radius:
+			_deal_damage_to_enemy_illusion(illusion, mitigated)
+
+
+## The line-shaped equivalent of _deal_aoe_damage_to_enemy_illusions()
+## above - for Ghostship's/Timber Chain's own "every column between the
+## caster and the target, inclusive of both ends" line. Same "amount is
+## raw, each illusion mitigates it separately via the boss's own
+## effective armor" contract.
+func _deal_line_aoe_damage_to_enemy_illusions(start_pos_index: int, end_pos_index: int, amount: float) -> void:
+	if _enemy_illusions.is_empty() or amount <= 0.0:
+		return
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty():
+		return
+
+	var start_col: int = mini(start_pos_index, end_pos_index)
+	var end_col: int = maxi(start_pos_index, end_pos_index)
+	var mitigated: float = _apply_armor_reduction(amount, _enemy_hero_effective_armor(boss))
+	for illusion in _enemy_illusions.duplicate():
+		var pos: int = illusion["pos_index"]
+		if pos >= start_col and pos <= end_col:
+			_deal_damage_to_enemy_illusion(illusion, mitigated)
+
+
+## The directional-cone equivalent of the two AoE-shape helpers above -
+## for the player's own Scatterblast facing-based cone. Same "amount is
+## raw, each illusion mitigates it separately via the boss's own
+## effective armor" contract.
+func _deal_directional_aoe_damage_to_enemy_illusions(origin_pos_index: int, direction: int, range_columns: int, amount: float) -> void:
+	if _enemy_illusions.is_empty() or amount <= 0.0:
+		return
+
+	var boss: Dictionary = _get_hero_fight_boss()
+	if boss.is_empty():
+		return
+
+	var mitigated: float = _apply_armor_reduction(amount, _enemy_hero_effective_armor(boss))
+	for illusion in _enemy_illusions.duplicate():
+		var ahead: int = (illusion["pos_index"] - origin_pos_index) * direction
+		if ahead >= 0 and ahead <= range_columns:
+			_deal_damage_to_enemy_illusion(illusion, mitigated)
+
+
+# ------------------------------------------------------------------
+# Naga Siren's Ensnare, cast by the rival on the player - mirrors the
+# player's own _resolve_ensnare_cast(): this level's own `damage`
+# (through normal armor mitigation, via apply_damage()) plus a root for
+# `root_turns` of the player's own turns (_player_root_turns_left, the
+# same shared field Entangle's/Overgrowth's own root already use) -
+# unlike Entangle, no silence/DoT fields are touched at all, so (per the
+# design doc's own explicit "Ensnare is not a stun" instruction) the
+# player can still attack/cast skills while rooted, just not move. Only
+# roots if the hit actually left the player alive.
+# ------------------------------------------------------------------
+
+func _cast_enemy_ensnare(level_data: Dictionary) -> void:
+	apply_damage(float(level_data.get("damage", 0)))
+	if _recruited.get("current_hp", 0) > 0:
+		_player_root_turns_left = int(level_data.get("root_turns", 0))
+	_show_message_over_hero("Ensnare!")
+
+
+# ------------------------------------------------------------------
+# Naga Siren's ultimate, Song of the Siren, cast by the rival - mirrors
+# the player's own _cast_song_of_the_siren(): stuns (_player_stun_turns_
+# left, the same shared field Pounce's/Torrent's/Firesnap Cookie's own
+# stun already use) and shreds the armor (_player_armor_reduction/
+# _player_armor_reduction_turns_left, the same per-instance runtime
+# fields Lil' Shredder's own shred uses - stacking additively with any
+# already there, but refreshing, not adding to, the turns left) of the
+# player, if they're within this level's own radius of the rival's
+# CURRENT position - there's only one possible target in a hero fight, so
+# this collapses to a single conditional hit rather than a loop over
+# multiple enemies, same simplification every other rival AoE cast
+# already uses. Purely offensive - no damage of its own, and nothing
+# about the rival itself changes (it and its illusions can still move/
+# attack normally the whole time).
+# ------------------------------------------------------------------
+
+func _cast_enemy_song_of_the_siren(enemy: Dictionary, level_data: Dictionary) -> void:
+	var radius: int = int(level_data.get("radius", 0))
+	if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+		_player_stun_turns_left = int(level_data.get("stun_turns", 0))
+		_player_armor_reduction += float(level_data.get("armor_reduction", 0))
+		_player_armor_reduction_turns_left = int(level_data.get("stun_turns", 0))
+
+	_show_message_over_hero("Song of the Siren!")
+
+
+# ------------------------------------------------------------------
+# Slardar's Guardian Sprint, cast by the rival - mirrors the player's own
+# _activate_guardian_sprint()/_guardian_sprint_move_target()/_tick_
+# guardian_sprint()/_end_guardian_sprint(). Arms the buff exactly the
+# same way (doesn't move the rival itself when cast); only its own
+# fallback movement (_enemy_hero_turn()'s own "not hero_hidden and not
+# rooted" tail, once no skill/attack is available) actually reads it,
+# same "only the NEXT normal move changes" shape the player's own copy
+# has in _hero_move().
+# ------------------------------------------------------------------
+
+func _cast_enemy_guardian_sprint(level_data: Dictionary) -> void:
+	_enemy_guardian_sprint_bonus_movement = int(level_data.get("bonus_movement", 0))
+	_enemy_guardian_sprint_charge_damage_pct = float(level_data.get("charge_damage_pct", 0.0))
+	_enemy_guardian_sprint_turns_remaining = int(level_data.get("duration", 0))
+	# The casting turn itself doesn't count - duration only starts
+	# ticking from the turn after (see _tick_enemy_guardian_sprint()),
+	# same as every other duration-based buff. The bonus itself is
+	# already live the instant this returns.
+	_enemy_guardian_sprint_duration_pending_start = true
+
+	_show_message_over_hero("Guardian Sprint!")
+
+
+## Guardian Sprint's own movement rule, on the rival's side - mirrors the
+## player's own _guardian_sprint_move_target() exactly, just stopping on
+## the PLAYER's own column instead of searching _enemies for one (there's
+## only ever the one possible "enemy" to stop on in a hero fight - see
+## this section's own header comment). Walks up to `distance` columns
+## from `start` in `direction`, stopping early at the board edge, a
+## player-cast Ice Shards wall, OR the player's own column - regardless
+## of the rival's own type, same "stop on top of an enemy" rule every
+## other rival gap-closer (Firesnap Cookie's hop, Timber Chain's pull)
+## already follows. Returns both the landing column and whether it
+## actually stopped on the player, for the caller to deal Guardian
+## Sprint's own charge_damage to.
+func _enemy_guardian_sprint_move_target(start: int, direction: int, distance: int) -> Dictionary:
+	var pos: int = start
+	var hit_player: bool = false
+
+	for i in range(distance):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if _is_column_ice_shards_blocked(next_pos):
+			break
+		pos = next_pos
+
+		if pos == _hero_pos_index:
+			hit_player = true
+			break
+
+	return {"pos": pos, "hit_player": hit_player}
+
+
+func _tick_enemy_guardian_sprint() -> void:
+	if _enemy_guardian_sprint_turns_remaining <= 0:
+		return
+
+	if _enemy_guardian_sprint_duration_pending_start:
+		_enemy_guardian_sprint_duration_pending_start = false
+		return
+
+	_enemy_guardian_sprint_turns_remaining -= 1
+	if _enemy_guardian_sprint_turns_remaining <= 0:
+		_end_enemy_guardian_sprint()
+
+
+func _end_enemy_guardian_sprint() -> void:
+	_enemy_guardian_sprint_turns_remaining = 0
+	_enemy_guardian_sprint_bonus_movement = 0
+	_enemy_guardian_sprint_charge_damage_pct = 0.0
+	_enemy_guardian_sprint_duration_pending_start = false
+
+
+# ------------------------------------------------------------------
+# Slardar's Slithereen Crush, cast by the rival - mirrors the player's
+# own _cast_slithereen_crush(): this level's own `damage` (through normal
+# armor mitigation, via apply_damage()) plus a stun (_player_stun_turns_
+# left, the same shared field Pounce's/Torrent's/Song of the Siren's own
+# stun already use) for `stun_turns` of the player's own turns, if
+# they're within `radius` columns of the rival's CURRENT position -
+# there's only one possible target in a hero fight, so this collapses to
+# a single conditional hit rather than a loop over multiple enemies, same
+# simplification every other self-centered rival AoE cast already uses
+# (see _cast_enemy_overgrowth()'s own docstring). Only stuns if the hit
+# actually left the player alive.
+# ------------------------------------------------------------------
+
+func _cast_enemy_slithereen_crush(enemy: Dictionary, level_data: Dictionary) -> void:
+	var radius: int = int(level_data.get("radius", 0))
+	if _distance(enemy["pos_index"], _hero_pos_index) <= radius:
+		apply_damage(float(level_data.get("damage", 0)))
+		if _recruited.get("current_hp", 0) > 0:
+			_player_stun_turns_left = int(level_data.get("stun_turns", 0))
+
+	_show_message_over_hero("Slithereen Crush!")
+
+
+# ------------------------------------------------------------------
+# Slardar's passive, Bash of the Deep, on the rival - mirrors the
+# player's own _get_bash_of_the_deep_level_data()/_maybe_consume_bash_of_
+# the_deep_stack()/_apply_bash_of_the_deep_knockback(). Never a scored
+# candidate of its own (see EnemySkillAI's own header comment) - its
+# progression only ever reaches Guardian Sprint/Slithereen Crush/
+# Corrosive Haze/a plain Attack through _build_enemy_ai_context()'s own
+# "bash_*" fields, and its actual bonus damage/knockback only ever land
+# through _resolve_enemy_hero_attack()'s own plain-Attack path, same
+# "only a real Attack builds/consumes the stack" rule the player's own
+# copy follows.
+# ------------------------------------------------------------------
+
+func _get_enemy_bash_of_the_deep_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "bash_of_the_deep")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_enemy_skill("bash_of_the_deep")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _maybe_consume_enemy_bash_of_the_deep_stack() -> Dictionary:
+	var level_data: Dictionary = _get_enemy_bash_of_the_deep_level_data()
+	if level_data.is_empty():
+		return {}
+
+	_enemy_bash_of_the_deep_attack_count += 1
+	if _enemy_bash_of_the_deep_attack_count < int(level_data.get("attacks_required", 1)):
+		return {}
+
+	_enemy_bash_of_the_deep_attack_count = 0
+	return level_data
+
+
+## Knocks the player back this level's own `knockback` columns, away from
+## the rival (its own distance-to-player direction, falling back to its
+## own facing on the rare column-share tie, same "still shove SOMEWHERE"
+## reasoning Pounce's own leap uses for the mirror-image case) - stopping
+## early at the board edge or a player-cast Ice Shards wall. Repositions
+## instantly via _hero_pos_index/_update_hero_position(), the same path
+## every other player-repositioning effect in this file uses.
+func _apply_enemy_bash_of_the_deep_knockback(enemy: Dictionary, level_data: Dictionary) -> void:
+	var knockback_columns: int = int(level_data.get("knockback", 0))
+	var direction: int = _step_toward(enemy["pos_index"], _hero_pos_index)
+	if direction == 0:
+		direction = -1 if bool(enemy["node"].flip_h) else 1
+	var pos: int = _hero_pos_index
+
+	for i in range(knockback_columns):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if _is_column_ice_shards_blocked(next_pos):
+			break
+		pos = next_pos
+
+	if pos != _hero_pos_index:
+		_hero_pos_index = pos
+		_update_hero_position()
+
+
+# ------------------------------------------------------------------
+# Slardar's ultimate, Corrosive Haze, cast by the rival on the player -
+# mirrors the player's own _resolve_corrosive_haze_cast(): reduces the
+# player's own armor by this level's own `armor_reduction`
+# (_player_armor_reduction, the same shared runtime field Lil' Shredder's
+# own shred/Song of the Siren's own shred already use - stacking
+# additively with any already there) and marks him with `bonus_damage_
+# pct` (_player_corrosive_haze_bonus_pct, read by apply_damage() to boost
+# every hit he takes from the rival's own attacks/skills - overwritten
+# outright on recast, not stacked). Both share _player_armor_reduction_
+# turns_left as their own turns-left counter, same "share the shred's own
+# timer" convention the player-side copy uses. There's only one possible
+# target in a hero fight, so - unlike the player's own copy, which needs
+# to pick one among several enemies - this needs no separate targeting
+# step at all, same simplification Entangle's/Torrent's own enemy-side
+# copies already use. Deals no damage of its own - a pure debuff.
+# ------------------------------------------------------------------
+
+func _cast_enemy_corrosive_haze(level_data: Dictionary) -> void:
+	_player_armor_reduction += float(level_data.get("armor_reduction", 0))
+	_player_corrosive_haze_bonus_pct = float(level_data.get("bonus_damage_pct", 0.0))
+	_player_armor_reduction_turns_left = int(level_data.get("duration", 0))
+
+	_show_message_over_hero("Corrosive Haze!")
+
+
+# ------------------------------------------------------------------
+# Snapfire's ultimate, Mortimer Kisses, cast by the rival - mirrors the
+# player's own _resolve_mortimer_kisses_cast()/_fire_mortimer_kisses_
+# shot()/_end_mortimer_kisses(). There's only one possible target in a
+# hero fight (the player), tracked live via _hero_pos_index rather than
+# a "marked enemy" reference the way the player's own copy needs for a
+# creep that could die and leave a corpse behind - the player never
+# does, so there's no "last known column" fallback to implement here.
+# ------------------------------------------------------------------
+
+## Marks the player, fires the FIRST of this level's own `hits` shots
+## immediately, and arms _enemy_mortimer_kisses_turns_left with however
+## many are left (hits - 1) - _enemy_hero_turn()'s own top-of-function
+## lockout auto-fires the rest, one per rival turn, with every other
+## action locked out for as long as any remain.
+func _cast_enemy_mortimer_kisses(level_data: Dictionary) -> void:
+	_enemy_mortimer_kisses_level_data = level_data
+	_enemy_mortimer_kisses_active = true
+	_enemy_mortimer_kisses_turns_left = int(level_data.get("hits", 1)) - 1
+
+	_fire_enemy_mortimer_kisses_shot()
+	_show_message_over_hero("Mortimer Kisses!")
+
+
+## Fires one Mortimer Kisses shot at the player: this level's own
+## main_damage plus a refreshed burn DoT. Splash ("every OTHER enemy
+## exactly 1 column away from the impact column") has nothing else to
+## reach in a hero fight - the player is the only possible target - same
+## "no cleave" simplification every other rival AoE cast already uses.
+func _fire_enemy_mortimer_kisses_shot() -> void:
+	var level_data: Dictionary = _enemy_mortimer_kisses_level_data
+	var main_damage: float = float(level_data.get("main_damage", 0))
+	var burn_per_turn: float = float(level_data.get("burn_per_turn", 0))
+	var burn_duration: int = int(level_data.get("burn_duration", 0))
+
+	apply_damage(main_damage)
+	if _recruited.get("current_hp", 0) > 0 and burn_per_turn > 0.0:
+		_player_mortimer_burn_dot_damage = burn_per_turn
+		_player_mortimer_burn_dot_turns_left = burn_duration
+
+	# The splash itself isn't simplified away like every other rival
+	# AoE's "no cleave" note above - illusions and the Spirit Bear are
+	# real occupants of their own columns, and (unlike the enemy-side
+	# skill functions elsewhere, which are always centered on some
+	# OTHER point) the impact here is always the player's own position,
+	# so either can end up sharing it outright (the bear especially -
+	# it starts there) rather than merely being adjacent. Exactly on the
+	# impact column takes main_damage, one column either side takes
+	# splash_damage - same split _fire_mortimer_kisses_shot()'s own
+	# regular-enemy checks use for the player's copy, rather than the
+	# single flat radius _deal_aoe_damage_to_illusions()/_deal_aoe_
+	# damage_to_bear() would give (which can't tell the two apart).
+	var splash_damage: float = float(level_data.get("splash_damage", 0))
+	for illusion in _illusions.duplicate():
+		var illusion_dist: int = _distance(illusion["pos_index"], _hero_pos_index)
+		if illusion_dist == 0:
+			_deal_damage_to_illusion(illusion, _apply_armor_reduction(main_damage, _hero_armor()))
+		elif illusion_dist == 1:
+			_deal_damage_to_illusion(illusion, _apply_armor_reduction(splash_damage, _hero_armor()))
+	if _is_bear_alive():
+		var bear_dist: int = _distance(_bear["pos_index"], _hero_pos_index)
+		if bear_dist == 0:
+			_deal_damage_to_bear(main_damage)
+		elif bear_dist == 1:
+			_deal_damage_to_bear(splash_damage)
+
+
+## Ends the rival's Mortimer Kisses channel - called once its last shot
+## has fired (see _enemy_hero_turn()'s own top-of-function lockout).
+func _end_enemy_mortimer_kisses() -> void:
+	_enemy_mortimer_kisses_active = false
+	_enemy_mortimer_kisses_turns_left = 0
+	_enemy_mortimer_kisses_level_data = {}
 
 
 ## Moves an enemy to `new_pos` (clamped on-board) and syncs its node's
@@ -9646,7 +12234,7 @@ func _get_flee_position(enemy: Dictionary) -> int:
 ## either is still in effect rather than leaving these open with
 ## nothing the player can actually do with them.
 func _update_action_buttons() -> void:
-	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0 or _cold_embrace_active
+	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0 or _cold_embrace_active or _mortimer_kisses_active
 	move_left_button.disabled = locked
 	move_right_button.disabled = locked
 	attack_button.disabled = locked
@@ -9751,7 +12339,7 @@ func _apply_tutorial_gate() -> void:
 	# not dependent on that function having just run. Flee is
 	# deliberately excluded, same as _update_action_buttons() - it's
 	# never turn-locked in a real playthrough either.
-	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0 or _cold_embrace_active
+	var locked: bool = _battle_over or _has_acted_this_turn or _player_stun_turns_left > 0 or _cold_embrace_active or _mortimer_kisses_active
 
 	move_left_button.disabled = locked or not TutorialManager.is_action_allowed("move_left")
 	move_right_button.disabled = locked or not TutorialManager.is_action_allowed("move_right")

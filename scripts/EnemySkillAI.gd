@@ -39,10 +39,10 @@ class_name EnemySkillAI
 # _kunkka_modifier()), since a Tidebringer-empowered Attack can
 # genuinely be the better play than any of Kunkka's real skills.
 #
-# Ten heroes have real AI logic today: Slark, Lone Druid, Abaddon,
+# Eleven heroes have real AI logic today: Slark, Lone Druid, Abaddon,
 # Kunkka, Ancient Apparition, Winter Wyvern, Crystal Maiden, Tusk,
-# Treant Protector, and Timbersaw - see resolve_hero_archetype() for how
-# a hero_static maps to one of them,
+# Treant Protector, Timbersaw, and Snapfire - see resolve_hero_
+# archetype() for how a hero_static maps to one of them,
 # and each one's own _*_modifier() function below for its personality.
 # Ancient Apparition's Ice Blast in particular models an "execute"
 # mechanic (a target dies outright once its HP drops to or below a
@@ -103,6 +103,72 @@ class_name EnemySkillAI
 # _timbersaw_whirling_death_modifier() only ever adds a small flat
 # qualitative bonus for "a hero was hit" (context's own "target_is_hero"
 # field), never a real stat-based number.
+# Snapfire's Scatterblast is DIRECTIONAL rather than self-centered like
+# Whirling Death/Freezing Field/Overgrowth (see battle.gd's own
+# _enemy_skill_in_range()'s "scatterblast" case for how that's actually
+# enforced) - by the time this file ever scores it as a candidate, the
+# player is already confirmed to be ahead of the rival in whichever
+# direction it's facing, so _snapfire_scatterblast_modifier() reads the
+# same `living_target_hps` every other AoE skill's own modifier does,
+# with no extra directional math of its own to repeat. Firesnap Cookie
+# is self-directed (a hop, not a self-centered radius check the way
+# Freezing Field's own is) - _snapfire_firesnap_cookie_modifier()
+# projects the landing column itself from the context's own
+# `caster_pos_index`/`caster_facing_left`/`grid_columns` fields (the
+# same ones Tusk's own Ice Shards/Walrus Punch modifiers already read)
+# rather than needing a new one. Mortimer Kisses' own splash always
+# collapses to 0 extra targets in a real hero fight (there's only ever
+# the one player to hit - see _cast_enemy_mortimer_kisses()'s own "no
+# cleave" simplification), so its real multi-target value only ever
+# shows up in the simulation, where "no columns, hit everyone else"
+# gives it real splash to work with (see EnemyHeroManager's own
+# "_fire_npc_mortimer_kisses_shot()"). Lil' Shredder's own armor
+# reduction is real (see battle.gd's own _hero_armor()/EnemyHeroManager's
+# own _apply_damage_to_enemy(), both of which now fold a runtime
+# "armor_reduction" in) - context's own "target_armor" field (the
+# target's CURRENT armor, reduction already applied) lets _snapfire_
+# lil_shredder_modifier() value shredding a heavily-armored target
+# without inventing a parallel armor system of its own.
+#
+# Naga Siren is the twelfth hero with real AI logic. Mirror Image is
+# "utility" category, same shape as Lone Druid's own Spirit Bear - its
+# entire value (both the illusions' own expected total damage over their
+# FULL duration and the redirect chance that can soak a hit meant for
+# Naga herself) is hero-specific, computed entirely in
+# _naga_mirror_image_modifier() rather than any generic category term
+# (see that function's own docstring). Ensnare is "offensive" (a root,
+# not a stun - the target can still attack/cast while rooted, so unlike
+# Torrent's/Pounce's own stuns it gets no generic "stun_turns" bonus of
+# its own, only the movement-denial/kill-setup value
+# _naga_ensnare_modifier() adds). Song of the Siren, Naga's ultimate, is
+# also "offensive" despite dealing no direct damage of its own - see
+# _naga_song_expected_damage()'s own docstring for what its "damage"
+# really means (every hit Naga/her illusions land completely safely
+# while the stun holds), shared between _estimate_skill_damage()'s own
+# case and _naga_song_of_the_siren_modifier() so the two numbers never
+# drift apart. Rip Tide is passive, same as Arcane Aura/Reactive Armor -
+# never in SKILL_INFO/HERO_TIE_BREAK/_estimate_skill_damage, never a
+# scored candidate; its bonuses reach Mirror Image/Song/a plain Attack
+# purely through context fields (rip_tide_illusion_damage_bonus_pct/
+# rip_tide_extra_illusion/rip_tide_illusion_duration_bonus/rip_tide_aoe_
+# damage_pct) battle.gd's/EnemyHeroManager's own _build_*_ai_context()
+# compute fresh off Naga's current Rip Tide level, same "empty/0 means
+# locked" convention every other auto-triggered skill's own level-data
+# getter uses.
+#
+# Slardar is the thirteenth hero with real AI logic. Guardian Sprint is
+# "utility" category, same "the hero-specific modifier IS the whole
+# value" shape Mirror Image/Spirit Bear already use - its value is almost
+# entirely positional, not a generic damage/defensive term (see
+# _slardar_guardian_sprint_modifier()'s own docstring). Slithereen Crush
+# and Corrosive Haze are both "offensive", same shape as every other
+# self-cast/target-marking skill in this file. Bash of the Deep is
+# passive and, like Rip Tide/Reactive Armor/Arcane Aura, never appears in
+# SKILL_INFO/HERO_TIE_BREAK/_estimate_skill_damage - its progression
+# reaches every one of Slardar's other actions purely through context
+# fields ("bash_attacks_required"/"bash_current_progress"/"bash_bonus_
+# damage_pct"/"bash_knockback" - see _slardar_bash_ready()/_slardar_bash_
+# knockback_value()), never as a scored candidate of its own.
 # ============================================================
 
 const DEBUG_AI := false
@@ -149,6 +215,16 @@ const SKILL_INFO := {
 	"whirling_death": {"category": "offensive", "base_score": 45.0},
 	"timber_chain": {"category": "offensive", "base_score": 50.0},
 	"chakram": {"category": "offensive", "base_score": 70.0},
+	"scatterblast": {"category": "offensive", "base_score": 45.0},
+	"firesnap_cookie": {"category": "offensive", "base_score": 50.0},
+	"lil_shredder": {"category": "offensive", "base_score": 45.0},
+	"mortimer_kisses": {"category": "offensive", "base_score": 70.0},
+	"mirror_image": {"category": "utility", "base_score": 50.0},
+	"ensnare": {"category": "offensive", "base_score": 45.0},
+	"song_of_the_siren": {"category": "offensive", "base_score": 75.0},
+	"guardian_sprint": {"category": "utility", "base_score": 45.0},
+	"slithereen_crush": {"category": "offensive", "base_score": 55.0},
+	"corrosive_haze": {"category": "offensive", "base_score": 75.0},
 }
 
 # A plain Attack's own pseudo skill id - never a real skill, but scored
@@ -179,6 +255,9 @@ const HERO_TIE_BREAK := {
 	"tusk": ["walrus_punch", "snowball", "ice_shards", "tag_team"],
 	"treant_protector": ["overgrowth", "leech_seed", "nature's_guise", "living_armor"],
 	"timbersaw": ["chakram", "timber_chain", "whirling_death"],
+	"snapfire": ["mortimer_kisses", "firesnap_cookie", "scatterblast", "lil_shredder"],
+	"naga_siren": ["song_of_the_siren", "mirror_image", "ensnare"],
+	"slardar": ["corrosive_haze", "slithereen_crush", "guardian_sprint"],
 }
 
 # Scores within this many points of the top score are treated as
@@ -221,6 +300,12 @@ static func resolve_hero_archetype(hero_static: Dictionary) -> String:
 		return "treant_protector"
 	if "chakram" in skill_ids:
 		return "timbersaw"
+	if "mortimer_kisses" in skill_ids:
+		return "snapfire"
+	if "song_of_the_siren" in skill_ids:
+		return "naga_siren"
+	if "slithereen_crush" in skill_ids:
+		return "slardar"
 	return ""
 
 
@@ -273,9 +358,22 @@ static func evaluate_skill(skill_id: String, level_data: Dictionary, context: Di
 ## very expensive ultimate (200-350 mana) that a cheap plain Attack can
 ## already make redundant (see the design doc's own "one enemy at 20 HP
 ## should almost never justify a 350-mana ultimate" instruction and
-## _timbersaw_chakram_modifier()'s own early-out).
+## _timbersaw_chakram_modifier()'s own early-out). Snapfire opts in for
+## the exact same reason - Mortimer Kisses is her own 200-350 mana
+## ultimate, and Lil' Shredder specifically "competes directly with
+## normal attacks" per the design doc's own instruction (see
+## _snapfire_lil_shredder_modifier()'s own early-out). Naga Siren opts in
+## too - the design doc's own explicit requirement that Basic Attack
+## always remain a real candidate, able to win outright (see its own
+## Scenario D: a low-HP target already in range, with Rip Tide's own
+## splash, can beat every one of her real skills). Slardar opts in for
+## the same "Basic Attack must always remain a candidate" requirement,
+## made especially important by Bash of the Deep - a Bash-ready Attack
+## with a real kill on the line can beat spending Corrosive Haze's own
+## mana/cooldown on a target about to die anyway (see this file's own
+## Scenario C).
 static func basic_attack_participates(archetype: String) -> bool:
-	return archetype == "kunkka" or archetype == "winter_wyvern" or archetype == "crystal_maiden" or archetype == "tusk" or archetype == "treant_protector" or archetype == "timbersaw"
+	return archetype == "kunkka" or archetype == "winter_wyvern" or archetype == "crystal_maiden" or archetype == "tusk" or archetype == "treant_protector" or archetype == "timbersaw" or archetype == "snapfire" or archetype == "naga_siren" or archetype == "slardar"
 
 
 ## The score for a plain Attack, for a hero basic_attack_participates()
@@ -454,6 +552,34 @@ static func _estimate_skill_damage(skill_id: String, level_data: Dictionary, con
 			# for the full duration" instruction), in _timbersaw_chakram_
 			# modifier() rather than here.
 			return float(level_data.get("cast_damage", 0.0))
+		"scatterblast", "firesnap_cookie":
+			return float(level_data.get("damage", 0.0))
+		"lil_shredder":
+			# The FULL volley's own expected total, not just one shot -
+			# Lil' Shredder is inherently a multi-hit sequence at the same
+			# target, so "can this kill it" has to weigh all `shots` of
+			# them (a conservative estimate: the actual cast lands
+			# slightly harder than this once armor_reduction starts
+			# stacking mid-volley, but this stays the simple, un-inflated
+			# baseline, same "do not assume" caution the design doc's own
+			# armor-reduction-duration instruction calls for elsewhere).
+			return float(context.get("hero_damage", 0.0)) * float(level_data.get("damage_pct", 0.0)) * float(level_data.get("shots", 1))
+		"mortimer_kisses":
+			# Only the first shot's own main_damage - persistent/tracked
+			# follow-up shots are never guaranteed to land on the same
+			# target (see the design doc's own "do not assume all three
+			# shots automatically hit the same target" instruction), so
+			# those are estimated separately, more conservatively, in
+			# _snapfire_mortimer_kisses_modifier() instead.
+			return float(level_data.get("main_damage", 0.0))
+		"ensnare":
+			return float(level_data.get("damage", 0.0))
+		"song_of_the_siren":
+			return _naga_song_expected_damage(level_data, context)
+		"slithereen_crush":
+			return float(level_data.get("damage", 0.0))
+		"corrosive_haze":
+			return _slardar_corrosive_haze_expected_damage(level_data, context)
 		_:
 			return 0.0
 
@@ -487,6 +613,12 @@ static func _hero_specific_modifier(archetype: String, skill_id: String, level_d
 			return _treant_modifier(skill_id, level_data, context)
 		"timbersaw":
 			return _timbersaw_modifier(skill_id, level_data, context)
+		"snapfire":
+			return _snapfire_modifier(skill_id, level_data, context)
+		"naga_siren":
+			return _naga_siren_modifier(skill_id, level_data, context)
+		"slardar":
+			return _slardar_modifier(skill_id, level_data, context)
 		_:
 			return 0.0
 
@@ -2063,6 +2195,989 @@ static func _timbersaw_basic_attack_modifier(context: Dictionary) -> float:
 	var target_hp: float = float(context.get("target_hp", 0.0))
 	if target_hp > 0.0 and hero_damage >= target_hp:
 		score += 50.0
+
+	var max_mana: float = float(context.get("hero_max_mana", 0.0))
+	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:
+		score += 8.0
+
+	return score
+
+
+## Snapfire: aggressive, ranged, AoE-focused, kill-oriented,
+## opportunistic. Scatterblast/Firesnap Cookie/Lil' Shredder/Mortimer
+## Kisses are all "offensive" category (each fed by its own _estimate_
+## skill_damage() case, for the shared kill-potential/target-value
+## terms); this layers each skill's own AoE/positioning/armor/
+## opportunity-cost value on top. None of the four needs anything beyond
+## context fields this file already exposes generically (living_target_
+## hps/target_distance/caster_pos_index/target_pos_index/grid_columns/
+## caster_facing_left, all already established by Tusk's/Crystal
+## Maiden's own modifiers) plus two new ones scoped to this file's own
+## header comment: "target_is_hero" (Timbersaw's own, reused as-is) and
+## "target_armor" (new, for Lil' Shredder specifically).
+static func _snapfire_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+	match skill_id:
+		"scatterblast":
+			return _snapfire_scatterblast_modifier(level_data, context)
+		"firesnap_cookie":
+			return _snapfire_firesnap_cookie_modifier(level_data, context)
+		"lil_shredder":
+			return _snapfire_lil_shredder_modifier(level_data, context)
+		"mortimer_kisses":
+			return _snapfire_mortimer_kisses_modifier(level_data, context)
+		BASIC_ATTACK_ID:
+			return _snapfire_basic_attack_modifier(context)
+		_:
+			return 0.0
+
+
+## Scatterblast: the generic offensive scoring above already covers the
+## primary target's own value/kill potential (fed by the flat-damage
+## _estimate_skill_damage() case); this adds the shared AoE multi-target
+## tiers on top - by the time this runs, the directional "is anything
+## actually ahead of the blast" check has already happened (see battle.gd's
+## own _enemy_skill_in_range()'s "scatterblast" case), so `living_target_
+## hps` here is already exactly "whoever the blast actually reaches," per
+## the design doc's own "do NOT give Scatterblast a high score merely
+## because enemies exist within its maximum range - the actual affected
+## positions must be evaluated" instruction - never a fresh directional
+## re-check of its own. A real hero fight only ever has the player as a
+## possible target, so this collapses to a single hit there (no AoE
+## bonus), same rival-side simplification every other AoE skill in this
+## file already has; the multi-target tiers only ever do real work in the
+## simulation.
+static func _snapfire_scatterblast_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var living_hps: Array = context.get("living_target_hps", [])
+	var hit_count: int = living_hps.size()
+
+	var score: float = 0.0
+	if hit_count >= 3:
+		score += 35.0
+	elif hit_count == 2:
+		score += 20.0
+
+	if hit_count >= 2:
+		# "Hits the primary target AND at least one additional enemy" -
+		# a real cluster, not just a lucky single hit (which already
+		# gets its own value from the generic offensive term above, with
+		# no separate AoE bonus needed).
+		score += 15.0
+
+	var damage: float = float(level_data.get("damage", 0.0))
+	var extra_kills: int = 0
+	for i in range(1, living_hps.size()):
+		if damage >= float(living_hps[i]) and float(living_hps[i]) > 0.0:
+			extra_kills += 1
+	if extra_kills >= 1:
+		score += 25.0 * float(extra_kills)
+
+	return score
+
+
+## Firesnap Cookie: a self-directed hop with an AoE landing, so - unlike
+## Whirling Death's own self-CENTERED radius (checked against Snapfire's
+## CURRENT position) - the AI has to project where the hop actually ends
+## up before it can tell whether anyone's within `radius` of it at all.
+## `grid_columns` gates whether that projection is even possible (never
+## present in the simulation - see EnemyHeroManager's own _build_npc_ai_
+## context() docstring - where a missing value falls back to the same
+## "more enemies around, more this matters" proxy every other position-
+## dependent skill in this file uses there). Per the design doc's own
+## "do not score the ability as useful if there is no valid landing
+## position that actually affects an enemy" instruction, a landing that
+## reaches nobody scores WORSE than not casting it at all, not just
+## "no bonus".
+static func _snapfire_firesnap_cookie_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var grid_columns: int = int(context.get("grid_columns", 0))
+	var radius: int = int(level_data.get("radius", 0))
+	var hit_count: int
+
+	if grid_columns > 0:
+		var jump_distance: int = int(level_data.get("jump_distance", 0))
+		var caster_pos: int = int(context.get("caster_pos_index", 0))
+		var target_pos: int = int(context.get("target_pos_index", 0))
+		var direction: int = -1 if bool(context.get("caster_facing_left", false)) else 1
+		var landing_pos: int = clampi(caster_pos + direction * jump_distance, 0, grid_columns - 1)
+		hit_count = 1 if abs(landing_pos - target_pos) <= radius else 0
+	else:
+		hit_count = int(context.get("enemy_count", 1))
+
+	if hit_count <= 0:
+		return -30.0
+
+	var score: float = 20.0
+
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	if stun_turns >= 1:
+		score += 30.0
+
+	if hit_count >= 2:
+		# One credit per additional enemy hit, plus a flat bonus for
+		# "2+ enemies stunned at once" (every enemy the AoE reaches also
+		# gets stunned, per the skill's own description).
+		score += 25.0 * float(hit_count - 1)
+		score += 35.0
+
+	if float(context.get("hero_hp_ratio", 1.0)) < 0.4:
+		# A high-threat situation for Snapfire herself makes locking an
+		# enemy down here worth more, same "how much does removing an
+		# action matter right now" signal every other stun-carrying
+		# skill in this file already uses.
+		score += 20.0
+
+	var damage: float = float(level_data.get("damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and damage >= target_hp:
+		score += 25.0
+
+	return score
+
+
+## Lil' Shredder: single-target burst that "competes directly with
+## normal attacks" per the design doc's own instruction, hence the
+## early-out below - a target a plain Attack can already kill outright
+## leaves nothing for a slower 3-shot volley to finish first. Armor
+## reduction is valued BOTH as immediate offensive value (this volley's
+## own later shots land harder) and as setup value for whatever Snapfire
+## does next while it's still up - `target_armor` (the target's own
+## CURRENT armor, already reflecting any earlier reduction - see this
+## file's own header comment) is what makes "high-armor target" a real
+## number instead of a guess, and `duration` (read straight from this
+## level's own data, never assumed to last forever) scales how much of
+## that setup value is actually likely to still be there when it matters.
+static func _snapfire_lil_shredder_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp <= 0.0:
+		return 0.0
+	if hero_damage >= target_hp:
+		return -35.0
+
+	var score: float = 0.0
+
+	var target_armor: float = float(context.get("target_armor", 0.0))
+	if target_armor >= 4.0:
+		score += 15.0
+
+	var shots: int = int(level_data.get("shots", 3))
+	var damage_pct: float = float(level_data.get("damage_pct", 0.0))
+	var per_shot: float = hero_damage * damage_pct
+	if per_shot > 0.0 and target_hp > per_shot * float(shots - 1) and target_hp <= per_shot * float(shots) * 1.6:
+		# Enough HP to soak most/all `shots` without wildly overkilling -
+		# the "worth spending all of them on" middle ground the design
+		# doc's own "target has enough HP to benefit from multiple
+		# shots" instruction calls for.
+		score += 20.0
+
+	var target_max_hp: float = float(context.get("target_max_hp", 0.0))
+	if target_max_hp > 0.0 and target_hp / target_max_hp < 0.5:
+		score += 20.0
+
+	var armor_reduction_per_shot: float = float(level_data.get("armor_reduction_per_shot", 0.0))
+	var duration: int = int(level_data.get("duration", 0))
+	if armor_reduction_per_shot > 0.0 and duration > 0 and target_armor > 0.0:
+		# Worth more the larger a slice of the target's OWN armor it
+		# actually shreds - both this volley's own later shots and
+		# whatever Snapfire lands before it expires.
+		var reduction_pct: float = clampf((armor_reduction_per_shot * float(shots)) / maxf(target_armor, 1.0), 0.0, 1.0)
+		score += 15.0 * reduction_pct
+
+	return score
+
+
+## Mortimer Kisses: a target-centered AoE + persistent burn ultimate,
+## same shape as Timbersaw's own Chakram - see _timbersaw_chakram_
+## modifier()'s own docstring for why a real hero fight's splash always
+## collapses to 0 (there's only ever the one player to hit), while the
+## simulation's own "no columns, hit everyone else" fallback gives it
+## real multi-target value (see EnemyHeroManager's own _fire_npc_
+## mortimer_kisses_shot()). The early-out mirrors Lil' Shredder's/every
+## other expensive-skill's own: a target a plain Attack can already kill
+## outright isn't worth a 200-350 mana ultimate. Opportunity cost (3 full
+## turns of no movement/attack/other skill/items) is expressed as
+## straight penalties scaled by how dangerous the situation already is -
+## deliberately NOT a separate "would another action have been better"
+## penalty, since that's exactly what the surrounding score COMPARISON
+## against every other candidate already does on its own.
+static func _snapfire_mortimer_kisses_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		return -100.0
+
+	# A valid target worth marking at all - always true once this is a
+	# candidate (there's always exactly one possible target in a hero
+	# fight, and the simulation never offers this as a candidate with an
+	# empty `living` either - see EnemyHeroManager's own "living.is_
+	# empty()" guard in _fire_npc_mortimer_kisses_shot()).
+	var score: float = 25.0
+
+	var main_damage: float = float(level_data.get("main_damage", 0.0))
+	var burn_per_turn: float = float(level_data.get("burn_per_turn", 0.0))
+	var burn_duration: int = int(level_data.get("burn_duration", 0))
+	var total_expected_damage: float = main_damage + burn_per_turn * float(burn_duration)
+	if target_hp > 0.0 and total_expected_damage >= target_hp:
+		score += 25.0
+
+	var target_max_hp: float = float(context.get("target_max_hp", 0.0))
+	if target_max_hp > 0.0 and target_hp / target_max_hp < 0.6:
+		score += 20.0
+
+	var splash_targets: int = 0
+	if int(context.get("grid_columns", 0)) <= 0:
+		splash_targets = maxi(int(context.get("enemy_count", 1)) - 1, 0)
+
+	if splash_targets >= 3:
+		score += 40.0
+	elif splash_targets >= 2:
+		score += 25.0
+	elif splash_targets >= 1:
+		score += 20.0
+
+	# --- Opportunity cost: 3 full turns of no movement, no Attack, no
+	# other skill, no items. ---
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	if hp_ratio < 0.35:
+		# In real danger - channeling through that is a genuine gamble,
+		# not a free commitment.
+		score -= 25.0
+	if int(context.get("enemy_count", 1)) >= 2 and hp_ratio < 0.5:
+		# Likely to need to reposition during the channel and won't be
+		# able to.
+		score -= 20.0
+
+	return score
+
+
+## A plain Attack is only worth scoring above its flat baseline for
+## Snapfire when it can finish the target off outright (see
+## basic_attack_participates()'s own docstring for why she opts in at
+## all) - Mortimer Kisses in particular is a very expensive ultimate, so
+## a free kill deserves a real shot at winning over spending it (see the
+## design doc's own Basic Attack example). Same small mana-scarcity
+## nudge as every other hero's own copy here.
+static func _snapfire_basic_attack_modifier(context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		score += 50.0
+
+	var max_mana: float = float(context.get("hero_max_mana", 0.0))
+	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:
+		score += 8.0
+
+	return score
+
+
+## Naga Siren: tactical, control-oriented, illusion-focused. Every one of
+## her skills leans on the same handful of context fields battle.gd's/
+## EnemyHeroManager's own _build_*_ai_context() compute fresh each turn -
+## "illusions_active"/"illusion_count"/"illusion_turns_remaining"/
+## "illusion_total_damage_per_turn" (Mirror Image's current state, read
+## by Ensnare/Song/a plain Attack for their own synergy bonuses) and
+## "rip_tide_illusion_damage_bonus_pct"/"rip_tide_extra_illusion"/
+## "rip_tide_illusion_duration_bonus"/"rip_tide_aoe_damage_pct" (Rip
+## Tide's current level, folded into Mirror Image/Song/a plain Attack
+## since the passive itself is never a scored candidate - see this
+## file's own header comment).
+static func _naga_siren_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+	match skill_id:
+		"mirror_image":
+			return _naga_mirror_image_modifier(level_data, context)
+		"ensnare":
+			return _naga_ensnare_modifier(level_data, context)
+		"song_of_the_siren":
+			return _naga_song_of_the_siren_modifier(level_data, context)
+		BASIC_ATTACK_ID:
+			return _naga_basic_attack_modifier(context)
+		_:
+			return 0.0
+
+
+## Mirror Image: NOT a one-shot damage spell - its value is the
+## illusions' own expected total damage over their FULL duration
+## (offensive) plus the chance a hit meant for Naga herself lands on an
+## illusion instead (defensive). Neither half is generic enough for
+## _evaluate_offensive()/_evaluate_defensive() to cover (this skill's own
+## SKILL_INFO category is "utility", same "the hero-specific modifier IS
+## the whole value" shape Lone Druid's own Spirit Bear uses - see
+## _lone_druid_modifier()), so both live here together, exactly per the
+## design doc's own "a defensive Mirror Image can be the right call even
+## with lower immediate damage" instruction.
+static func _naga_mirror_image_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var illusions_count: int = int(level_data.get("illusions", 0)) + int(context.get("rip_tide_extra_illusion", 0))
+	var damage_pct: float = float(level_data.get("damage_pct", 0.0)) + float(context.get("rip_tide_illusion_damage_bonus_pct", 0.0))
+	var duration: int = int(level_data.get("duration", 0)) + int(context.get("rip_tide_illusion_duration_bonus", 0))
+	var hit_chance_pct: float = float(level_data.get("hit_chance_pct", 0.0))
+
+	var living_hps: Array = context.get("living_target_hps", [])
+	var hit_count: int = living_hps.size()
+
+	var score: float = 0.0
+
+	# --- Offensive value: the illusions' own expected total damage over
+	# the FULL duration, never just one turn's hit. There's no separate
+	# signal anywhere in this project for "a target Naga herself can
+	# reach" versus "a target the illusions can reach" - both draw from
+	# the exact same in-range enemy pool (see battle.gd's own
+	# _fire_mirror_image_attack()) - so the design doc's own "+20 if at
+	# least one enemy is attackable" and "+20 if Naga can attack the same
+	# target as the illusions" collapse into this single hit_count>=1
+	# check rather than two independent ones.
+	if hit_count >= 1:
+		score += 40.0
+	if hit_count >= 2:
+		score += 25.0
+	if duration >= 2:
+		score += 20.0
+	if float(context.get("rip_tide_illusion_damage_bonus_pct", 0.0)) > 0.0:
+		score += 15.0
+
+	var illusion_damage_per_turn: float = hero_damage * damage_pct * float(illusions_count)
+	var total_expected_damage: float = illusion_damage_per_turn * float(duration)
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and total_expected_damage >= target_hp:
+		score += 25.0
+
+	# --- Defensive value: enemies can hit an illusion instead of Naga
+	# herself - never purely offensive (see this function's own
+	# docstring). Reuses the same HP-ratio/outnumbered signals
+	# _evaluate_defensive() uses elsewhere, just feeding this skill's own
+	# value instead of the shared category term (which never runs for a
+	# "utility"-category skill like this one).
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	if hp_ratio < 0.20:
+		score += 35.0
+	elif hp_ratio < 0.50:
+		score += 20.0
+	if int(context.get("enemy_count", 1)) >= 2:
+		score += 25.0
+	if hit_chance_pct >= 0.35:
+		score += 20.0
+
+	# --- Recasting mid-duration replaces a still-healthy set outright
+	# (_end_mirror_image() runs first every time - see battle.gd's own
+	# _activate_mirror_image()) - only worth it once the current set is
+	# close to expiring anyway, never as a mid-duration "refresh". ---
+	if bool(context.get("illusions_active", false)) and int(context.get("illusion_turns_remaining", 0)) >= 2:
+		score -= 25.0
+
+	return score
+
+
+## Ensnare: a ROOT, not a stun - the target can still attack and cast
+## while rooted (see the design doc's own explicit "does not prevent
+## attacking or skill usage" instruction), so unlike Torrent's/Pounce's
+## own stuns this gets no generic "stun_turns" bonus at all - its whole
+## value is movement denial/kill setup: securing a kill the upfront hit
+## alone wouldn't, keeping a target that would otherwise create distance
+## within reach, and letting active illusions keep attacking it too.
+static func _naga_ensnare_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	var target_max_hp: float = float(context.get("target_max_hp", 0.0))
+	if target_max_hp > 0.0 and target_hp / target_max_hp < 0.35:
+		score += 20.0
+
+	# A kill the root itself doesn't land but SETS UP over the turns the
+	# target can't escape Naga's (and any active illusions') follow-up
+	# hits - the primary target's own upfront kill is already scored
+	# generically (see _kill_potential_bonus(), fed by this skill's own
+	# flat-damage _estimate_skill_damage() case), this only adds for a
+	# kill that needs the follow-up window to actually happen.
+	var ensnare_damage: float = float(level_data.get("damage", 0.0))
+	if target_hp > 0.0 and ensnare_damage < target_hp:
+		var root_turns: int = int(level_data.get("root_turns", 0))
+		var follow_up_damage: float = float(context.get("hero_damage", 0.0)) * float(root_turns)
+		if bool(context.get("illusions_active", false)):
+			follow_up_damage += float(context.get("illusion_total_damage_per_turn", 0.0)) * float(root_turns)
+		if ensnare_damage + follow_up_damage >= target_hp:
+			score += 25.0
+
+	# Only real in a hero fight (target_distance is absent in the
+	# simulation - no positions there, same "no columns" honesty every
+	# other position-dependent modifier in this file already follows -
+	# see _tp_natures_guise_modifier()'s own early-out for the same
+	# pattern). A target not already adjacent has real room to try to
+	# create distance next turn; one within this level's own range that
+	# wouldn't otherwise be guaranteed to stay there is exactly what the
+	# root is for.
+	var raw_distance: int = int(context.get("target_distance", -1))
+	if raw_distance >= 0:
+		if raw_distance > 1:
+			score += 15.0
+		var ensnare_range: int = int(level_data.get("range", 0))
+		if raw_distance > 0 and raw_distance <= ensnare_range:
+			score += 20.0
+
+	# Active illusions can keep attacking a target that can no longer run
+	# from them either - this also covers the design doc's own separate
+	# "rooting the target allows Naga/illusions to attack it" bullet,
+	# which would otherwise double-count the same signal.
+	if bool(context.get("illusions_active", false)):
+		score += 20.0
+
+	return score
+
+
+## Song of the Siren: not a direct-damage cast (no damage field of its
+## own at all) - its real destructive value is every hit Naga and any
+## active illusions can land completely safely while every enemy in
+## radius is stunned and unable to retaliate. Self-centered, same "reuse
+## target_distance as its own self-cast range check" idiom Crystal
+## Maiden's own Freezing Field/Treant Protector's own Overgrowth already
+## use (see _tp_overgrowth_modifier()'s own docstring) - out of range in
+## a real fight scores low rather than being excluded outright, same
+## early-out shape Overgrowth's own uses.
+static func _naga_song_of_the_siren_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var radius: int = int(level_data.get("radius", 0))
+	var raw_distance: int = int(context.get("target_distance", -1))
+	var in_range: bool = raw_distance < 0 or raw_distance <= radius
+	if not in_range:
+		return -40.0
+
+	var living_hps: Array = context.get("living_target_hps", [])
+	var living_max_hps: Array = context.get("living_target_max_hps", living_hps)
+	var hit_count: int = living_hps.size()
+
+	var score: float = 0.0
+	if hit_count >= 3:
+		score += 60.0
+	elif hit_count == 2:
+		score += 40.0
+	elif hit_count == 1:
+		score += 25.0
+
+	# "High-threat enemy" has no real stat to read anywhere in this
+	# project (same gap Whirling Death's own primary-attribute reduction
+	# has - see this file's own header comment) - the closest honest
+	# proxy is a target already low enough to be worth finishing off, the
+	# same low-HP signal Overgrowth's own modifier already uses.
+	var low_hp_count: int = 0
+	for i in range(hit_count):
+		var hp: float = float(living_hps[i])
+		if hp <= 0.0:
+			continue
+		var max_hp: float = float(living_max_hps[i]) if i < living_max_hps.size() else hp
+		if max_hp > 0.0 and hp <= max_hp * 0.3:
+			low_hp_count += 1
+	score += 20.0 * float(low_hp_count)
+
+	# --- The offensive window itself: every hit Naga (and any active
+	# illusions) land completely safely while enemies are stunned - see
+	# _naga_song_expected_damage()'s own docstring. ---
+	var total_physical_damage: float = _naga_song_expected_damage(level_data, context)
+
+	var extra_kills: int = 0
+	for hp in living_hps:
+		if total_physical_damage >= float(hp) and float(hp) > 0.0:
+			extra_kills += 1
+	if extra_kills >= 1:
+		score += 25.0
+	if extra_kills >= 2:
+		score += 35.0 * float(extra_kills - 1)
+
+	# --- Armor reduction: worth more the larger a slice of the target's
+	# own CURRENT armor it actually shreds AND the more physical damage
+	# is already happening during the window to benefit from it - same
+	# "reduction_pct off the target's own current armor" idiom Snapfire's
+	# own Lil' Shredder modifier uses (see _snapfire_lil_shredder_
+	# modifier()), scaled by this window's own real damage total instead
+	# of a flat number, per the design doc's own explicit "its value
+	# depends on how much physical damage Naga can actually deal, not a
+	# flat bonus" instruction. ---
+	var armor_reduction: float = float(level_data.get("armor_reduction", 0.0))
+	var target_armor: float = float(context.get("target_armor", 0.0))
+	if armor_reduction > 0.0 and target_armor > 0.0:
+		var reduction_pct: float = clampf(armor_reduction / target_armor, 0.0, 1.0)
+		score += total_physical_damage * reduction_pct * 0.3
+
+	# --- Mirror Image synergy: Naga's primary combo. Active illusions
+	# turn the stun from pure control into a second wave of safe damage. ---
+	var illusions_active: bool = bool(context.get("illusions_active", false))
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	if illusions_active:
+		score += 25.0
+		var illusion_count: int = int(context.get("illusion_count", 0))
+		var illusion_turns_remaining: int = int(context.get("illusion_turns_remaining", 0))
+		var illusion_damage_per_turn: float = float(context.get("illusion_total_damage_per_turn", 0.0))
+		if illusion_count >= 2 and illusion_turns_remaining >= int(ceil(float(stun_turns) / 2.0)):
+			score += 40.0
+		if illusion_count >= 2 and illusion_turns_remaining >= stun_turns and illusion_damage_per_turn > 0.0:
+			score += 60.0
+
+	# --- Defensive use: only under real danger, never just "took some
+	# damage" (per the design doc's own explicit caution) - she can
+	# still attack while the stun holds, so offense stays the default
+	# read whenever a real offensive opportunity already exists above. ---
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	var enemy_count: int = int(context.get("enemy_count", 1))
+	if hp_ratio < 0.20:
+		score += 20.0
+	elif hp_ratio < 0.30 and enemy_count >= 2:
+		score += 30.0
+
+	# --- Opportunity cost: a single already-low-value target, no
+	# illusions up, and no real attack window isn't worth a high-mana
+	# ultimate's cooldown - a cheaper play can do the same job (per the
+	# design doc's own "apply a resource penalty when Naga is unable to
+	# capitalize on the stun" instruction). A nudge, not a veto - the
+	# surrounding score comparison against every other candidate still
+	# gets the final say. ---
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if hit_count <= 1 and not illusions_active and total_physical_damage < target_hp * 0.4:
+		score -= 30.0
+
+	return score
+
+
+## Shared by both _estimate_skill_damage()'s own "song_of_the_siren" case
+## (which feeds the generic kill-potential term against the primary
+## target) and _naga_song_of_the_siren_modifier() (which needs the same
+## total for its own armor-reduction/extra-kill math), so the two never
+## drift apart. Song of the Siren has no damage field of its own at all -
+## its real value is every attack Naga (this level's own stun_turns
+## worth of them - she can still act every turn the stun holds) and any
+## active illusions land completely safely, plus whatever Rip Tide's own
+## splash adds across the other stunned targets.
+static func _naga_song_expected_damage(level_data: Dictionary, context: Dictionary) -> float:
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var expected_naga_damage: float = hero_damage * float(stun_turns)
+
+	var illusion_damage: float = 0.0
+	if bool(context.get("illusions_active", false)):
+		illusion_damage = float(context.get("illusion_total_damage_per_turn", 0.0)) * float(stun_turns)
+
+	var hit_count: int = context.get("living_target_hps", []).size()
+	var rip_tide_aoe_pct: float = float(context.get("rip_tide_aoe_damage_pct", 0.0))
+	var splash_damage: float = expected_naga_damage * rip_tide_aoe_pct * float(maxi(hit_count - 1, 0))
+
+	return expected_naga_damage + illusion_damage + splash_damage
+
+
+## A plain Attack is only worth scoring above its flat baseline for Naga
+## Siren when it can already finish the target off, when Rip Tide's own
+## splash reaches more than one enemy, or when active illusions are
+## already focus-firing the same target (see basic_attack_participates()'
+## own docstring for why she opts in at all).
+static func _naga_basic_attack_modifier(context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	if target_hp > 0.0 and hero_damage >= target_hp:
+		score += 50.0
+
+	var living_hps: Array = context.get("living_target_hps", [])
+	if float(context.get("rip_tide_aoe_damage_pct", 0.0)) > 0.0:
+		var splash_targets: int = maxi(living_hps.size() - 1, 0)
+		if splash_targets >= 2:
+			score += 30.0
+		elif splash_targets == 1:
+			score += 15.0
+
+	if bool(context.get("illusions_active", false)):
+		# The illusions already focus-fire the same target a plain Attack
+		# would hit (see battle.gd's own _fire_mirror_image_attack()) -
+		# stacking a real Attack onto that same target keeps the whole
+		# squad's damage concentrated instead of spending mana on a fresh
+		# cast.
+		score += 10.0
+
+	var max_mana: float = float(context.get("hero_max_mana", 0.0))
+	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:
+		score += 8.0
+
+	return score
+
+
+## Slardar: aggressive melee bruiser, control-oriented, kill-focused,
+## armor-break/damage-amplification focused. Every one of his skills
+## leans on context fields battle.gd's/EnemyHeroManager's own
+## _build_*_ai_context() compute fresh each turn - "hero_move_distance"/
+## "sprint_bonus_movement"/"sprint_charge_damage_pct" (Guardian Sprint's
+## own reach, read by Corrosive Haze/a plain Attack too, since Sprint
+## itself is only ever scored as a candidate on the turn it's actually
+## cast), "bash_attacks_required"/"bash_current_progress"/"bash_bonus_
+## damage_pct"/"bash_knockback" (Bash of the Deep's current progression -
+## the passive itself is never a scored candidate, see this file's own
+## header comment), "crush_radius"/"crush_damage" (Slithereen Crush's
+## current level, for Sprint's/Haze's own combo bonuses), and
+## "target_marked_bonus_pct" (whether the CURRENT target is already
+## Corrosive Haze-marked, for a plain Attack's own synergy bonus).
+static func _slardar_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+	match skill_id:
+		"guardian_sprint":
+			return _slardar_guardian_sprint_modifier(level_data, context)
+		"slithereen_crush":
+			return _slardar_slithereen_crush_modifier(level_data, context)
+		"corrosive_haze":
+			return _slardar_corrosive_haze_modifier(level_data, context)
+		BASIC_ATTACK_ID:
+			return _slardar_basic_attack_modifier(context)
+		_:
+			return 0.0
+
+
+## True if Bash of the Deep is learned and the VERY NEXT qualifying
+## Attack will trigger it - shared by every one of this hero's own
+## modifiers that care (Guardian Sprint's own "+20 enables a ready Bash"
+## bonus, Corrosive Haze's own Bash synergy, a plain Attack's own
+## substantial bonus) so none of them re-derive the same off-by-one
+## threshold check differently.
+static func _slardar_bash_ready(context: Dictionary) -> bool:
+	var required: int = int(context.get("bash_attacks_required", 0))
+	if required <= 0:
+		return false
+	return int(context.get("bash_current_progress", 0)) + 1 >= required
+
+
+## Bash's own knockback: worth a real (if modest) bonus while Slardar is
+## actually threatened - a bit of breathing room right after he already
+## landed the hit - but at full/moderate HP it only pushes the target OUT
+## of his own melee follow-up range (he was already standing next to it
+## to land the Attack that triggered Bash in the first place), a real
+## cost rather than a free one, per the design doc's own explicit "do not
+## give large value to knockback if it moves the target away and makes
+## subsequent attacks harder" caution. Guardian Sprint's own current
+## reach being enough to close that same gap right back turns the cost
+## into a wash instead of a loss.
+static func _slardar_bash_knockback_value(context: Dictionary) -> float:
+	var knockback: int = int(context.get("bash_knockback", 0))
+	if knockback <= 0:
+		return 0.0
+
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	var enemy_count: int = int(context.get("enemy_count", 1))
+	if hp_ratio < 0.35 or enemy_count >= 2:
+		return 12.0
+
+	if int(context.get("sprint_bonus_movement", 0)) >= knockback:
+		return 0.0
+
+	return -8.0
+
+
+## The raw (pre-amplification) physical damage Slardar can realistically
+## land on the current target over `duration` turns - Basic Attacks,
+## Bash of the Deep's own bonus procs along the way, one Slithereen Crush
+## hit if the target stays within its radius, and Guardian Sprint's own
+## charge damage if the target isn't already in melee range but Sprint
+## can close the gap. Shared by _slardar_corrosive_haze_modifier() (which
+## needs this to work out the debuff's own AMPLIFIED total, per the
+## design doc's own "do not treat bonus_damage_pct as simply +20 score -
+## estimate the actual bonus damage" instruction) and _estimate_skill_
+## damage()'s own "corrosive_haze" case (via _slardar_corrosive_haze_
+## expected_damage()), so the two numbers never drift apart. `duration`
+## is capped at 4 turns' worth of attacks even when the debuff itself
+## lasts longer - the same "do not automatically assume every enemy
+## stays in range for the full duration" caution Timbersaw's own Chakram
+## modifier already follows, rather than letting a 6-turn Haze imply six
+## guaranteed hits.
+static func _slardar_expected_attacks_on_target(duration: int, context: Dictionary) -> float:
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var raw_distance: int = int(context.get("target_distance", -1))
+	var reach: int = int(context.get("hero_move_distance", 1)) + int(context.get("sprint_bonus_movement", 0))
+	var expected_hits: int = mini(duration, 4)
+
+	# No positions at all in the simulation (target_distance is absent) -
+	# every attack already reaches its target with no travel cost, same
+	# "no columns" simplification _tp_natures_guise_modifier()'s own
+	# early-out already follows - so Slardar is always treated as already
+	# in melee range there.
+	var already_in_range: bool = raw_distance < 0 or raw_distance <= 0
+	var reachable_via_sprint: bool = raw_distance > 0 and raw_distance <= reach
+
+	var base_damage: float = 0.0
+	var sprint_damage: float = 0.0
+	var attacks_landed: int = 0
+	if already_in_range:
+		base_damage = hero_damage * float(expected_hits)
+		attacks_landed = expected_hits
+	elif reachable_via_sprint:
+		# Closing the distance costs the FIRST turn of the window - only
+		# the turns left over actually land a plain Attack, same "the
+		# travel itself isn't free" honesty this whole estimate leans on.
+		sprint_damage = hero_damage * float(context.get("sprint_charge_damage_pct", 0.0))
+		attacks_landed = maxi(expected_hits - 1, 0)
+		base_damage = hero_damage * float(attacks_landed)
+	# else: genuinely unreachable during the window - nothing to count.
+
+	var bash_required: int = int(context.get("bash_attacks_required", 0))
+	var bash_damage: float = 0.0
+	if bash_required > 0 and attacks_landed > 0:
+		var bash_progress: int = int(context.get("bash_current_progress", 0))
+		var expected_bash_procs: float = floor(float(attacks_landed + bash_progress) / float(bash_required))
+		bash_damage = expected_bash_procs * hero_damage * float(context.get("bash_bonus_damage_pct", 0.0))
+
+	var crush_damage: float = 0.0
+	var crush_radius: int = int(context.get("crush_radius", 0))
+	if crush_radius > 0 and (raw_distance < 0 or raw_distance <= crush_radius):
+		crush_damage = float(context.get("crush_damage", 0.0))
+
+	return base_damage + sprint_damage + bash_damage + crush_damage
+
+
+## Guardian Sprint: NOT a pure damage ability - its primary value is
+## positional (see the design doc's own explicit instruction). Out of
+## reach even with the bonus movement folded in scores as a wasted cast,
+## already standing on the target scores as a redundant one (Sprint has
+## nothing left to set up that Basic Attack/Crush don't already have),
+## and landing on the target - which, per Guardian Sprint's own "stop on
+## the first enemy in the way" rule (see battle.gd's own
+## _guardian_sprint_move_target()), always means reaching the enemy,
+## dealing charge damage, AND ending up in attack range simultaneously -
+## is the one case that matters, so the design doc's own separate "+20
+## reach"/"+20 charge damage"/"+20 attack range" bonuses collapse into
+## one 60-point event here rather than three independent checks over an
+## event that only ever happens once. `target_distance` is absent in the
+## simulation (no positions there at all) - this returns a flat 0 in
+## that case rather than guessing, same as every other position-
+## dependent modifier in this file.
+static func _slardar_guardian_sprint_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var raw_distance: int = int(context.get("target_distance", -1))
+	if raw_distance < 0:
+		return 0.0
+
+	var reach: int = int(context.get("hero_move_distance", 1)) + int(level_data.get("bonus_movement", 0))
+	var score: float = 0.0
+
+	if raw_distance <= 0:
+		# Already standing right on the target - vanishing distance that
+		# isn't there only delays whatever's already available (see the
+		# design doc's own "do not use Sprint without a meaningful
+		# positional benefit" instruction).
+		score -= 20.0
+	elif raw_distance <= reach:
+		score += 60.0
+
+		var charge_damage: float = float(context.get("hero_damage", 0.0)) * float(level_data.get("charge_damage_pct", 0.0))
+		var target_hp: float = float(context.get("target_hp", 0.0))
+		if target_hp > 0.0 and charge_damage >= target_hp:
+			score += 25.0
+
+		if int(context.get("crush_radius", 0)) > 0:
+			# Landing ON the target's own column is within any radius
+			# >= 0, so there's no separate distance check needed here -
+			# reaching it at all already guarantees Crush would connect.
+			score += 15.0
+
+		if _slardar_bash_ready(context):
+			score += 20.0
+	else:
+		# Can't realistically reach the target even with the bonus
+		# movement folded in - a setup with nothing left to set up, same
+		# "cannot realistically reach a useful target" waste case
+		# _tp_natures_guise_modifier()'s own copy already covers.
+		score -= 15.0
+
+	# --- Defensive value: an escape, not an engage - only under real
+	# danger, never just "lost some HP" (per the design doc's own
+	# explicit caution), and small enough that a real offensive
+	# opportunity above (the +60 branch) always wins out regardless. ---
+	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
+	if hp_ratio < 0.20:
+		score += 30.0 + minf(float(int(context.get("enemy_count", 1)) - 1), 3.0) * 5.0
+
+	return score
+
+
+## Slithereen Crush: one of Slardar's most frequently valuable actives -
+## real AoE damage/stun/burst, not a single-target nuke that happens to
+## have a radius. The generic offensive scoring above already covers the
+## primary target's own value/kill potential (fed by this skill's own
+## flat-damage _estimate_skill_damage() case); this adds the design
+## doc's own multi-target/high-threat/stun/kill-setup tiers on top, all
+## computed from the ACTUAL affected positions (`living_target_hps`),
+## never assumed from "is one enemy in range" alone.
+static func _slardar_slithereen_crush_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var living_hps: Array = context.get("living_target_hps", [])
+	var hit_count: int = living_hps.size()
+	if hit_count <= 0:
+		return -35.0
+
+	var score: float = 0.0
+	if hit_count >= 3:
+		score += 50.0
+	elif hit_count == 2:
+		score += 35.0
+	elif hit_count == 1:
+		score += 20.0
+
+	# "High-threat enemy" has no real per-creep stat exposed to this
+	# shared context today (same gap Whirling Death's own primary-
+	# attribute reduction has - see this file's own header comment); the
+	# one real, always-available signal is `target_is_hero` - a hero-
+	# fight boss's own opponent (the player) is definitionally a bigger
+	# threat than a regular creep, same qualitative read Timbersaw's own
+	# modifier already uses that field for.
+	if bool(context.get("target_is_hero", false)):
+		score += 20.0 * float(hit_count)
+
+	var stun_turns: int = int(level_data.get("stun_turns", 0))
+	# Control value scaled by BOTH duration and how many targets are
+	# actually stunned at once - reading the level's own real stun_turns
+	# rather than assuming a fixed 1-turn stun, per the design doc's own
+	# explicit instruction. A real stun (unlike Overgrowth's pure root),
+	# so this leans harder per turn than Overgrowth's own root-duration
+	# term does.
+	score += float(stun_turns) * float(hit_count) * 8.0
+
+	var damage: float = float(level_data.get("damage", 0.0))
+	var extra_kills: int = 0
+	for hp in living_hps:
+		if damage >= float(hp) and float(hp) > 0.0:
+			extra_kills += 1
+	# The primary target's own kill is already scored generically (see
+	# _kill_potential_bonus(), fed by _estimate_skill_damage()'s own
+	# "slithereen_crush" case) - this only adds for kills BEYOND that
+	# one, same split Torrent's/Overgrowth's/Song of the Siren's own
+	# modifiers use.
+	if extra_kills >= 2:
+		score += 40.0 * float(extra_kills - 1)
+
+	# Crush → Bash: a stunned target Slardar can immediately follow up on
+	# is exactly the setup a ready Bash needs - per the design doc's own
+	# explicit "Slithereen Crush → Bash" synergy.
+	if _slardar_bash_ready(context):
+		score += 20.0
+
+	return score
+
+
+## Corrosive Haze: Slardar's ultimate - armor reduction + damage
+## amplification + a multi-turn offensive setup, never a simple debuff
+## scored by a flat "+20 per 10% amplification" - see _slardar_expected_
+## attacks_on_target()'s own docstring for how the real bonus damage is
+## actually estimated. Targets a high-HP/high-armor/dangerous enemy that
+## will stick around long enough to be worth the setup, and backs off
+## when the target would die to a normal/Bash-ready Attack anyway (per
+## the design doc's own explicit "casting the ultimate first may be
+## unnecessary" instruction) or when Slardar has no realistic way to
+## reach it before the debuff mostly expires.
+static func _slardar_corrosive_haze_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	var target_max_hp: float = float(context.get("target_max_hp", 0.0))
+
+	if hero_damage > 0.0 and target_max_hp >= hero_damage * 3.0:
+		score += 20.0
+
+	var target_armor: float = float(context.get("target_armor", 0.0))
+	if target_armor >= 4.0:
+		score += 20.0
+
+	var raw_distance: int = int(context.get("target_distance", -1))
+	var reach: int = int(context.get("hero_move_distance", 1)) + int(context.get("sprint_bonus_movement", 0))
+	var can_attack_repeatedly: bool = raw_distance < 0 or raw_distance <= reach
+	if can_attack_repeatedly:
+		score += 20.0
+
+	if target_hp > 0.0 and hero_damage > 0.0 and target_hp > hero_damage:
+		# Will survive the next hit outright - there's a debuff window
+		# actually left to exploit, per the design doc's own "the target
+		# will survive several attacks" instruction.
+		score += 25.0
+
+	if bool(context.get("target_is_hero", false)):
+		score += 25.0
+
+	var duration: int = int(level_data.get("duration", 0))
+	var raw_total_damage: float = _slardar_expected_attacks_on_target(duration, context)
+	var bonus_pct: float = float(level_data.get("bonus_damage_pct", 0.0))
+	var bonus_damage_from_haze: float = raw_total_damage * bonus_pct
+	# Scaled by the REAL estimated bonus damage, never a flat "+20 per
+	# 10%" reading of bonus_damage_pct - per the design doc's own
+	# explicit instruction.
+	score += bonus_damage_from_haze * 0.15
+
+	var total_expected_damage: float = raw_total_damage + bonus_damage_from_haze
+	if target_hp > 0.0 and total_expected_damage >= target_hp:
+		score += 30.0
+
+	# --- Haze + Bash: an already/soon-ready Bash means the amplified hit
+	# that triggers it benefits from both normal damage and Bash's own
+	# bonus - per the design doc's own explicit "Corrosive Haze + Bash"
+	# section (already folded into raw_total_damage above via
+	# _slardar_expected_attacks_on_target()'s own bash_damage term; this
+	# is the qualitative top-up on top of that). ---
+	var bash_ready: bool = _slardar_bash_ready(context)
+	if bash_ready:
+		score += 15.0
+
+	# --- Early-out: a target that already dies to a normal (or Bash-
+	# ready) Attack has nothing left for a multi-turn debuff to exploit -
+	# per the design doc's own explicit "if Slardar can already kill the
+	# target with a normal/Bash attack, casting the ultimate first may be
+	# unnecessary" instruction. A steep penalty, not a hard veto - a
+	# genuinely strong multi-target/multi-turn setup can still outweigh
+	# it once every term above is in. ---
+	var immediate_kill_damage: float = hero_damage
+	if bash_ready:
+		immediate_kill_damage += hero_damage * float(context.get("bash_bonus_damage_pct", 0.0))
+	if target_hp > 0.0 and immediate_kill_damage >= target_hp:
+		score -= 40.0
+
+	# --- Resource penalty: genuinely can't reach the target during the
+	# debuff's own window - per the design doc's own explicit "Slardar
+	# cannot reach the target" resource-penalty instruction. ---
+	if raw_distance >= 0 and raw_distance > reach and not (target_hp > 0.0 and immediate_kill_damage >= target_hp):
+		score -= 35.0
+
+	return score
+
+
+## Shared by both _estimate_skill_damage()'s own "corrosive_haze" case
+## (which feeds the generic kill-potential term against the primary
+## target) and _slardar_corrosive_haze_modifier() (which needs the same
+## total for its own amplification/kill-potential math), so the two
+## never drift apart - the mark's own total expected damage over its
+## duration, raw physical output plus the amplified portion on top.
+static func _slardar_corrosive_haze_expected_damage(level_data: Dictionary, context: Dictionary) -> float:
+	var duration: int = int(level_data.get("duration", 0))
+	var raw_total: float = _slardar_expected_attacks_on_target(duration, context)
+	var bonus_pct: float = float(level_data.get("bonus_damage_pct", 0.0))
+	return raw_total * (1.0 + bonus_pct)
+
+
+## A plain Attack is Slardar's single most important candidate - Bash of
+## the Deep rides on it, so this is scored well above the flat baseline
+## whenever it matters, per the design doc's own explicit "it is
+## especially important for Slardar because of Bash of the Deep"
+## instruction, rather than only ever being the fallback for "nothing
+## else qualified" (see basic_attack_participates()'s own docstring for
+## why he opts in at all).
+static func _slardar_basic_attack_modifier(context: Dictionary) -> float:
+	var score: float = 0.0
+
+	var hero_damage: float = float(context.get("hero_damage", 0.0))
+	var target_hp: float = float(context.get("target_hp", 0.0))
+	var bash_ready: bool = _slardar_bash_ready(context)
+
+	var attack_damage: float = hero_damage
+	if bash_ready:
+		attack_damage += hero_damage * float(context.get("bash_bonus_damage_pct", 0.0))
+		score += 30.0
+		score += _slardar_bash_knockback_value(context)
+
+	if target_hp > 0.0 and attack_damage >= target_hp:
+		score += 50.0
+		if bash_ready:
+			score += 20.0
+
+	var marked_bonus_pct: float = float(context.get("target_marked_bonus_pct", 0.0))
+	if marked_bonus_pct > 0.0:
+		# The target is already Corrosive Haze-marked - a plain Attack
+		# realizes that amplification for free, right now, rather than
+		# spending another cast to set up more of it.
+		score += hero_damage * marked_bonus_pct * 0.5
 
 	var max_mana: float = float(context.get("hero_max_mana", 0.0))
 	if max_mana > 0.0 and float(context.get("hero_mana", 0.0)) / max_mana < 0.3:

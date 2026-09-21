@@ -265,9 +265,10 @@ const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
 # Every ACTIVE skill across Slark, Lone Druid, Abaddon, Kunkka, Ancient
-# Apparition, Winter Wyvern, Crystal Maiden, Tusk, Treant Protector, and
-# Timbersaw, the only ten heroes with any simulated skill logic today -
-# anything else a hero knows just never gets cast here. This is the full candidate pool
+# Apparition, Winter Wyvern, Crystal Maiden, Tusk, Treant Protector,
+# Timbersaw, and Snapfire, the only eleven heroes with any simulated
+# skill logic today - anything else a hero knows just never gets cast
+# here. This is the full candidate pool
 # _pick_ready_skill() checks for cooldown/worth-casting/mana before
 # handing survivors to EnemySkillAI to score and pick from - no longer
 # a priority order (see EnemySkillAI.HERO_TIE_BREAK for each hero's own
@@ -344,7 +345,17 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # no columns to tell them apart on. Chakram, his ultimate, is a second
 # self-tracked persistent-AoE state (mirroring Crystal Maiden's own
 # Freezing Field sim copy) that also just hits every living enemy each
-# tick it's active, for the same reason.
+# tick it's active, for the same reason. Snapfire's own Scatterblast
+# (directional in a real fight - see battle.gd's own _enemy_skill_in_
+# range()'s "scatterblast" case) and Firesnap Cookie (a self-directed
+# hop with an AoE landing) both fall back to that same "no columns, hit
+# everyone" simplification here, for the same reasoning as Whirling
+# Death's/Timber Chain's own. Mortimer Kisses, her ultimate, is a
+# channel - like Winter Wyvern's own Cold Embrace, it consumes the
+# WHOLE turn for as long as it's active (see this file's own
+# "mortimer_kisses" branch in _run_stage_fight()'s own action-decision
+# chain), just firing an automatic shot each of those turns instead of
+# doing nothing.
 const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"dark_pact", "pounce", "essence_shift", "shadow_dance",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
@@ -355,7 +366,59 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"ice_shards", "snowball", "tag_team", "walrus_punch",
 	"nature's_guise", "leech_seed", "living_armor", "overgrowth",
 	"whirling_death", "timber_chain", "chakram",
+	"scatterblast", "firesnap_cookie", "lil_shredder", "mortimer_kisses",
+	"mirror_image", "ensnare", "song_of_the_siren",
+	"guardian_sprint", "slithereen_crush", "corrosive_haze",
 ]
+
+# Slardar, the thirteenth hero with simulated skill logic. Guardian
+# Sprint's whole "close distance, charge damage if it lands on an enemy"
+# concept has no columns to close distance ACROSS here (see this file's
+# own header comment) - same "no real destination to walk out" honesty
+# Walrus Punch's own sim copy already follows for its knockback - so it
+# falls back to a flat charge_damage_pct hit on whichever enemy the hero
+# would attack anyway, same "no columns, always hit the lowest-HP enemy"
+# simplification Ice Shards'/Mist Coil's own sim copies use. Slithereen
+# Crush is a self-centered AoE with nothing to center it on here, so -
+# like Ice Blast/Overgrowth/Song of the Siren above - it stuns and damages
+# every living enemy at once. Corrosive Haze marks whichever enemy the
+# hero would attack anyway (a new "corrosive_haze_bonus_pct" per-enemy
+# field, read by _apply_damage_to_enemy() to boost every hit THAT enemy
+# takes from the hero's own attacks/skills, mirroring battle.gd's own
+# "is_hero_action" gate - every call site of _apply_damage_to_enemy() IS
+# already the hero's own action, so no extra gate is needed here), sharing
+# armor_reduction_turns_left as its own turns-left counter the same way
+# Lil' Shredder's own shred does. Bash of the Deep, her passive, is never
+# in this list at all - see KNOWN_ACTIVE_SKILL_IDS's own comment above for
+# Reactive Armor's identical reasoning; its progression only ever reaches
+# Guardian Sprint/Slithereen Crush/Corrosive Haze/a plain Attack through
+# _build_npc_ai_context()'s own "bash_*" fields, and its own bonus damage
+# only ever lands through the hero's own basic-attack branch in
+# _run_stage_fight() (mirroring Tidebringer's own stack there) - its
+# knockback has nothing to act on here either, same reasoning Walrus
+# Punch's own collision bonus is dropped for.
+
+# Naga Siren, the twelfth hero with simulated skill logic. Mirror Image
+# has nothing to spawn actual decoy UNITS onto here (no positions/columns
+# to place them in - see this file's own header comment), so it's
+# simulated as a pure extra periodic damage source instead, same "no
+# columns, hit the lowest-HP enemy" simplification the Spirit Bear's own
+# sim copy already uses (see state["bear"]/_run_stage_fight()'s own bear
+# block) - see this file's own "mirror_image" state in _new_npc_combat_
+# state()/_tick_npc_mirror_image(). Ensnare roots (state-lessly - see
+# this match's own "ensnare" case, which just writes root_turns_left the
+# same way Overgrowth's own sim copy does) whichever enemy the hero would
+# attack anyway. Song of the Siren, her ultimate, has no columns to
+# center an AoE stun on either, so - like Ice Blast/Splinter Blast/
+# Overgrowth above - it falls back to stunning and shredding the armor of
+# every living enemy at once, reusing the same armor_reduction/armor_
+# reduction_turns_left fields (and their own already-existing _tick_npc_
+# armor_reduction_effects() tick) Lil' Shredder's own sim copy already
+# established. Rip Tide, her passive, is never in this list at all - see
+# KNOWN_ACTIVE_SKILL_IDS's own comment above for Reactive Armor's
+# identical reasoning; its bonuses only ever reach Mirror Image/Song of
+# the Siren/a plain Attack through _build_npc_ai_context()'s own
+# "rip_tide_*" fields.
 
 # How many full turns a target can go without being hit by the hero's
 # Attack before its un-activated Curse of Avernus stacks are lost (see
@@ -835,6 +898,9 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_freezing_field(state["freezing_field"], enemies)
 		_tick_npc_overgrowth_effects(enemies)
 		_tick_npc_chakram(state["chakram"], enemies)
+		_tick_npc_mirror_image(state["mirror_image"])
+		_tick_npc_armor_reduction_effects(enemies)
+		_tick_npc_mortimer_burn_effects(enemies)
 		var kills: Dictionary = _collect_npc_kills(enemies, counted_dead)
 		xp_gained += kills["xp"]
 		gold_gained += kills["gold"]
@@ -869,7 +935,19 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# --- Hero's turn: potion, skill, or basic attack - in that
 		# priority, one action per turn, same as the player. ---
 		var acted_with: String = ""
-		if state["cold_embrace"]["active"]:
+		if state["mortimer_kisses"]["active"]:
+			# Snapfire's ultimate channel: consumes this ENTIRE turn on an
+			# automatic shot instead of the normal potion/skill/attack
+			# decision below - no move, no attack, no other skill, no
+			# item, mirroring battle.gd's own _enemy_hero_turn()/
+			# _end_turn() lockout (both the rival's and the player's own
+			# copies).
+			_fire_npc_mortimer_kisses_shot(state["mortimer_kisses"]["level_data"], living)
+			state["mortimer_kisses"]["turns_remaining"] -= 1
+			if state["mortimer_kisses"]["turns_remaining"] <= 0:
+				state["mortimer_kisses"]["active"] = false
+				state["mortimer_kisses"]["level_data"] = {}
+		elif state["cold_embrace"]["active"]:
 			# Encased in ice - can't move, attack, cast another skill, or
 			# drink a potion, matching battle.gd's own copy (both the
 			# player's and a duel boss's) which locks every action the
@@ -900,7 +978,17 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				var attacking_from_natures_guise: bool = state["nature's_guise"]["active"]
 				var tidebringer_level_data: Dictionary = _maybe_consume_npc_tidebringer_stack(hero_id, hero_static, state)
 				var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
+				# Bash of the Deep counts this Attack toward its own
+				# threshold too, same idea as Tidebringer's stack just
+				# above - once reached, this hit's own damage is boosted
+				# by a PERCENTAGE of itself (folded in after the roll,
+				# unlike Tidebringer's flat pre-roll bonus). No knockback
+				# to apply here - see KNOWN_ACTIVE_SKILL_IDS's own comment
+				# above.
+				var bash_level_data: Dictionary = _maybe_consume_npc_bash_of_the_deep_stack(hero_id, hero_static, state)
 				var dmg: float = _npc_roll_damage(damage_range, state, shadow_bonus + tidebringer_bonus)
+				if not bash_level_data.is_empty():
+					dmg += dmg * float(bash_level_data.get("bonus_damage_pct", 0.0))
 				var mitigated: float = _apply_damage_to_enemy(target, dmg)
 				_apply_npc_essence_shift_steal(target, state["essence_shift"], hero_static)
 				_apply_npc_curse_of_avernus_stack(hero_id, hero_static, target, turn_index)
@@ -949,6 +1037,28 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		if not state["bear"].is_empty():
 			var bear_target: Dictionary = _lowest_hp_enemy(living)
 			_apply_damage_to_enemy(bear_target, _npc_roll_bear_damage(state["bear"]))
+
+			kills = _collect_npc_kills(enemies, counted_dead)
+			xp_gained += kills["xp"]
+			gold_gained += kills["gold"]
+
+			living = _living_enemies(enemies)
+			if living.is_empty():
+				result = "win"
+				break
+
+		# --- Naga Siren's Mirror Image (if active and past its own
+		# casting turn - see _tick_npc_mirror_image()'s own "duration_
+		# pending_start" skip) also acts automatically, same shape as the
+		# Spirit Bear's own block just above: with no columns/positions
+		# here, the whole illusion squad always swings together at the
+		# lowest-HP living enemy, for one freshly-rolled hero-damage hit
+		# each (_npc_roll_damage()) scaled by the level's own damage_pct
+		# (plus Rip Tide's own bonus - see _activate_npc_mirror_image()). ---
+		if state["mirror_image"]["active"] and not state["mirror_image"]["duration_pending_start"] and state["mirror_image"]["illusion_count"] > 0:
+			var illusion_target: Dictionary = _lowest_hp_enemy(living)
+			var illusion_damage: float = _npc_roll_damage(damage_range, state) * state["mirror_image"]["damage_pct"] * float(state["mirror_image"]["illusion_count"])
+			_apply_damage_to_enemy(illusion_target, illusion_damage)
 
 			kills = _collect_npc_kills(enemies, counted_dead)
 			xp_gained += kills["xp"]
@@ -1057,6 +1167,9 @@ func _new_npc_combat_state() -> Dictionary:
 		"living_armor": {"active": false, "bonus_armor": 0.0, "bonus_hp_regen": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"chakram": {"active": false, "damage_per_turn": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"reactive_armor": {"stack_turns": []},
+		"mortimer_kisses": {"active": false, "turns_remaining": 0, "level_data": {}},
+		"mirror_image": {"active": false, "illusion_count": 0, "damage_pct": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"bash_of_the_deep_attack_count": 0,
 	}
 
 
@@ -1292,6 +1405,104 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			for enemy in living:
 				_apply_damage_to_enemy(enemy, chakram_cast_damage)
 			_activate_npc_chakram(state["chakram"], level_data)
+		"scatterblast":
+			# Directional in a real fight, but no columns to be
+			# directional ABOUT here - same "no columns, hit everyone"
+			# fallback Whirling Death's own case above already uses.
+			var scatter_damage: float = float(level_data.get("damage", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, scatter_damage)
+		"firesnap_cookie":
+			# A self-directed hop with an AoE landing - no columns to hop
+			# ACROSS here, so it falls back to hitting (and stunning)
+			# every living enemy at once, same "no columns, hit everyone"
+			# fallback Overgrowth's own sim copy already uses.
+			var cookie_damage: float = float(level_data.get("damage", 0))
+			var cookie_stun_turns: int = int(level_data.get("stun_turns", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, cookie_damage)
+				if enemy.get("current_hp", 0) > 0:
+					enemy["stun_turns_left"] = cookie_stun_turns
+		"lil_shredder":
+			# Single-target burst, same "whichever enemy the hero would
+			# attack anyway" primary as Cold Feet's/Torrent's own. Each
+			# shot ALSO stacks armor_reduction onto the SAME target - see
+			# this file's own "armor_reduction" docstring on
+			# _apply_damage_to_enemy() - so a later shot in the same
+			# volley already lands harder, mirroring battle.gd's own
+			# _resolve_lil_shredder_cast().
+			var shredder_target: Dictionary = _lowest_hp_enemy(living)
+			var shredder_shots: int = int(level_data.get("shots", 3))
+			var shredder_damage_pct: float = float(level_data.get("damage_pct", 0))
+			var shredder_armor_reduction_per_shot: float = float(level_data.get("armor_reduction_per_shot", 0))
+			for i in range(shredder_shots):
+				if shredder_target.get("current_hp", 0) <= 0:
+					break
+				var shot_damage: float = _npc_roll_damage(damage_range, state) * shredder_damage_pct
+				_apply_damage_to_enemy(shredder_target, shot_damage)
+				if shredder_target.get("current_hp", 0) <= 0:
+					break
+				shredder_target["armor_reduction"] = float(shredder_target.get("armor_reduction", 0.0)) + shredder_armor_reduction_per_shot
+			if shredder_target.get("current_hp", 0) > 0:
+				shredder_target["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
+		"mortimer_kisses":
+			state["mortimer_kisses"]["level_data"] = level_data
+			state["mortimer_kisses"]["active"] = true
+			state["mortimer_kisses"]["turns_remaining"] = int(level_data.get("hits", 1)) - 1
+			_fire_npc_mortimer_kisses_shot(level_data, living)
+		"mirror_image":
+			_activate_npc_mirror_image(state["mirror_image"], level_data, _get_npc_rip_tide_level_data(hero_id, hero_static))
+		"ensnare":
+			var ensnare_target: Dictionary = _lowest_hp_enemy(living)
+			_apply_damage_to_enemy(ensnare_target, float(level_data.get("damage", 0)))
+			if ensnare_target["current_hp"] > 0:
+				ensnare_target["root_turns_left"] = int(level_data.get("root_turns", 0))
+		"song_of_the_siren":
+			# No columns to center an AoE stun on here - same "no columns,
+			# hit everyone" fallback Ice Blast's/Splinter Blast's/
+			# Overgrowth's own sim copies already use (see KNOWN_ACTIVE_
+			# SKILL_IDS's own comment above), so every living enemy is
+			# stunned and armor-shredded at once, reusing the same
+			# armor_reduction/armor_reduction_turns_left fields (and their
+			# own already-existing _tick_npc_armor_reduction_effects() tick)
+			# Lil' Shredder's own case above already established.
+			var song_stun_turns: int = int(level_data.get("stun_turns", 0))
+			var song_armor_reduction: float = float(level_data.get("armor_reduction", 0))
+			for enemy in living:
+				enemy["stun_turns_left"] = song_stun_turns
+				enemy["armor_reduction"] = float(enemy.get("armor_reduction", 0.0)) + song_armor_reduction
+				enemy["armor_reduction_turns_left"] = song_stun_turns
+		"guardian_sprint":
+			# No columns to close distance across here - same "no real
+			# destination to walk out" honesty Walrus Punch's own sim copy
+			# already follows (see KNOWN_ACTIVE_SKILL_IDS's own comment
+			# above), so only the charge damage half lands, on whichever
+			# enemy the hero would attack anyway.
+			var sprint_target: Dictionary = _lowest_hp_enemy(living)
+			var sprint_charge_damage: float = _npc_roll_damage(damage_range, state) * float(level_data.get("charge_damage_pct", 0.0))
+			_apply_damage_to_enemy(sprint_target, sprint_charge_damage)
+		"slithereen_crush":
+			# Self-centered AoE with nothing to center it on here - same
+			# "no columns, hit everyone" fallback Song of the Siren's own
+			# case just above already uses.
+			var crush_damage: float = float(level_data.get("damage", 0))
+			var crush_stun_turns: int = int(level_data.get("stun_turns", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, crush_damage)
+				if enemy.get("current_hp", 0) > 0:
+					enemy["stun_turns_left"] = crush_stun_turns
+		"corrosive_haze":
+			# Marks whichever enemy the hero would attack anyway - the
+			# armor half reuses armor_reduction/armor_reduction_turns_left
+			# (Lil' Shredder's own shared fields), the amplification half
+			# is a new corrosive_haze_bonus_pct field read by
+			# _apply_damage_to_enemy() (see this file's own header comment
+			# on why no extra "is this the hero's own action" gate is
+			# needed there).
+			var haze_target: Dictionary = _lowest_hp_enemy(living)
+			haze_target["armor_reduction"] = float(haze_target.get("armor_reduction", 0.0)) + float(level_data.get("armor_reduction", 0))
+			haze_target["corrosive_haze_bonus_pct"] = float(level_data.get("bonus_damage_pct", 0.0))
+			haze_target["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
 
 
 func _get_npc_skill_level_data(hero_id: String, hero_static: Dictionary, skill_id: String) -> Dictionary:
@@ -1342,6 +1553,13 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 			return not state["nature's_guise"]["active"]
 		"living_armor":
 			return not state["living_armor"]["active"]
+		"mortimer_kisses":
+			# Purely defensive/documentation consistency, mirroring Cold
+			# Embrace's own case above - the turn-loop's own "mortimer_
+			# kisses" branch in _run_stage_fight() already returns before
+			# this could ever be QUERIED while the channel is active in
+			# practice.
+			return not state["mortimer_kisses"]["active"]
 		_:
 			return true
 
@@ -1423,6 +1641,25 @@ func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dict
 ##     redirects all of them, not just ones "in range" - there are no
 ##     columns to check a curse_range against), and their average damage
 ##     stat, for estimating the bonus damage the curse would generate.
+##   - illusions_active/illusion_count/illusion_turns_remaining/illusion_
+##     total_damage_per_turn: Naga Siren's own Mirror Image, live off
+##     state["mirror_image"] - mirrors battle.gd's own identically-named
+##     fields (see that file's own _build_enemy_ai_context() docstring).
+##   - rip_tide_illusion_damage_bonus_pct/rip_tide_extra_illusion/rip_
+##     tide_illusion_duration_bonus/rip_tide_aoe_damage_pct: Naga Siren's
+##     own Rip Tide, read fresh off _get_npc_rip_tide_level_data() - same
+##     reasoning as battle.gd's own identically-named fields.
+##   - hero_move_distance/sprint_bonus_movement/sprint_charge_damage_pct/
+##     bash_attacks_required/bash_current_progress/bash_bonus_damage_pct/
+##     bash_knockback/crush_radius/crush_damage/target_marked_bonus_pct:
+##     Slardar's own Guardian Sprint/Bash of the Deep/Slithereen Crush/
+##     Corrosive Haze - mirrors battle.gd's own identically-named fields
+##     (see that file's own _build_enemy_ai_context() docstring).
+##     hero_move_distance is a flat 1, same as battle.gd's own (no real
+##     speed stat in this sim either); target_marked_bonus_pct reads
+##     whichever enemy the hero would attack anyway's own
+##     "corrosive_haze_bonus_pct" field instead of a battle-local var,
+##     since there's no single fixed "the player" to hold one on here.
 func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp: float, effective_max_hp: float, current_mana: float, max_mana: float, damage_range: String, state: Dictionary, living: Array) -> Dictionary:
 	var target: Dictionary = {} if living.is_empty() else _lowest_hp_enemy(living)
 
@@ -1462,6 +1699,25 @@ func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp:
 		"reactive_armor_stacks": state["reactive_armor"]["stack_turns"].size(),
 		"reactive_armor_max_stacks": int(_get_npc_reactive_armor_level_data(hero_id, hero_static).get("max_stacks", 0)),
 		"target_is_hero": false,
+		"target_armor": (float(target.get("static", {}).get("armor", 0.0)) - float(target.get("armor_reduction", 0.0))) if not target.is_empty() else 0.0,
+		"illusions_active": state["mirror_image"]["active"],
+		"illusion_count": state["mirror_image"]["illusion_count"],
+		"illusion_turns_remaining": state["mirror_image"]["turns_remaining"],
+		"illusion_total_damage_per_turn": _npc_estimate_damage(damage_range, state) * state["mirror_image"]["damage_pct"] * float(state["mirror_image"]["illusion_count"]),
+		"rip_tide_illusion_damage_bonus_pct": float(_get_npc_rip_tide_level_data(hero_id, hero_static).get("illusion_damage_bonus_pct", 0.0)),
+		"rip_tide_extra_illusion": int(_get_npc_rip_tide_level_data(hero_id, hero_static).get("extra_illusion", 0)),
+		"rip_tide_illusion_duration_bonus": int(_get_npc_rip_tide_level_data(hero_id, hero_static).get("illusion_duration_bonus", 0)),
+		"rip_tide_aoe_damage_pct": float(_get_npc_rip_tide_level_data(hero_id, hero_static).get("aoe_damage_pct", 0.0)),
+		"hero_move_distance": 1,
+		"sprint_bonus_movement": int(_get_npc_skill_level_data(hero_id, hero_static, "guardian_sprint").get("bonus_movement", 0)),
+		"sprint_charge_damage_pct": float(_get_npc_skill_level_data(hero_id, hero_static, "guardian_sprint").get("charge_damage_pct", 0.0)),
+		"bash_attacks_required": int(_get_npc_bash_of_the_deep_level_data(hero_id, hero_static).get("attacks_required", 0)),
+		"bash_current_progress": int(state.get("bash_of_the_deep_attack_count", 0)),
+		"bash_bonus_damage_pct": float(_get_npc_bash_of_the_deep_level_data(hero_id, hero_static).get("bonus_damage_pct", 0.0)),
+		"bash_knockback": int(_get_npc_bash_of_the_deep_level_data(hero_id, hero_static).get("knockback", 0)),
+		"crush_radius": int(_get_npc_skill_level_data(hero_id, hero_static, "slithereen_crush").get("radius", 0)),
+		"crush_damage": float(_get_npc_skill_level_data(hero_id, hero_static, "slithereen_crush").get("damage", 0.0)),
+		"target_marked_bonus_pct": float(target.get("corrosive_haze_bonus_pct", 0.0)) if not target.is_empty() else 0.0,
 	}
 
 
@@ -2102,6 +2358,62 @@ func _npc_reactive_armor_bonus_armor(hero_id: String, hero_static: Dictionary, s
 	return stack_turns.size() * float(level_data.get("bonus_armor_per_stack", 0.0))
 
 
+# ------------------------------------------------------------------
+# Naga Siren's passive, Rip Tide - mirrors battle.gd's own
+# _get_enemy_rip_tide_level_data(). Never a scored candidate of its own
+# (see KNOWN_ACTIVE_SKILL_IDS's own comment above) - its bonuses only
+# ever reach Mirror Image/Song of the Siren/a plain Attack through
+# _build_npc_ai_context()'s own "rip_tide_*" fields.
+# ------------------------------------------------------------------
+
+func _get_npc_rip_tide_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "rip_tide")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "rip_tide")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+# ------------------------------------------------------------------
+# Naga Siren's Mirror Image - simulated as a pure extra periodic damage
+# source rather than real decoy units (see KNOWN_ACTIVE_SKILL_IDS's own
+# comment above for why), mirroring the Spirit Bear's own "no columns,
+# always hit the lowest-HP enemy" sim copy. `damage_pct`/`illusion_count`
+# are stored rather than a pre-multiplied damage figure so the actual hit
+# can still be freshly rolled (_npc_roll_damage()) each time it fires,
+# same "own roll per hit, never a cached number" idiom the rest of this
+# file's own damage sources already follow.
+# ------------------------------------------------------------------
+
+func _activate_npc_mirror_image(mi: Dictionary, level_data: Dictionary, rip_tide_level_data: Dictionary) -> void:
+	mi["active"] = true
+	mi["illusion_count"] = int(level_data.get("illusions", 0)) + int(rip_tide_level_data.get("extra_illusion", 0))
+	mi["damage_pct"] = float(level_data.get("damage_pct", 0.0)) + float(rip_tide_level_data.get("illusion_damage_bonus_pct", 0.0))
+	mi["turns_remaining"] = int(level_data.get("duration", 0)) + int(rip_tide_level_data.get("illusion_duration_bonus", 0))
+	mi["duration_pending_start"] = true
+
+
+func _tick_npc_mirror_image(mi: Dictionary) -> void:
+	if not mi["active"]:
+		return
+	if mi["duration_pending_start"]:
+		mi["duration_pending_start"] = false
+		return
+	mi["turns_remaining"] -= 1
+	if mi["turns_remaining"] <= 0:
+		_end_npc_mirror_image(mi)
+
+
+func _end_npc_mirror_image(mi: Dictionary) -> void:
+	mi["active"] = false
+	mi["illusion_count"] = 0
+	mi["damage_pct"] = 0.0
+	mi["turns_remaining"] = 0
+	mi["duration_pending_start"] = false
+
+
 ## Called from _run_stage_fight()'s own retaliation loop every time a
 ## hit actually lands on the hero. Adds one stack with this level's own
 ## full duration; if that would exceed max_stacks, the oldest stack
@@ -2140,6 +2452,80 @@ func _tick_npc_reactive_armor(state: Dictionary, hero_id: String, hero_static: D
 
 	var heal_amount: float = state["stack_turns"].size() * float(level_data.get("bonus_hp_regen_per_stack", 0.0))
 	return minf(effective_max_hp, current_hp + heal_amount)
+
+
+# ------------------------------------------------------------------
+# Snapfire's Lil' Shredder - mirrors _tick_npc_frostbite_effects()'s own
+# DoT tick shape, just against the armor_reduction/armor_reduction_
+# turns_left fields this file's own "lil_shredder" case in _cast_skill()
+# writes (see _apply_damage_to_enemy()'s own docstring for where the
+# reduction itself is actually read). No damage of its own to deal here
+# - just a plain countdown, zeroing the reduction once it runs out.
+# ------------------------------------------------------------------
+
+func _tick_npc_armor_reduction_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("armor_reduction_turns_left", 0) > 0:
+			enemy["armor_reduction_turns_left"] -= 1
+			if enemy.get("armor_reduction_turns_left", 0) <= 0:
+				enemy["armor_reduction"] = 0.0
+				enemy["corrosive_haze_bonus_pct"] = 0.0
+
+
+# ------------------------------------------------------------------
+# Snapfire's ultimate, Mortimer Kisses - mirrors battle.gd's own
+# _fire_mortimer_kisses_shot()/_fire_enemy_mortimer_kisses_shot(). The
+# channel's own turn-by-turn lockout lives in _run_stage_fight()'s own
+# action-decision chain (its own "mortimer_kisses" branch) rather than a
+# dedicated tick function here, mirroring Cold Embrace's own "pass"
+# branch there - this only fires a single shot, called from both the
+# INITIAL cast (this file's own "mortimer_kisses" case in _cast_skill())
+# and every automatic follow-up.
+# ------------------------------------------------------------------
+
+## Fires one shot at whichever living enemy is currently lowest-HP (this
+## sim's own standing convention for "the target" - see _lowest_hp_
+## enemy()) - there's no "marked enemy"/"last known column" concept to
+## track here (no columns at all), so a target that dies mid-channel is
+## simply replaced by a fresh lowest-HP pick on the next shot, rather
+## than tracking a frozen position the way battle.gd's own real-fight
+## copy needs to for a creep that can die and leave a corpse behind.
+## Splash ("every OTHER enemy exactly 1 column away from the impact
+## column") has no columns to measure here either, so it falls back to
+## hitting every OTHER living enemy for splash_damage instead - the same
+## "no columns, hit everyone ELSE" fallback Torrent's own level-4 splash
+## and Splinter Blast's own splash already use.
+func _fire_npc_mortimer_kisses_shot(level_data: Dictionary, living: Array) -> void:
+	if living.is_empty():
+		return
+
+	var target: Dictionary = _lowest_hp_enemy(living)
+	_apply_damage_to_enemy(target, float(level_data.get("main_damage", 0)))
+	if target.get("current_hp", 0) > 0:
+		var burn_per_turn: float = float(level_data.get("burn_per_turn", 0))
+		if burn_per_turn > 0.0:
+			target["mortimer_burn_dot_damage"] = burn_per_turn
+			target["mortimer_burn_dot_turns_left"] = int(level_data.get("burn_duration", 0))
+
+	var splash_damage: float = float(level_data.get("splash_damage", 0))
+	if splash_damage > 0.0:
+		for enemy in living:
+			if is_same(enemy, target):
+				continue
+			_apply_damage_to_enemy(enemy, splash_damage)
+
+
+## Ticks Mortimer Kisses' burn DoT down by one turn for every enemy
+## currently carrying it, dealing that turn's damage - same shape as
+## every other single-field DoT tick in this file (see _tick_npc_
+## frostbite_effects()'s own).
+func _tick_npc_mortimer_burn_effects(enemies: Array) -> void:
+	for enemy in enemies:
+		if enemy.get("mortimer_burn_dot_turns_left", 0) > 0:
+			enemy["mortimer_burn_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("mortimer_burn_dot_damage", 0))
+			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
+				_apply_damage_to_enemy(enemy, dot_damage)
 
 
 # ------------------------------------------------------------------
@@ -2402,6 +2788,38 @@ func _maybe_consume_npc_tidebringer_stack(hero_id: String, hero_static: Dictiona
 	return level_data
 
 
+# ------------------------------------------------------------------
+# Slardar's passive, Bash of the Deep - same "count plain Attacks toward
+# a threshold, consume them all once reached" idiom as Tidebringer's own
+# stack just above. Its knockback has nothing to act on in this
+# positionless sim (see KNOWN_ACTIVE_SKILL_IDS's own comment above) -
+# only the bonus damage half is applied, by the hero's own basic-attack
+# branch in _run_stage_fight(), mirroring Tidebringer's own bonus there.
+# ------------------------------------------------------------------
+
+func _get_npc_bash_of_the_deep_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "bash_of_the_deep")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "bash_of_the_deep")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _maybe_consume_npc_bash_of_the_deep_stack(hero_id: String, hero_static: Dictionary, state: Dictionary) -> Dictionary:
+	var level_data: Dictionary = _get_npc_bash_of_the_deep_level_data(hero_id, hero_static)
+	if level_data.is_empty():
+		return {}
+
+	state["bash_of_the_deep_attack_count"] += 1
+	if state["bash_of_the_deep_attack_count"] < int(level_data.get("attacks_required", 1)):
+		return {}
+
+	state["bash_of_the_deep_attack_count"] = 0
+	return level_data
+
+
 ## Tidebringer's cleave, positionless-sim style: no columns here to
 ## measure cleave_columns against `target`'s own, so - same as Dark
 ## Pact's and Aphotic Shield's own AoE in this sim - it falls back to
@@ -2592,7 +3010,26 @@ func _lowest_hp_enemy(living_enemies: Array) -> Dictionary:
 ## (Spirit Link's lifesteal, via the hero's basic-attack branch) don't
 ## have to re-derive it - mirrors battle.gd's _deal_fixed_damage_to_enemy().
 func _apply_damage_to_enemy(enemy: Dictionary, amount: float) -> float:
-	var mitigated: float = _apply_armor_reduction(amount, float(enemy["static"].get("armor", 0)))
+	# Slardar's Corrosive Haze boosts every hit THIS specific marked enemy
+	# takes from the hero's own attacks/skills, mirroring battle.gd's own
+	# _deal_fixed_damage_to_enemy() "is_hero_action" check - every call
+	# site of this function already IS the hero's own action (a plain
+	# Attack, a DoT from the hero's own skill, the Spirit Bear's own
+	# attack); enemy retaliation against the hero goes through a separate
+	# path (_apply_reduced_damage_to_npc()), never this one, so no extra
+	# gate is needed here. 0.0 (a no-op) for every enemy nothing has
+	# marked.
+	var vulnerability_pct: float = float(enemy.get("corrosive_haze_bonus_pct", 0.0))
+	if vulnerability_pct > 0.0:
+		amount *= (1.0 + vulnerability_pct)
+
+	# Snapfire's own Lil' Shredder shreds a runtime "armor_reduction" off
+	# whichever enemy it hits (see this file's own "lil_shredder" case in
+	# _cast_skill()) - a per-instance value, never touching the static
+	# template, mirroring battle.gd's own _deal_fixed_damage_to_enemy().
+	# 0.0 (a no-op) for every enemy nothing has ever shredded.
+	var armor: float = float(enemy["static"].get("armor", 0)) - float(enemy.get("armor_reduction", 0.0))
+	var mitigated: float = _apply_armor_reduction(amount, armor)
 	enemy["current_hp"] -= mitigated
 	return mitigated
 
