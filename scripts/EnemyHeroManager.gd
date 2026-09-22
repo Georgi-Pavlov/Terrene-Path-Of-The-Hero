@@ -369,6 +369,8 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"scatterblast", "firesnap_cookie", "lil_shredder", "mortimer_kisses",
 	"mirror_image", "ensnare", "song_of_the_siren",
 	"guardian_sprint", "slithereen_crush", "corrosive_haze",
+	"starstorm", "sacred_arrow", "moonlight_shadow",
+	"lucent_beam", "eclipse",
 ]
 
 # Slardar, the thirteenth hero with simulated skill logic. Guardian
@@ -397,6 +399,34 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 # _run_stage_fight() (mirroring Tidebringer's own stack there) - its
 # knockback has nothing to act on here either, same reasoning Walrus
 # Punch's own collision bonus is dropped for.
+# Mirana's Starstorm is a self-centered AoE with nothing to center it on
+# here, so - like Ice Blast/Overgrowth/Song of the Siren above - it hits
+# every living enemy at once. Sacred Arrow has no columns to travel
+# across here, so (same "no columns" honesty EnemySkillAI's own _mirana_
+# sacred_arrow_expected_damage() already follows) its sim copy deals only
+# its own flat base_damage - never the distance-scaled total - to
+# whichever enemy the hero would attack anyway, stunning it the same way
+# Torrent's own sim copy does. Leap is NOT in this list at all - its
+# entire "close distance/reposition" concept has nothing to act on in a
+# positionless sim, the exact same reasoning X Marks the Spot is excluded
+# for (see KNOWN_ACTIVE_SKILL_IDS's own comment above) - a Leap that
+# always "succeeds" here would have literally nothing to accomplish.
+# Moonlight Shadow mirrors Shadow Dance's own sim copy exactly (see this
+# file's "shadow_dance" cases below and in _npc_skill_worth_casting()/
+# the retaliation-loop guard) - invisibility skips enemy retaliation for
+# the turn, and its own bonus_damage_pct folds into the hero's next
+# Attack as a PERCENTAGE of the roll (mirroring Bash of the Deep's own
+# post-roll percentage), ending the moment that Attack lands.
+# Luna's Lucent Beam is single-target with its own flat damage, same
+# shape as Cold Feet's/Torrent's own sim copies - stunning whichever
+# enemy the hero would attack anyway. Eclipse fires ECLIPSE_BEAMS_PER_
+# TURN beams per turn, each independently picking ONE random living
+# enemy from `living` with NO cap on how many beams the same one can
+# take (see _run_stage_fight()'s own "Eclipse" block for where the
+# actual firing happens, mirroring the Mirror Image illusion-attack
+# block's own shape rather than a simple per-turn tick, since a beam can
+# kill its target mid-loop and change who's left to pick from for the
+# NEXT beam that same turn).
 
 # Naga Siren, the twelfth hero with simulated skill logic. Mirror Image
 # has nothing to spawn actual decoy UNITS onto here (no positions/columns
@@ -425,6 +455,12 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 # _tick_npc_curse_of_avernus_effects()) - mirrors battle.gd's own
 # CURSE_OF_AVERNUS_STACK_DECAY_TURNS.
 const CURSE_OF_AVERNUS_STACK_DECAY_TURNS := 3
+
+# How many Eclipse beams fire per simulated turn while it's active -
+# mirrors battle.gd's own ECLIPSE_BEAMS_PER_TURN constant exactly (only
+# the total beam count/damage/radius scale with level, see
+# GameManager's own "eclipse" skill data).
+const ECLIPSE_BEAMS_PER_TURN := 2
 
 
 ## Runs one simulated attempt for `hero_id` against whichever zone/
@@ -864,6 +900,10 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 	# of this state (in battle.gd) reset every time the Battle scene is
 	# left and re-entered.
 	var state: Dictionary = _new_npc_combat_state()
+	# Luna's Lunar Blessing: computed once here, where hero_id/hero_static
+	# are in scope, rather than threaded through every one of _npc_roll_
+	# damage()'s own many call sites - see that function's own docstring.
+	state["lunar_blessing_bonus_pct"] = float(_get_npc_lunar_blessing_level_data(hero_id, hero_static).get("bonus_damage_pct", 0.0))
 
 	# Reinforcements - mirrors battle.gd's own _turn_count/
 	# _next_reinforcement_turn pair: the first wave is due after
@@ -883,6 +923,8 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 
 		_tick_npc_essence_shift(state["essence_shift"])
 		_tick_npc_shadow_dance(state["shadow_dance"])
+		_tick_npc_moonlight_shadow(state["moonlight_shadow"])
+		_tick_npc_eclipse(state["eclipse"])
 		_tick_npc_spirit_link(state["spirit_link"])
 		_tick_npc_true_form(state["true_form"])
 		_tick_npc_aphotic_shield(state["aphotic_shield"])
@@ -986,7 +1028,16 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				# to apply here - see KNOWN_ACTIVE_SKILL_IDS's own comment
 				# above.
 				var bash_level_data: Dictionary = _maybe_consume_npc_bash_of_the_deep_stack(hero_id, hero_static, state)
+				# Mirana's own Moonlight Shadow pays off the same way, just
+				# as a PERCENTAGE of the roll (folded in below, before
+				# Bash's own - order doesn't matter mathematically since
+				# both are only ever learned by different heroes, never
+				# both active at once).
+				var moonlight_active: bool = state["moonlight_shadow"]["active"]
+				var moonlight_bonus_pct: float = state["moonlight_shadow"]["bonus_damage_pct"] if moonlight_active else 0.0
 				var dmg: float = _npc_roll_damage(damage_range, state, shadow_bonus + tidebringer_bonus)
+				if moonlight_active:
+					dmg += dmg * moonlight_bonus_pct
 				if not bash_level_data.is_empty():
 					dmg += dmg * float(bash_level_data.get("bonus_damage_pct", 0.0))
 				var mitigated: float = _apply_damage_to_enemy(target, dmg)
@@ -994,9 +1045,19 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				_apply_npc_curse_of_avernus_stack(hero_id, hero_static, target, turn_index)
 				if not tidebringer_level_data.is_empty():
 					_apply_npc_tidebringer_cleave(target, dmg, tidebringer_level_data, living)
+				var moon_glaives_level_data: Dictionary = _get_npc_moon_glaives_level_data(hero_id, hero_static)
+				if not moon_glaives_level_data.is_empty():
+					_apply_npc_moon_glaives_bounces(target, dmg, moon_glaives_level_data, living)
 				_apply_npc_arctic_burn_attack(state["arctic_burn"])
 				current_hp = minf(effective_max_hp, current_hp + _npc_spirit_link_lifesteal(state["spirit_link"], mitigated))
 				acted_with = "attack"
+
+				if moonlight_active:
+					# Reveals itself the instant the empowered Attack
+					# actually lands, whether or not it kills the target -
+					# same "one guaranteed hit, then it's spent" rule
+					# battle.gd's own copy follows.
+					_end_npc_moonlight_shadow(state["moonlight_shadow"])
 
 				if attacking_from_natures_guise:
 					if target.get("current_hp", 0) > 0:
@@ -1016,6 +1077,12 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 			_end_npc_shadow_dance(state["shadow_dance"])
 		if state["nature's_guise"]["active"] and acted_with != "" and acted_with != "nature's_guise":
 			_end_npc_natures_guise(state["nature's_guise"])
+		# Sacred Arrow is deliberately exempt - mirrors battle.gd's own
+		# equivalent guard (see that file's own _cast_enemy_skill()
+		# comment for why firing Sacred Arrow from stealth never breaks
+		# Moonlight Shadow there either).
+		if state["moonlight_shadow"]["active"] and acted_with != "" and acted_with != "moonlight_shadow" and acted_with != "sacred_arrow":
+			_end_npc_moonlight_shadow(state["moonlight_shadow"])
 
 		kills = _collect_npc_kills(enemies, counted_dead)
 		xp_gained += kills["xp"]
@@ -1069,6 +1136,45 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				result = "win"
 				break
 
+		# --- Luna's Eclipse (if active and past its own casting turn -
+		# see _tick_npc_eclipse()'s own "duration_pending_start" skip)
+		# also fires automatically: up to ECLIPSE_BEAMS_PER_TURN beams
+		# this turn, each independently picking ONE random living enemy
+		# from `living`, with NO cap on how many beams the same one can
+		# take - mirroring battle.gd's own _tick_eclipse()/_tick_enemy_
+		# eclipse() exactly (see KNOWN_ACTIVE_SKILL_IDS's own comment
+		# above for why this lives inline here rather than in a simple
+		# per-turn tick function: a beam can kill its target mid-loop,
+		# changing who's left to pick from for the NEXT beam this same
+		# turn, the same reasoning the Mirror Image block just above
+		# already follows). A beam with nothing left to hit still counts
+		# against the total, same as the real fight's own copy. ---
+		if state["eclipse"]["active"] and not state["eclipse"]["duration_pending_start"]:
+			var eclipse_damage_per_beam: float = float(state["eclipse"]["damage_per_beam"])
+			for i in range(ECLIPSE_BEAMS_PER_TURN):
+				if int(state["eclipse"]["beams_remaining"]) <= 0:
+					break
+				state["eclipse"]["beams_remaining"] -= 1
+
+				if living.is_empty():
+					continue
+
+				var eclipse_target: Dictionary = living[randi() % living.size()]
+				_apply_damage_to_enemy(eclipse_target, eclipse_damage_per_beam)
+
+				kills = _collect_npc_kills(enemies, counted_dead)
+				xp_gained += kills["xp"]
+				gold_gained += kills["gold"]
+
+				living = _living_enemies(enemies)
+
+			if int(state["eclipse"]["beams_remaining"]) <= 0:
+				_end_npc_eclipse(state["eclipse"])
+
+			if living.is_empty():
+				result = "win"
+				break
+
 		# --- Enemies retaliate, skipping anyone Pounce just stunned,
 		# while Shadow Dance or Nature's Guise is hiding the hero entirely
 		# (mirrors battle.gd's _is_hero_hidden() check in _enemy_turn()),
@@ -1086,7 +1192,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# partway through this same loop once its turn comes up, so
 		# every enemy this pass needs to see the same answer regardless
 		# of iteration order. ---
-		if not state["shadow_dance"]["active"] and not state["cold_embrace"]["active"] and not state["nature's_guise"]["active"]:
+		if not state["shadow_dance"]["active"] and not state["cold_embrace"]["active"] and not state["nature's_guise"]["active"] and not state["moonlight_shadow"]["active"]:
 			# Timbersaw's Reactive Armor bonus is added on top of the base
 			# armor here, at the single call site, rather than inside
 			# _npc_effective_armor() itself (which has no hero_id/hero_
@@ -1170,6 +1276,9 @@ func _new_npc_combat_state() -> Dictionary:
 		"mortimer_kisses": {"active": false, "turns_remaining": 0, "level_data": {}},
 		"mirror_image": {"active": false, "illusion_count": 0, "damage_pct": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"bash_of_the_deep_attack_count": 0,
+		"moonlight_shadow": {"active": false, "bonus_damage_pct": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"eclipse": {"active": false, "damage_per_beam": 0.0, "beams_remaining": 0, "duration_pending_start": false},
+		"lunar_blessing_bonus_pct": 0.0,
 	}
 
 
@@ -1503,6 +1612,32 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			haze_target["armor_reduction"] = float(haze_target.get("armor_reduction", 0.0)) + float(level_data.get("armor_reduction", 0))
 			haze_target["corrosive_haze_bonus_pct"] = float(level_data.get("bonus_damage_pct", 0.0))
 			haze_target["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
+		"starstorm":
+			# Self-centered AoE with nothing to center it on here - same
+			# "no columns, hit everyone" fallback Song of the Siren's own
+			# case above already uses.
+			var storm_damage: float = float(level_data.get("damage", 0))
+			for enemy in living:
+				_apply_damage_to_enemy(enemy, storm_damage)
+		"sacred_arrow":
+			# No columns to travel across here - same "no columns" honesty
+			# EnemySkillAI's own _mirana_sacred_arrow_expected_damage()
+			# already follows, so only the flat base_damage lands, never
+			# the distance-scaled total, on whichever enemy the hero would
+			# attack anyway.
+			var arrow_target: Dictionary = _lowest_hp_enemy(living)
+			_apply_damage_to_enemy(arrow_target, float(level_data.get("base_damage", 0)))
+			if arrow_target["current_hp"] > 0:
+				arrow_target["stun_turns_left"] = int(level_data.get("stun_turns", 0))
+		"moonlight_shadow":
+			_activate_npc_moonlight_shadow(state["moonlight_shadow"], level_data)
+		"lucent_beam":
+			var beam_target: Dictionary = _lowest_hp_enemy(living)
+			_apply_damage_to_enemy(beam_target, float(level_data.get("damage", 0)))
+			if beam_target["current_hp"] > 0:
+				beam_target["stun_turns_left"] = int(level_data.get("stun_turns", 0))
+		"eclipse":
+			_activate_npc_eclipse(state["eclipse"], level_data)
 
 
 func _get_npc_skill_level_data(hero_id: String, hero_static: Dictionary, skill_id: String) -> Dictionary:
@@ -1533,6 +1668,10 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 			return not state["essence_shift"]["active"]
 		"shadow_dance":
 			return not state["shadow_dance"]["active"]
+		"moonlight_shadow":
+			return not state["moonlight_shadow"]["active"]
+		"eclipse":
+			return not state["eclipse"]["active"]
 		"spirit_link":
 			return not state["spirit_link"]["active"]
 		"true_form":
@@ -1660,6 +1799,31 @@ func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dict
 ##     whichever enemy the hero would attack anyway's own
 ##     "corrosive_haze_bonus_pct" field instead of a battle-local var,
 ##     since there's no single fixed "the player" to hold one on here.
+##   - hero_attack_range/starstorm_radius/sacred_arrow_range/sacred_
+##     arrow_base_damage/sacred_arrow_bonus_per_column/moonlight_shadow_
+##     active/moonlight_shadow_bonus_damage_pct/target_stunned: Mirana's
+##     own Starstorm/Sacred Arrow/Moonlight Shadow - mirrors battle.gd's
+##     own identically-named fields (see that file's own _build_enemy_ai_
+##     context() docstring). hero_attack_range is a flat 3 (matching
+##     battle.gd's own RANGE_ENEMY_ATTACK_RANGE) but effectively inert
+##     here, same as everywhere target_distance is absent - Leap itself
+##     isn't even a candidate in this sim (see KNOWN_ACTIVE_SKILL_IDS's
+##     own comment above), so nothing else ever reads it either.
+##   - moon_glaives_bounces/moon_glaives_bounce_damage_pct/moon_glaives_
+##     bounce_range/moon_glaives_valid_bounce_targets/moon_glaives_
+##     bounce_target_hps/lunar_blessing_bonus_pct/eclipse_candidate_
+##     count/eclipse_candidate_hps/eclipse_candidate_max_hps: Luna's own
+##     Moon Glaives/Lunar Blessing/Eclipse - mirrors battle.gd's own
+##     identically-named fields (see that file's own _build_enemy_ai_
+##     context() docstring), simplified for this sim's own "no columns"
+##     honesty: moon_glaives_valid_bounce_targets/bounce_target_hps take
+##     the first `bounces` OTHER living enemies in whatever order `living`
+##     already has (no real distance to sort "nearest" by), and the
+##     eclipse_candidate_* fields simply reuse living_target_hps/max_hps
+##     outright - every living enemy is always a valid beam candidate
+##     here, since Eclipse's own radius is inert in a sim with no
+##     positions at all (see this file's own "eclipse" block in
+##     _run_stage_fight() for the same reasoning applied to execution).
 func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp: float, effective_max_hp: float, current_mana: float, max_mana: float, damage_range: String, state: Dictionary, living: Array) -> Dictionary:
 	var target: Dictionary = {} if living.is_empty() else _lowest_hp_enemy(living)
 
@@ -1671,6 +1835,21 @@ func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp:
 	for enemy in living:
 		total_enemy_damage += float(enemy["static"].get("damage", 0))
 	var avg_enemy_damage: float = total_enemy_damage / float(living.size()) if not living.is_empty() else 0.0
+
+	# Luna's Moon Glaives: no real distance to sort "nearest" by here, so
+	# the first `bounces` OTHER living enemies (in whatever order `living`
+	# already has) stand in for the real fight's own nearest-first pick -
+	# see this function's own docstring.
+	var moon_glaives_level_data: Dictionary = _get_npc_moon_glaives_level_data(hero_id, hero_static)
+	var moon_glaives_bounces: int = int(moon_glaives_level_data.get("bounces", 0))
+	var moon_glaives_bounce_target_hps: Array = []
+	if moon_glaives_bounces > 0 and not target.is_empty():
+		for enemy in living:
+			if moon_glaives_bounce_target_hps.size() >= moon_glaives_bounces:
+				break
+			if is_same(enemy, target):
+				continue
+			moon_glaives_bounce_target_hps.append(float(enemy.get("current_hp", 0.0)))
 
 	return {
 		"game_mode": "simulation",
@@ -1718,6 +1897,23 @@ func _build_npc_ai_context(hero_id: String, hero_static: Dictionary, current_hp:
 		"crush_radius": int(_get_npc_skill_level_data(hero_id, hero_static, "slithereen_crush").get("radius", 0)),
 		"crush_damage": float(_get_npc_skill_level_data(hero_id, hero_static, "slithereen_crush").get("damage", 0.0)),
 		"target_marked_bonus_pct": float(target.get("corrosive_haze_bonus_pct", 0.0)) if not target.is_empty() else 0.0,
+		"hero_attack_range": 3,
+		"starstorm_radius": int(_get_npc_skill_level_data(hero_id, hero_static, "starstorm").get("radius", 0)),
+		"sacred_arrow_range": int(_get_npc_skill_level_data(hero_id, hero_static, "sacred_arrow").get("range", 0)),
+		"sacred_arrow_base_damage": float(_get_npc_skill_level_data(hero_id, hero_static, "sacred_arrow").get("base_damage", 0.0)),
+		"sacred_arrow_bonus_per_column": float(_get_npc_skill_level_data(hero_id, hero_static, "sacred_arrow").get("bonus_per_column", 0.0)),
+		"moonlight_shadow_active": state["moonlight_shadow"]["active"],
+		"moonlight_shadow_bonus_damage_pct": state["moonlight_shadow"]["bonus_damage_pct"],
+		"target_stunned": int(target.get("stun_turns_left", 0)) > 0 if not target.is_empty() else false,
+		"moon_glaives_bounces": moon_glaives_bounces,
+		"moon_glaives_bounce_damage_pct": float(moon_glaives_level_data.get("bounce_damage_pct", 0.0)),
+		"moon_glaives_bounce_range": int(moon_glaives_level_data.get("bounce_range", 0)),
+		"moon_glaives_valid_bounce_targets": moon_glaives_bounce_target_hps.size(),
+		"moon_glaives_bounce_target_hps": moon_glaives_bounce_target_hps,
+		"lunar_blessing_bonus_pct": float(_get_npc_lunar_blessing_level_data(hero_id, hero_static).get("bonus_damage_pct", 0.0)),
+		"eclipse_candidate_count": living.size(),
+		"eclipse_candidate_hps": living.map(func(e): return float(e.get("current_hp", 0.0))),
+		"eclipse_candidate_max_hps": living.map(func(e): return float(e["static"].get("hp", 1))),
 	}
 
 
@@ -1731,7 +1927,15 @@ func _npc_estimate_damage(damage_range: String, state: Dictionary) -> float:
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["tag_team"]["bonus_damage"]
-	return (min_dmg + max_dmg) / 2.0 + bonus_damage
+	var estimate: float = (min_dmg + max_dmg) / 2.0 + bonus_damage
+	# Luna's Lunar Blessing - see _npc_roll_damage()'s own comment for why
+	# this reads state's own cached percentage. Applied last, same order
+	# as every real roll, so the AI's own "hero_damage" context field
+	# never underestimates what a real Attack would actually deal.
+	var lunar_blessing_bonus_pct: float = float(state.get("lunar_blessing_bonus_pct", 0.0))
+	if lunar_blessing_bonus_pct > 0.0:
+		estimate += estimate * lunar_blessing_bonus_pct
+	return estimate
 
 
 ## True if there's a known, off-cooldown, currently-worthwhile active
@@ -1866,6 +2070,137 @@ func _end_npc_shadow_dance(sd: Dictionary) -> void:
 	sd["bonus_damage"] = 0.0
 	sd["turns_remaining"] = 0
 	sd["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Mirana's ultimate, Moonlight Shadow - mirrors Shadow Dance's own shape
+# exactly (see the "shadow_dance" state dict above and this file's own
+# retaliation-loop guard) - invisibility skips enemy retaliation for the
+# turn, same as being hidden there already does; the one real difference
+# is the bonus itself, a PERCENTAGE of the next Attack's own roll (folded
+# in by _run_stage_fight()'s own basic-attack branch, mirroring Bash of
+# the Deep's own post-roll percentage there) rather than Shadow Dance's
+# flat pre-roll bonus_damage.
+# ------------------------------------------------------------------
+
+func _activate_npc_moonlight_shadow(ms: Dictionary, level_data: Dictionary) -> void:
+	ms["active"] = true
+	ms["bonus_damage_pct"] = float(level_data.get("bonus_damage_pct", 0.0))
+	ms["turns_remaining"] = int(level_data.get("duration", 0))
+	ms["duration_pending_start"] = true
+
+
+func _tick_npc_moonlight_shadow(ms: Dictionary) -> void:
+	if not ms["active"]:
+		return
+	if ms["duration_pending_start"]:
+		ms["duration_pending_start"] = false
+		return
+	ms["turns_remaining"] -= 1
+	if ms["turns_remaining"] <= 0:
+		_end_npc_moonlight_shadow(ms)
+
+
+func _end_npc_moonlight_shadow(ms: Dictionary) -> void:
+	ms["active"] = false
+	ms["bonus_damage_pct"] = 0.0
+	ms["turns_remaining"] = 0
+	ms["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Luna's ultimate, Eclipse - mirrors battle.gd's own _activate_eclipse()/
+# _tick_eclipse(). Only the "casting turn doesn't count" gate lives here;
+# the actual beam-firing happens inline in _run_stage_fight() (see that
+# function's own "Eclipse" block), same shape as the Mirror Image
+# illusion-attack block rather than a simple per-turn tick, since a beam
+# can kill its target mid-loop and change who's left for the NEXT beam
+# that same turn - a plain tick function taking only `ec` has no way to
+# report kills/gold back up, and every other kill-crediting block in this
+# file already lives inline for exactly that reason.
+# ------------------------------------------------------------------
+
+func _activate_npc_eclipse(ec: Dictionary, level_data: Dictionary) -> void:
+	ec["active"] = true
+	ec["damage_per_beam"] = float(level_data.get("damage", 0))
+	ec["beams_remaining"] = int(level_data.get("beams", 0))
+	ec["duration_pending_start"] = true
+
+
+func _tick_npc_eclipse(ec: Dictionary) -> void:
+	if not ec["active"]:
+		return
+	if ec["duration_pending_start"]:
+		ec["duration_pending_start"] = false
+
+
+func _end_npc_eclipse(ec: Dictionary) -> void:
+	ec["active"] = false
+	ec["damage_per_beam"] = 0.0
+	ec["beams_remaining"] = 0
+	ec["duration_pending_start"] = false
+
+
+# ------------------------------------------------------------------
+# Luna's Moon Glaives - a passive, so like Curse of Avernus/Tidebringer
+# above it's never "cast"; it just bounces off the hero's own plain
+# Attacks. Mirrors battle.gd's own _get_moon_glaives_level_data()/
+# _apply_moon_glaives_bounces(), simplified for this sim's own "no
+# columns" honesty - the nearest `bounces` other living enemies has no
+# real distance to sort by here, so it just takes the first `bounces` of
+# them in whatever order `living` already has, same "no columns, hit
+# everyone (up to a cap this time)" fallback every other AoE skill's own
+# sim copy uses.
+# ------------------------------------------------------------------
+
+func _get_npc_moon_glaives_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "moon_glaives")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "moon_glaives")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
+
+
+func _apply_npc_moon_glaives_bounces(target: Dictionary, attack_damage: float, level_data: Dictionary, living: Array) -> void:
+	var bounce_damage: float = attack_damage * float(level_data.get("bounce_damage_pct", 0.0))
+	if bounce_damage <= 0.0:
+		return
+
+	var bounces: int = int(level_data.get("bounces", 0))
+	if bounces <= 0:
+		return
+
+	var bounced_count: int = 0
+	for enemy in living:
+		if bounced_count >= bounces:
+			break
+		if is_same(enemy, target):
+			continue
+		_apply_damage_to_enemy(enemy, bounce_damage)
+		bounced_count += 1
+
+
+# ------------------------------------------------------------------
+# Luna's Lunar Blessing - a passive, so like Moon Glaives above it's
+# never "cast"; a permanent % increase to the hero's own Attack damage,
+# folded into _npc_roll_damage() itself via state["lunar_blessing_bonus_
+# pct"] (set once per attempt in _run_stage_fight(), where hero_id/hero_
+# static are in scope - _npc_roll_damage() itself is called from many
+# places that don't have them), mirroring battle.gd's own _roll_hero_
+# damage()/_roll_enemy_hero_damage() exactly (applied last, scaling the
+# whole roll).
+# ------------------------------------------------------------------
+
+func _get_npc_lunar_blessing_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "lunar_blessing")
+	if level <= 0:
+		return {}
+	var skill: Dictionary = _find_skill(hero_static, "lunar_blessing")
+	if skill.is_empty():
+		return {}
+	return GameManager.get_skill_level_data(skill, level)
 
 
 # ------------------------------------------------------------------
@@ -2957,6 +3292,16 @@ func _npc_roll_damage(damage_range: String, state: Dictionary, extra_bonus: floa
 	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + state["tag_team"]["bonus_damage"] + extra_bonus
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
+
+	# Luna's Lunar Blessing - see this file's own header comment above
+	# _get_npc_lunar_blessing_level_data() for why this reads state's own
+	# cached percentage instead of taking hero_id/hero_static directly.
+	# Applied last so it scales the whole roll (base damage plus every
+	# flat bonus above), mirroring battle.gd's own _roll_hero_damage().
+	var lunar_blessing_bonus_pct: float = float(state.get("lunar_blessing_bonus_pct", 0.0))
+	if lunar_blessing_bonus_pct > 0.0:
+		min_dmg += min_dmg * lunar_blessing_bonus_pct
+		max_dmg += max_dmg * lunar_blessing_bonus_pct
 
 	return randi_range(int(min_dmg), int(max_dmg))
 

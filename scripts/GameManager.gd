@@ -1790,33 +1790,48 @@ var zones: Dictionary = {
 						"id": "starstorm",
 						"name": "Starstorm",
 						"type": "standard",
-						"description": "Calls down meteors to damage nearby enemies.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Calls down meteors, dealing damage to every enemy within radius of Mirana.",
+						"levels": [
+							{"damage": 90, "radius": 1, "mana_cost": 65, "cooldown": 4},
+							{"damage": 140, "radius": 1, "mana_cost": 90, "cooldown": 4},
+							{"damage": 200, "radius": 2, "mana_cost": 120, "cooldown": 5},
+							{"damage": 270, "radius": 2, "mana_cost": 150, "cooldown": 5}
+						]
 					},
 					{
 						"id": "sacred_arrow",
 						"name": "Sacred Arrow",
 						"type": "standard",
-						"description": "Fires a long-range arrow that deals damage and stuns an enemy based on distance traveled.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Marks a target within range with a long-range arrow, dealing more damage the further it traveled, and stuns it.",
+						"levels": [
+							{"base_damage": 80, "bonus_per_column": 20, "range": 4, "stun_turns": 1, "mana_cost": 70, "cooldown": 5},
+							{"base_damage": 120, "bonus_per_column": 30, "range": 5, "stun_turns": 2, "mana_cost": 100, "cooldown": 5},
+							{"base_damage": 170, "bonus_per_column": 40, "range": 6, "stun_turns": 2, "mana_cost": 135, "cooldown": 6},
+							{"base_damage": 230, "bonus_per_column": 50, "range": 7, "stun_turns": 3, "mana_cost": 170, "cooldown": 6}
+						]
 					},
 					{
 						"id": "leap",
 						"name": "Leap",
 						"type": "standard",
-						"description": "Mirana leaps forward, granting temporary attack speed bonus.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Leaps in the direction she's facing, sailing clean over any enemy in the way.",
+						"levels": [
+							{"jump_distance": 2, "mana_cost": 50, "cooldown": 4},
+							{"jump_distance": 3, "mana_cost": 65, "cooldown": 4},
+							{"jump_distance": 4, "mana_cost": 80, "cooldown": 5},
+							{"jump_distance": 5, "mana_cost": 100, "cooldown": 5}
+						]
 					},
 					{
 						"id": "moonlight_shadow",
 						"name": "Moonlight Shadow",
 						"type": "ultimate",
-						"description": "Ultimate: turns invisible. On attack deals bonus damage and reveals herself.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: turns invisible for the duration - enemies can't attack or chase her while it holds. Her next Attack from stealth deals bonus damage and reveals her.",
+						"levels": [
+							{"duration": 2, "bonus_damage_pct": 0.75, "mana_cost": 180, "cooldown": 9},
+							{"duration": 3, "bonus_damage_pct": 1.10, "mana_cost": 240, "cooldown": 10},
+							{"duration": 4, "bonus_damage_pct": 1.50, "mana_cost": 300, "cooldown": 11}
+						]
 					},
 				],
 				"level_up": {
@@ -1849,33 +1864,48 @@ var zones: Dictionary = {
 						"id": "lucent_beam",
 						"name": "Lucent Beam",
 						"type": "standard",
-						"description": "Fires a lunar beam at an enemy that does damage and a brief stun.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Fires a lunar beam at an enemy within range, dealing damage and stunning it.",
+						"levels": [
+							{"damage": 100, "stun_turns": 1, "range": 4, "mana_cost": 60, "cooldown": 4},
+							{"damage": 160, "stun_turns": 1, "range": 5, "mana_cost": 85, "cooldown": 4},
+							{"damage": 230, "stun_turns": 2, "range": 6, "mana_cost": 115, "cooldown": 5},
+							{"damage": 310, "stun_turns": 2, "range": 7, "mana_cost": 145, "cooldown": 5}
+						]
 					},
 					{
 						"id": "moon_glaives",
 						"name": "Moon Glaives",
-						"type": "standard",
-						"description": "Passive: attacks bounce to nearby enemies with a damage reduction per bounce.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: Luna's attacks bounce to nearby enemies for reduced damage.",
+						"levels": [
+							{"bounces": 2, "bounce_damage_pct": 0.75, "bounce_range": 0},
+							{"bounces": 3, "bounce_damage_pct": 0.65, "bounce_range": 1},
+							{"bounces": 4, "bounce_damage_pct": 0.55, "bounce_range": 1},
+							{"bounces": 5, "bounce_damage_pct": 0.45, "bounce_range": 2}
+						]
 					},
 					{
 						"id": "lunar_blessing",
 						"name": "Lunar Blessing",
-						"type": "standard",
-						"description": "Passive: aura granting bonus attack damage.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"type": "passive",
+						"description": "Passive: grants Luna bonus Attack damage.",
+						"levels": [
+							{"bonus_damage_pct": 0.15},
+							{"bonus_damage_pct": 0.25},
+							{"bonus_damage_pct": 0.35},
+							{"bonus_damage_pct": 0.50}
+						]
 					},
 					{
 						"id": "eclipse",
 						"name": "Eclipse",
 						"type": "ultimate",
-						"description": "Ultimate: Unleashes a flurry of Lucent Beams.",
-						"cooldown": 3,
-						"mana_cost": 50
+						"description": "Ultimate: darkens the sky - for the duration, lunar beams strike random enemies within radius of Luna, moving with her, until every beam has landed.",
+						"levels": [
+							{"beams": 4, "damage": 130, "radius": 2, "mana_cost": 200, "cooldown": 9},
+							{"beams": 6, "damage": 175, "radius": 3, "mana_cost": 275, "cooldown": 10},
+							{"beams": 8, "damage": 230, "radius": 4, "mana_cost": 350, "cooldown": 11}
+						]
 					},
 				],
 				"level_up": {

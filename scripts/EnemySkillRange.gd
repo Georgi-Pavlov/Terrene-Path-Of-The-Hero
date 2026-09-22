@@ -114,6 +114,12 @@ class_name EnemySkillRange
 #   - Corrosive Haze (Slardar's ultimate): also a targeted cast with its
 #     own per-level `range` field, same "distance <= radius" comparison
 #     as Ensnare's own just above.
+#   - Sacred Arrow (Mirana's): also a targeted cast with its own per-
+#     level `range` field, same "distance <= radius" comparison as
+#     Ensnare's/Corrosive Haze's own just above.
+#   - Lucent Beam (Luna's): also a targeted cast with its own per-level
+#     `range` field, same "distance <= radius" comparison as Sacred
+#     Arrow's own just above.
 # Naga Siren's Song of the Siren is deliberately NOT range-checked here
 # either, despite being a self-centered AoE like Dark Pact/Whirling
 # Death above - unlike those two, it's scored (not gated) against range,
@@ -133,6 +139,21 @@ class_name EnemySkillRange
 # its value is purely about what the boosted NEXT move can then reach
 # (see EnemySkillAI's own _slardar_guardian_sprint_modifier()). Bash of
 # the Deep is passive and never even reaches this file.
+# Mirana's Starstorm follows Slithereen Crush's own precedent exactly - a
+# self-centered AoE scored (not gated) against range via EnemySkillAI's
+# own _mirana_starstorm_modifier() (fed by `living_target_hps`, already
+# empty out of range), so it's never in RANGE_CHECKED_SKILL_IDS either.
+# Leap is a self-directed hop with no target requirement at all to even
+# attempt it, same as Firesnap Cookie above - it "sails clean over any
+# enemy in the way" regardless of range (see battle.gd's own
+# _activate_leap()). Moonlight Shadow is a self-buff with no target of
+# its own to reach at cast time, same as Mirror Image/Guardian Sprint
+# above.
+# Luna's Eclipse is a self-cast ultimate with no target of its own to
+# reach at cast time either, same as Moonlight Shadow above - its own
+# radius moves with her and is scored (via EnemySkillAI's own _luna_
+# eclipse_modifier()), never gated here. Moon Glaives and Lunar Blessing
+# are both passive and never even reach this file.
 # Every other known skill (Essence Shift, Shadow Dance, Spirit Link,
 # True Form, Summon Spirit Bear, Aphotic Shield, Arctic Burn, Cold
 # Embrace, Crystal Maiden's own Freezing Field, Tusk's own Tag Team, and
@@ -158,7 +179,7 @@ class_name EnemySkillRange
 # _snapfire_firesnap_cookie_modifier()), never a candidacy gate here.
 # ============================================================
 
-const RANGE_CHECKED_SKILL_IDS: Array[String] = ["dark_pact", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch", "leech_seed", "whirling_death", "timber_chain", "chakram", "lil_shredder", "mortimer_kisses", "scatterblast", "ensnare", "corrosive_haze"]
+const RANGE_CHECKED_SKILL_IDS: Array[String] = ["dark_pact", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch", "leech_seed", "whirling_death", "timber_chain", "chakram", "lil_shredder", "mortimer_kisses", "scatterblast", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam"]
 
 
 ## True if `skill_id` needs a range check at all before being cast -
@@ -179,7 +200,7 @@ static func requires_range_check(skill_id: String) -> bool:
 ## requires_range_check().
 static func is_in_range(skill_id: String, distance: int, radius: int, attack_range: int) -> bool:
 	match skill_id:
-		"dark_pact", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "ice_shards", "snowball", "leech_seed", "whirling_death", "timber_chain", "chakram", "ensnare", "corrosive_haze":
+		"dark_pact", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "ice_shards", "snowball", "leech_seed", "whirling_death", "timber_chain", "chakram", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam":
 			return distance <= radius
 		"entangle", "mist_coil", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "walrus_punch", "lil_shredder", "mortimer_kisses":
 			return distance <= attack_range
