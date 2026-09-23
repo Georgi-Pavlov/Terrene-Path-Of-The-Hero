@@ -329,9 +329,10 @@ func get_recruited_hero() -> Dictionary:
 	# hp/mana/armor/damage are derived from how far strength/agility/
 	# intelligence have grown past the hero's base stats, rather than
 	# being stored/grown directly - see GameManager.compute_derived_stats.
-	# Equipment items (anything with effect "stat" still sitting in the
+	# Equipment items (anything with a "stat" field still sitting in the
 	# inventory - Blades of Attack, Gauntlets of Strength, Circlet,
-	# etc.) add their bonus on top of the hero's own stats here, so it
+	# Cleaver's damage, etc.) add their bonus on top of the hero's own
+	# stats here, so it
 	# only counts for as long as the item is actually owned.
 	var hero_static: Dictionary = GameManager.get_hero_by_id(data.get("hero", ""))
 	if not hero_static.is_empty():
@@ -1179,7 +1180,10 @@ func get_inventory_stat_bonus(stat_key: String) -> float:
 	var inventory := get_inventory()
 	for item_id in inventory.keys():
 		var item_data: Dictionary = GameManager.get_item(item_id)
-		if item_data.get("effect", "") != "stat":
+		# Any item carrying a "stat" field counts - plain "stat" items,
+		# and "passive" items that also grant a flat stat (Cleaver's
+		# damage). Consumables never have one.
+		if not item_data.has("stat"):
 			continue
 
 		var stat_field = item_data.get("stat", "")

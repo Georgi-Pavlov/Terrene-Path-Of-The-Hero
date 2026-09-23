@@ -227,6 +227,9 @@ const SKILL_INFO := {
 	"spirit_link": {"category": "defensive", "base_score": 30.0},
 	"true_form": {"category": "defensive", "base_score": 45.0},
 	"mist_coil": {"category": "offensive", "base_score": 35.0},
+	# Mist Coil cast on Abaddon himself (see MIST_COIL_SELF_ID) - a heal,
+	# so it rides the same HP-danger tiers every defensive skill does.
+	"mist_coil_self": {"category": "defensive", "base_score": 25.0},
 	"aphotic_shield": {"category": "defensive", "base_score": 40.0},
 	"torrent": {"category": "offensive", "base_score": 45.0},
 	"x_marks_the_spot": {"category": "utility", "base_score": 35.0},
@@ -285,13 +288,22 @@ const BASIC_ATTACK_ID := "basic_attack"
 # damage/cleave, for Kunkka).
 const BASELINE_BASIC_ATTACK_SCORE := 30.0
 
+# Mist Coil cast on the caster himself (Abaddon's self-heal: pay
+# hp_cost, heal for `heal`) - a pseudo skill id, like BASIC_ATTACK_ID:
+# never a real skill of its own, just a second way to use the real
+# "mist_coil" that's scored and compared as its own candidate. Callers
+# add it (see battle.gd's _pick_enemy_ready_skill()/EnemyHeroManager's
+# _pick_ready_skill()) only when the caster could survive paying its
+# hp_cost, and map a win back onto a self-targeted "mist_coil" cast.
+const MIST_COIL_SELF_ID := "mist_coil_self"
+
 # Static fallback order, per hero, used ONLY to settle a near-tie (see
 # CLOSE_SCORE_THRESHOLD/pick_best_skill()) - never consulted while one
 # skill's score clearly beats the rest.
 const HERO_TIE_BREAK := {
 	"slark": ["pounce", "dark_pact", "shadow_dance", "essence_shift"],
 	"lone_druid": ["entangle", "summon_spirit_bear", "spirit_link", "true_form"],
-	"abaddon": ["aphotic_shield", "mist_coil"],
+	"abaddon": ["aphotic_shield", "mist_coil_self", "mist_coil"],
 	"kunkka": ["ghostship", "torrent", "x_marks_the_spot"],
 	"ancient_apparition": ["ice_blast", "chilling_touch", "cold_feet", "ice_vortex"],
 	"winter_wyvern": ["winter's_curse", "splinter_blast", "cold_embrace", "arctic_burn"],
@@ -740,8 +752,34 @@ static func _abaddon_modifier(skill_id: String, level_data: Dictionary, context:
 			var target_hp: float = float(context.get("target_hp", 0.0))
 			var dmg: float = _estimate_skill_damage(skill_id, level_data, context)
 			return -10.0 if (target_hp > 0.0 and dmg < target_hp * 0.3) else 0.0
+		"mist_coil_self":
+			return _abaddon_mist_coil_self_modifier(level_data, context)
 		_:
 			return 0.0
+
+
+## Abaddon's self-cast Mist Coil, on top of the shared defensive HP
+## tiers (_evaluate_defensive() - big when badly hurt, a penalty when
+## healthy): how much of the heal would actually land. It costs
+## hp_cost first, then heals `heal`, capped at max HP - so near full
+## health most of it is wasted, and it's marked down accordingly
+## (+8 when every point counts, down to -12 when barely any does).
+## Never picked if paying the cost would kill him, or if it would
+## leave him no better off than before.
+static func _abaddon_mist_coil_self_modifier(level_data: Dictionary, context: Dictionary) -> float:
+	var hp: float = float(context.get("hero_hp", 0.0))
+	var max_hp: float = float(context.get("hero_max_hp", 0.0))
+	var hp_cost: float = float(level_data.get("hp_cost", 0.0))
+	var heal: float = float(level_data.get("heal", 0.0))
+	var net_heal: float = heal - hp_cost
+	if hp <= hp_cost or max_hp <= 0.0 or net_heal <= 0.0:
+		return -1000.0
+
+	var gain: float = minf(hp - hp_cost + heal, max_hp) - hp
+	if gain <= 0.0:
+		return -1000.0
+	var efficiency: float = gain / net_heal
+	return lerpf(-12.0, 8.0, clampf(efficiency, 0.0, 1.0))
 
 
 ## Kunkka: offensive, control, burst, positioning, combo-oriented. Every

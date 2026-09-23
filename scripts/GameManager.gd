@@ -2355,6 +2355,9 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 # PlayerManager.get_inventory_stat_bonus() sums their "value" for
 # every copy currently owned, so the bonus applies only as long as the
 # item stays in the inventory and disappears the moment it's sold.
+# A "passive" item can carry the same "stat"/"value" pair on top of
+# its passive (Cleaver's +10 damage) - get_inventory_stat_bonus() counts
+# any item with a "stat" field, whatever its effect.
 
 # ============================================================
 # SHOP DATA
@@ -2444,8 +2447,10 @@ var items: Dictionary = {
 		"id": "cleaver",
 		"name": "Cleaver",
 		"image": "res://assets/items/cleaver.png",
-		"description": "Passive: Attacks cleave for 30% Cleave Damage to enemies within 1 column on either side. No other stats.",
+		"description": "Adds +10 damage. Passive (melee heroes only): Attacks cleave for 30% Cleave Damage to enemies within 1 column on either side.",
 		"effect": "passive",
+		"stat": "damage",
+		"value": 10,
 		"cost": 850
 	},
 	"morbid_mask": {

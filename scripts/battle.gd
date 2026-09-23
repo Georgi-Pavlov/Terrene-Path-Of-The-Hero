@@ -62,6 +62,11 @@ const GRID_COLUMNS := 10
 # a moment to read it before it was already fading away.
 const MESSAGE_READ_HOLD_DURATION := 1.0
 
+# Tidebringer's proc callout (see _show_rising_message_over()): deep
+# blue text, with a light outline so the dark blue stays readable.
+const TIDEBRINGER_TEXT_COLOR := Color(0.05, 0.2, 0.8, 1)
+const TIDEBRINGER_TEXT_OUTLINE_COLOR := Color(0.85, 0.93, 1, 1)
+
 # Every _start_X_targeting() function marks its valid targets with this
 # highlight (see _highlight_valid_targets()) instead of each picking its
 # own flat tint - those used to each land somewhere in the same pale,
@@ -81,6 +86,91 @@ const TARGET_HIGHLIGHT_PULSE_COLOR := Color(1.9, 1.7, 0.7, 1)
 # or plain white brightness, so a bounced enemy visibly reads as "just
 # got hit" rather than "something happened to it."
 const BOUNCE_HIT_FLASH_COLOR := Color(1.8, 0.25, 0.25, 1)
+
+# Entangle's own visuals: the one-shot flash on cast (same overbright
+# trick as BOUNCE_HIT_FLASH_COLOR, pushed toward green), and the
+# lingering tint for as long as the root holds (see
+# _refresh_entangle_tints()). The tint is applied through
+# self_modulate rather than modulate, since modulate is already
+# owned by the target highlight, hit flashes and stealth fades.
+const ENTANGLE_FLASH_COLOR := Color(0.5, 1.8, 0.4, 1)
+const ENTANGLE_TINT_COLOR := Color(0.6, 1.0, 0.55, 1)
+
+# Spirit Link's own visual while it's active (see _set_spirit_link_
+# visual()): the sprite grows to this scale. The enlarged scale is
+# stored as the node's "base_scale" meta, which _pulse_caster_sprite()/
+# _flash_bounce_hit() return to instead of a hard-coded Vector2.ONE.
+const SPIRIT_LINK_SCALE := 1.1
+
+# Mote colors for _play_drain_effect(): Essence Shift's stolen stats
+# in Slark's teal, Spirit Link's lifesteal in red.
+const ESSENCE_SHIFT_MOTE_COLOR := Color(0.2, 0.9, 0.8, 1.0)
+const SPIRIT_LINK_MOTE_COLOR := Color(1.0, 0.2, 0.15, 1.0)
+
+# Mist Coil's projectile (see _play_mist_coil_effect()): the ball/trail/
+# impact-burst color, and the overbright flash the target gets on
+# impact (same trick as BOUNCE_HIT_FLASH_COLOR).
+const MIST_COIL_COLOR := Color(0.35, 1.0, 0.45, 1.0)
+const MIST_COIL_FLASH_COLOR := Color(0.6, 1.8, 0.6, 1)
+
+# Ice Blast's projectile (see _play_ice_blast_effect()): a big pale-ice
+# ball with a white rim, the same projectile Mist Coil uses
+# (_play_orb_projectile()), just scaled up. Its flash on impact reuses
+# COLD_FEET_FLASH_COLOR, and the lingering frost is the same one Cold
+# Feet/Ice Vortex use (_refresh_cold_feet_frost()).
+const ICE_BLAST_BALL_COLOR := Color(0.6, 0.85, 1.0, 1.0)
+const ICE_BLAST_RIM_COLOR := Color(0.95, 0.98, 1.0, 1.0)
+const ICE_BLAST_BALL_SIZE := 46.0
+
+# Splinter Blast's visual (see _play_splinter_shards()): an ice
+# explosion on the blast's target, then big ice chunks flung from it to
+# every unit its splinters hit.
+const SPLINTER_SHARD_COLOR := Color(0.75, 0.92, 1.0, 1.0)
+const SPLINTER_SHARDS_PER_TARGET := 4
+# The explosion on the target (in units of Mist Coil's own impact
+# burst - see _play_orb_impact()) and the flung chunks' size in px.
+const SPLINTER_EXPLOSION_SCALE := 3.0
+const SPLINTER_CHUNK_SIZE := 18.0
+
+# Aphotic Shield's visuals (see _show_aphotic_shell() and friends): the
+# translucent shell's fill and rim, the cast flash, and the shard/spark
+# color for the cleanse and the shatter. The shell is a child Panel of
+# the shielded sprite, named APHOTIC_SHELL_NAME so its presence can be
+# looked up.
+const APHOTIC_SHELL_FILL_COLOR := Color(0.35, 0.08, 0.55, 0.28)
+const APHOTIC_SHELL_RIM_COLOR := Color(0.62, 0.3, 0.95, 0.95)
+const APHOTIC_FLASH_COLOR := Color(1.3, 0.6, 1.8, 1)
+const APHOTIC_SHARD_COLOR := Color(0.55, 0.2, 0.85, 1.0)
+const APHOTIC_SHELL_NAME := "AphoticShell"
+
+# Borrowed Time's visual (see _set_borrowed_time_visual()): a pulsing
+# greenish-teal glow over the sprite for as long as it's active. It's
+# an additive-blended copy of the sprite itself rather than a change to
+# the sprite's own modulate/self_modulate, which the hit flashes,
+# stealth fades and Entangle's tint already own.
+const BORROWED_TIME_GLOW_COLOR := Color(0.25, 1.0, 0.75, 1.0)
+const BORROWED_TIME_GLOW_NAME := "BorrowedTimeGlow"
+const BORROWED_TIME_PULSE_SECONDS := 1.1
+
+# Cold Feet's/Ice Vortex's frost on a marked unit (see
+# _set_cold_feet_frost()/_play_ice_vortex_swirl()): the
+# additive icy sheen over the sprite, the snowflakes, and the one-shot
+# flash on cast (same overbright trick as BOUNCE_HIT_FLASH_COLOR). The
+# frost is a child node named COLD_FEET_FROST_NAME, so - like Borrowed
+# Time's glow - it never touches the sprite's own modulate/
+# self_modulate, which the hit flashes and Entangle's tint own.
+const COLD_FEET_SHEEN_COLOR := Color(0.35, 0.6, 0.95, 1.0)
+const COLD_FEET_FLAKE_COLOR := Color(0.85, 0.95, 1.0, 1.0)
+const COLD_FEET_FLASH_COLOR := Color(0.7, 1.3, 1.9, 1)
+const COLD_FEET_FROST_NAME := "ColdFeetFrost"
+
+# How long Crystal Nova's frost lingers on everything it hit (see
+# _flash_frost_briefly()) - it's a single burst with no DoT to keep the
+# frost up, unlike Cold Feet/Ice Vortex/Ice Blast/Frostbite.
+const CRYSTAL_NOVA_FROST_SECONDS := 2.5
+
+# Torrent's water spray color (see _play_torrent_splash()).
+const TORRENT_SPRAY_COLOR := Color(0.55, 0.8, 1.0, 1.0)
 
 # Same pulsing treatment as TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR above,
 # just in green rather than gold - marks the hero's own portrait as a
@@ -147,6 +237,23 @@ const LUCENT_BEAM_COLOR := Color(1.5, 1.6, 2.0, 0.85)
 const LUCENT_BEAM_WIDTH := 14.0
 const LUCENT_BEAM_FALL_HEIGHT := 220.0
 const LUCENT_BEAM_FALL_DURATION := 0.16
+
+# Mirana's Sacred Arrow (see _play_sacred_arrow_flight()) - same "no
+# dedicated art asset, plain cosmetic ColorRect played alongside the
+# already-resolved instant damage" shape as Lucent Beam just above, but
+# deliberately varied in a few ways so the two don't read as the same
+# effect recolored: light blue instead of pale white, a short streak
+# that FLIES HORIZONTALLY in from the hero's own position rather than
+# growing straight down out of the sky onto the target, and a flight
+# time that scales with the shot's own distance (SACRED_ARROW_BASE_
+# DURATION + SACRED_ARROW_DURATION_PER_COLUMN per column travelled) -
+# echoing the skill's own "more damage the further it travels" identity
+# - instead of Lucent Beam's fixed fall duration.
+const SACRED_ARROW_COLOR := Color(0.65, 1.3, 1.9, 0.9)
+const SACRED_ARROW_HEIGHT := 10.0
+const SACRED_ARROW_LENGTH := 46.0
+const SACRED_ARROW_BASE_DURATION := 0.12
+const SACRED_ARROW_DURATION_PER_COLUMN := 0.025
 
 # Tusk's Walrus Punch (see _resolve_walrus_punch_cast()) deliberately
 # flips Snowball's/Ghostship's own "instant, already-resolved outcome,
@@ -530,6 +637,40 @@ var _tag_team_duration_pending_start: bool = false
 # cost the hero HP of his own, see _apply_bear_death_penalty()).
 # ------------------------------------------------------------------
 var _bear: Dictionary = {}
+
+# The rival hero's single-target skills that can be aimed at the
+# player's Spirit Bear instead of the player himself - see
+# _choose_enemy_skill_on_bear() for how the AI picks between the two,
+# and each skill's own _cast_enemy_*_on_bear() for what it does to the
+# bear. Skills left out are either about the player's own position
+# (X Marks the Spot, Ghostship/Timber Chain's line, Chakram's/Ice
+# Shards' placement, Mortimer Kisses' channel, Crystal Nova's area) or
+# not targeted at all; those still reach the bear through their own
+# AoE collateral, same as before.
+const ENEMY_BEAR_TARGETABLE_SKILLS: Array[String] = [
+	"entangle", "mist_coil", "torrent", "corrosive_haze", "sacred_arrow",
+	"lucent_beam", "ensnare", "cold_feet", "ice_vortex", "chilling_touch",
+	"ice_blast", "splinter_blast", "winter's_curse", "frostbite", "snowball",
+	"walrus_punch", "leech_seed", "lil_shredder",
+]
+
+# Set by _cast_enemy_skill() for the duration of one cast: true when
+# the rival's current skill is aimed at the player's Spirit Bear rather
+# than the player (see _choose_enemy_skill_on_bear()). Each bear-
+# targetable _cast_enemy_*() checks it first and hands off to its own
+# _cast_enemy_*_on_bear() counterpart.
+var _enemy_skill_on_bear: bool = false
+
+# Set by _cast_enemy_skill() for the duration of one cast: true when the
+# rival's current Mist Coil is aimed at himself (the self-heal - see
+# EnemySkillAI.MIST_COIL_SELF_ID) rather than at the player or his bear.
+var _enemy_mist_coil_self: bool = false
+
+# Whether the player is hidden from the rival for the turn being
+# decided right now (see _enemy_hero_turn()) - lets the skill picker
+# still consider the bear as a target while the player himself can't
+# be seen.
+var _enemy_ai_hero_hidden: bool = false
 
 # ------------------------------------------------------------------
 # Lone Druid's Spirit Link: while active, the hero gets a flat armor
@@ -1838,19 +1979,27 @@ func _enemy_status_effect_text(enemy: Dictionary) -> String:
 	# field's own duration runs one turn longer than root/silence by
 	# design, but the "Entangled" status itself shouldn't outlive the
 	# root/silence it actually represents, just the residual DoT tick.
-	var entangled: bool = enemy.get("silence_turns_left", 0) > 0
+	# An activated Curse of Avernus also silences through that same
+	# silence_turns_left field, so while it's active silence alone no
+	# longer proves Entangle - fall back to Entangle's own DoT counter.
+	# Only an ACTIVATED curse counts as "Cursed"; stacks still building
+	# toward hits_to_activate aren't a curse yet.
+	var cursed: bool = enemy.get("curse_active", false)
+	var silenced: bool = enemy.get("silence_turns_left", 0) > 0
+	var entangled: bool = silenced and (not cursed or enemy.get("entangle_dot_turns_left", 0) > 0)
 	var rooted: bool = enemy.get("root_turns_left", 0) > 0 or _is_column_ice_shards_blocked(enemy["pos_index"])
 	var overgrown: bool = enemy.get("overgrowth_dot_turns_left", 0) > 0
 
 	if entangled:
 		effects.append("Entangled")
-		effects.append("Silenced")
 	elif rooted and not overgrown:
 		# Overgrowth's own root already gets its own label below - so
 		# only fall back to plain "Rooted" when nothing more specific
 		# (Entangle, Overgrowth) is already covering it.
 		effects.append("Rooted")
-	if enemy.get("curse_active", false) or enemy.get("curse_stacks", 0) > 0:
+	if silenced:
+		effects.append("Silenced")
+	if cursed:
 		effects.append("Cursed")
 	if enemy.get("cold_feet_dot_turns_left", 0) > 0:
 		effects.append("Cold Feet")
@@ -2134,6 +2283,8 @@ func _refresh_bars() -> void:
 	_update_savage_roar_state()
 
 	_refresh_status_effects()
+	_refresh_entangle_tints()
+	_refresh_cold_feet_frost()
 
 	# Called this pervasively (after nearly every action/tick in the
 	# game - see _refresh_bars()'s own many call sites) so an enemy's
@@ -2762,10 +2913,14 @@ func _cast_dark_pact(level_data: Dictionary) -> bool:
 	var pact_damage: float = _roll_hero_damage() * multiplier
 	for enemy in targets:
 		_deal_fixed_damage_to_enemy(enemy, pact_damage)
+		# Same red hit-flash as Moon Glaives' bounce, so every enemy
+		# caught in the burst visibly reacts, not just via damage numbers.
+		if is_instance_valid(enemy.get("node")):
+			_flash_bounce_hit(enemy["node"])
 	# Self-centered on the hero, same as the check above - a rival's own
 	# illusion (Naga Siren's Mirror Image) can be in range independently
 	# of whether the boss itself currently is.
-	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, pact_damage)
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, pact_damage, true)
 
 	return true
 
@@ -2942,26 +3097,30 @@ func _cast_scatterblast(level_data: Dictionary) -> bool:
 	# independently of whether the boss itself currently is.
 	_deal_directional_aoe_damage_to_enemy_illusions(_hero_pos_index, direction, range_columns, scatter_damage)
 
-	_play_scatterblast_effect(direction, range_columns)
+	_play_scatterblast_effect(hero_image, direction, range_columns)
 
 	return true
 
 
 ## Purely cosmetic: a one-shot cone of particles bursting from
-## Snapfire's own position out toward `direction` (+1 right, -1 left),
-## sized to travel roughly `range_columns` columns before fading -
-## visualizes Scatterblast's blast. The damage above has already fully
-## resolved by the time this plays; it never gates on this. First
-## particle-based effect in this file - every other one-shot visual
-## (Ghostship's flight, Spirit Bear's summon) is a plain TextureRect
-## tween instead, since there's no shotgun-pellet art asset to tween in
-## the same way.
-func _play_scatterblast_effect(direction: int, range_columns: int) -> void:
+## `origin_node`'s own position out toward `direction` (+1 right, -1
+## left), sized to travel roughly `range_columns` columns before
+## fading - visualizes Scatterblast's blast, from whichever side cast
+## it (the player's own hero_image, or a rival's own node). The damage
+## above has already fully resolved by the time this plays; it never
+## gates on this. First particle-based effect in this file - every
+## other one-shot visual (Ghostship's flight, Spirit Bear's summon) is
+## a plain TextureRect tween instead, since there's no shotgun-pellet
+## art asset to tween in the same way.
+func _play_scatterblast_effect(origin_node: Control, direction: int, range_columns: int) -> void:
+	if not is_instance_valid(origin_node):
+		return
+
 	var lifetime: float = 0.35
 	var travel_distance: float = _grid_unit() * maxf(1.0, float(range_columns))
 
 	var particles := CPUParticles2D.new()
-	particles.position = hero_image.position + hero_image.size / 2.0
+	particles.position = origin_node.position + origin_node.size / 2.0
 	particles.emitting = false
 	particles.one_shot = true
 	particles.amount = 40
@@ -3113,15 +3272,19 @@ func _resolve_corrosive_haze_cast(target: Dictionary, level_data: Dictionary) ->
 ## exactly the table's own "Max Damage" column, reached at max range.
 ## Then stuns it (target["stun_turns_left"], same shared field Pounce's/
 ## Torrent's own stun use) for this level's own stun_turns, only if the
-## hit left it alive.
+## hit left it alive. _play_sacred_arrow_flight() plays the actual
+## flight alongside this already-resolved damage, same "cosmetic only,
+## never gates the outcome" split Lucent Beam's own impact uses.
 func _resolve_sacred_arrow_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
+	var target_node: TextureRect = target.get("node")
 	var distance: int = _distance(target["pos_index"], _hero_pos_index)
 	var damage: float = float(level_data.get("base_damage", 0)) + float(level_data.get("bonus_per_column", 0)) * distance
 	_deal_fixed_damage_to_enemy(target, damage)
 	if target.get("current_hp", 0) > 0:
 		target["stun_turns_left"] = int(level_data.get("stun_turns", 0))
+	_play_sacred_arrow_flight(hero_image, target_node, distance)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -3175,6 +3338,9 @@ func _resolve_entangle_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
 	_apply_root(target, level_data)
+	if is_instance_valid(target.get("node")):
+		_play_entangle_effect(target["node"])
+	_refresh_entangle_tints()
 
 	if _is_hero_hidden():
 		_end_shadow_dance()
@@ -3202,6 +3368,8 @@ func _resolve_mist_coil_enemy_cast(target: Dictionary, level_data: Dictionary) -
 	var generation_before: int = _stage_generation
 
 	var damage: float = float(level_data.get("damage", 0))
+	# Captured before the hit, which may kill (and free) the target.
+	_play_mist_coil_effect(hero_image, target.get("node"))
 	_deal_fixed_damage_to_enemy(target, damage)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
@@ -3229,6 +3397,8 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
 	var damage: float = float(level_data.get("damage", 0))
+	# Played before the hit, which may kill (and free) the target.
+	_play_torrent_splash(target.get("node"))
 	_deal_fixed_damage_to_enemy(target, damage)
 	if target.get("current_hp", 0) > 0:
 		target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
@@ -3240,10 +3410,12 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 			if is_same(enemy, target) or _is_target_hidden(enemy):
 				continue
 			if _distance(enemy["pos_index"], target_pos) <= radius:
+				_play_torrent_splash(enemy.get("node"))
 				_deal_fixed_damage_to_enemy(enemy, damage)
 		# Centered on the target's own column, same as the splash above -
 		# a rival's own illusion (Naga Siren's Mirror Image) can be in
 		# range independently of whether the boss itself currently is.
+		_play_torrent_splash_on_illusions(_enemy_illusions, target_pos, radius)
 		_deal_aoe_damage_to_enemy_illusions(target_pos, radius, damage)
 
 	# No Shadow Dance check here, unlike Entangle's own resolve - that
@@ -3665,6 +3837,49 @@ func _play_lucent_beam_impact(target_node: TextureRect) -> void:
 	tween.tween_callback(beam.queue_free)
 
 
+## Purely cosmetic: a short light-blue streak (SACRED_ARROW_COLOR) that
+## flies horizontally from `caster_node`'s own position to
+## `target_node`'s - either direction (the player's own hero_image
+## shooting an enemy, or a rival's own node shooting the player's
+## hero_image, both plain TextureRects) - see SACRED_ARROW_* constants'
+## own comment for how this is deliberately varied from Lucent Beam's
+## "grows down out of the sky" drop rather than just being it
+## recolored. `distance` (already known to the caller - see
+## _resolve_sacred_arrow_cast()/_cast_enemy_sacred_arrow()) stretches
+## the flight time for a longer shot, same value the damage itself
+## already scales off. Same "pulse the struck sprite, then fade out"
+## finish as Lucent Beam once it lands. No-op if either node is already
+## gone (e.g. the hit killed it) by the time this runs.
+func _play_sacred_arrow_flight(caster_node: Control, target_node: TextureRect, distance: int) -> void:
+	if not is_instance_valid(caster_node) or not is_instance_valid(target_node):
+		return
+
+	var start_x: float = caster_node.position.x + caster_node.size.x / 2.0
+	var end_x: float = target_node.position.x + target_node.size.x / 2.0
+	var center_y: float = target_node.position.y + target_node.size.y / 2.0 - SACRED_ARROW_HEIGHT / 2.0
+
+	var arrow := ColorRect.new()
+	arrow.color = SACRED_ARROW_COLOR
+	arrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	arrow.size = Vector2(SACRED_ARROW_LENGTH, SACRED_ARROW_HEIGHT)
+	arrow.position = Vector2(start_x - SACRED_ARROW_LENGTH / 2.0, center_y)
+	add_child(arrow)
+	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# render at the hero/enemy layer, not on top of every UI panel.
+	move_child(arrow, enemies_layer.get_index() + 1)
+
+	var flight_duration: float = SACRED_ARROW_BASE_DURATION + SACRED_ARROW_DURATION_PER_COLUMN * float(distance)
+
+	var tween := create_tween()
+	tween.tween_property(arrow, "position:x", end_x - SACRED_ARROW_LENGTH / 2.0, flight_duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(func() -> void:
+		if is_instance_valid(target_node):
+			_pulse_caster_sprite(target_node, false)
+	)
+	tween.tween_property(arrow, "modulate:a", 0.0, 0.18)
+	tween.tween_callback(arrow.queue_free)
+
+
 ## Resolves a Cold Feet cast on `target`: no immediate damage, just
 ## arms this level's own damage/duration onto `target`'s own
 ## Dictionary (dedicated cold_feet_dot_damage/cold_feet_dot_turns_left
@@ -3680,6 +3895,9 @@ func _resolve_cold_feet_cast(target: Dictionary, level_data: Dictionary) -> void
 
 	target["cold_feet_dot_damage"] = float(level_data.get("damage", 0))
 	target["cold_feet_dot_turns_left"] = int(level_data.get("duration", 0))
+	if is_instance_valid(target.get("node")):
+		_flash_bounce_hit(target["node"], COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -3718,6 +3936,16 @@ func _resolve_ice_vortex_cast(target: Dictionary, level_data: Dictionary) -> voi
 		if _distance(enemy["pos_index"], target_pos) <= radius:
 			enemy["ice_vortex_dot_damage"] = damage
 			enemy["ice_vortex_dot_turns_left"] = duration
+			if is_instance_valid(enemy.get("node")):
+				_flash_bounce_hit(enemy["node"], COLD_FEET_FLASH_COLOR)
+	# The rival's own illusions (Naga Siren's Mirror Image) in the same
+	# area get the same DoT - ticked by _tick_enemy_illusions_ice_vortex()
+	# at the start of the enemy turn. The rival's own Spirit Bear needs
+	# nothing extra: it's a regular _enemies entry, already marked above.
+	_mark_illusions_ice_vortex(_enemy_illusions, target_pos, radius, damage, duration)
+
+	_play_ice_vortex_swirl(target.get("node"), radius)
+	_refresh_cold_feet_frost()
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -4215,7 +4443,10 @@ func _kill_illusion(illusion: Dictionary) -> void:
 ## damage()'s own redirect roll does, since an illusion is a copy of
 ## him, not a separate combatant with its own defense stat. A no-op
 ## while no illusions are up.
-func _deal_aoe_damage_to_illusions(center_pos_index: int, radius: int, amount: float) -> void:
+## `flash_hits` gives each one hit the same red hit-flash as Moon
+## Glaives' bounce (_flash_bounce_hit()) - off by default, opted into by
+## Dark Pact.
+func _deal_aoe_damage_to_illusions(center_pos_index: int, radius: int, amount: float, flash_hits: bool = false) -> void:
 	if _illusions.is_empty() or amount <= 0.0:
 		return
 
@@ -4223,6 +4454,8 @@ func _deal_aoe_damage_to_illusions(center_pos_index: int, radius: int, amount: f
 	for illusion in _illusions.duplicate():
 		if _distance(illusion["pos_index"], center_pos_index) <= radius:
 			_deal_damage_to_illusion(illusion, mitigated)
+			if flash_hits and is_instance_valid(illusion.get("node")):
+				_flash_bounce_hit(illusion["node"])
 
 
 ## The line-shaped equivalent of _deal_aoe_damage_to_illusions() above -
@@ -4288,12 +4521,16 @@ func _resolve_ice_blast_cast(target: Dictionary, level_data: Dictionary) -> void
 		if _distance(enemy["pos_index"], target_pos) <= radius:
 			hit_targets.append(enemy)
 
+	# Launched before the hits land - they may kill (and free) the target.
+	_play_ice_blast_effect(hero_image, target.get("node"))
+
 	for enemy in hit_targets:
 		_deal_fixed_damage_to_enemy(enemy, damage)
 		if enemy.get("current_hp", 0) > 0:
 			enemy["ice_blast_dot_damage"] = dot_damage
 			enemy["ice_blast_dot_turns_left"] = dot_duration
 			enemy["ice_blast_execute_pct"] = execute_pct
+	_refresh_cold_feet_frost()
 	# Centered on the target's own column, same as the check above - a
 	# rival's own illusion (Naga Siren's Mirror Image) can be in range
 	# independently of whether the boss itself currently is.
@@ -4326,16 +4563,28 @@ func _resolve_splinter_blast_cast(target: Dictionary, level_data: Dictionary) ->
 	var generation_before: int = _stage_generation
 
 	var damage: float = float(level_data.get("damage", 0))
-	_deal_fixed_damage_to_enemy(target, damage)
-
 	var splinter_damage: float = float(level_data.get("splinter_damage", 0))
 	var splinter_range: int = int(level_data.get("splinter_range", 0))
 	var target_pos: int = target["pos_index"]
+
+	# Every unit the splinters will reach, gathered (and their shards
+	# launched) before any damage lands - a kill frees its node.
+	var splinter_targets: Array = []
+	var shard_nodes: Array = []
 	for enemy in _enemies:
 		if is_same(enemy, target) or _is_target_hidden(enemy):
 			continue
 		if _distance(enemy["pos_index"], target_pos) <= splinter_range:
-			_deal_fixed_damage_to_enemy(enemy, splinter_damage)
+			splinter_targets.append(enemy)
+			shard_nodes.append(enemy.get("node"))
+	for illusion in _enemy_illusions:
+		if _distance(illusion["pos_index"], target_pos) <= splinter_range:
+			shard_nodes.append(illusion.get("node"))
+	_play_splinter_shards(target.get("node"), shard_nodes)
+
+	_deal_fixed_damage_to_enemy(target, damage)
+	for enemy in splinter_targets:
+		_deal_fixed_damage_to_enemy(enemy, splinter_damage)
 	# Centered on the target's own column, same as the check above - a
 	# rival's own illusion (Naga Siren's Mirror Image) can be in range
 	# independently of whether the boss itself currently is.
@@ -4372,6 +4621,9 @@ func _resolve_winters_curse_cast(target: Dictionary, level_data: Dictionary) -> 
 	_winter_curse_range = int(level_data.get("curse_range", 0))
 
 	_show_message_over_hero("Winter's Curse!")
+	if is_instance_valid(target.get("node")):
+		_flash_bounce_hit(target["node"], COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -4413,19 +4665,25 @@ func _resolve_crystal_nova_cast(target: Dictionary, level_data: Dictionary) -> v
 	var generation_before: int = _stage_generation
 
 	var damage: float = float(level_data.get("damage", 0))
+	# Frosted before each hit lands - a kill frees the node.
+	_flash_frost_briefly(target.get("node"), CRYSTAL_NOVA_FROST_SECONDS)
 	_deal_fixed_damage_to_enemy(target, damage)
 
 	var radius: int = int(level_data.get("radius", 0))
 	if radius > 0:
 		var target_pos: int = target["pos_index"]
-		for enemy in _enemies:
+		for enemy in _enemies.duplicate():
 			if is_same(enemy, target) or _is_target_hidden(enemy):
 				continue
 			if _distance(enemy["pos_index"], target_pos) <= radius:
+				_flash_frost_briefly(enemy.get("node"), CRYSTAL_NOVA_FROST_SECONDS)
 				_deal_fixed_damage_to_enemy(enemy, damage)
 		# Centered on the target's own column, same as the splash above -
 		# a rival's own illusion (Naga Siren's Mirror Image) can be in
 		# range independently of whether the boss itself currently is.
+		for illusion in _enemy_illusions:
+			if _distance(illusion["pos_index"], target_pos) <= radius:
+				_flash_frost_briefly(illusion.get("node"), CRYSTAL_NOVA_FROST_SECONDS)
 		_deal_aoe_damage_to_enemy_illusions(target_pos, radius, damage)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
@@ -4456,6 +4714,9 @@ func _resolve_frostbite_cast(target: Dictionary, level_data: Dictionary) -> void
 	target["stun_turns_left"] = int(level_data.get("stun_turns", 0))
 	target["frostbite_dot_damage"] = float(level_data.get("dot_damage", 0))
 	target["frostbite_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	if is_instance_valid(target.get("node")):
+		_flash_bounce_hit(target["node"], COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -4511,7 +4772,7 @@ func _maybe_consume_tidebringer_stack() -> Dictionary:
 		return {}
 
 	_tidebringer_attack_count = 0
-	_show_message_over_hero("Tidebringer!")
+	_show_rising_message_over(hero_image, "Tidebringer!", TIDEBRINGER_TEXT_COLOR)
 	return level_data
 
 
@@ -4527,13 +4788,7 @@ func _apply_tidebringer_cleave(target: Dictionary, attack_damage: float, level_d
 	if cleave_damage <= 0.0:
 		return
 
-	var radius: int = int(level_data.get("cleave_columns", 1))
-	var target_pos: int = target["pos_index"]
-	for enemy in _enemies:
-		if is_same(enemy, target) or _is_target_hidden(enemy):
-			continue
-		if _distance(enemy["pos_index"], target_pos) <= radius:
-			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
+	_apply_splash_damage(target, cleave_damage, int(level_data.get("cleave_columns", 1)))
 
 
 const CLEAVER_DAMAGE_PCT := 0.30
@@ -4554,17 +4809,18 @@ const CLEAVER_RANGE := 1
 func _apply_cleaver_cleave(target: Dictionary, attack_damage: float) -> void:
 	if PlayerManager.get_inventory().get("cleaver", 0) <= 0:
 		return
+	# The cleave is melee-only - a ranged hero still gets Cleaver's flat
+	# +10 damage (a plain "stat" bonus, see GameManager's item entry),
+	# just no splash. True Form's forced melee counts as melee here,
+	# same as everywhere else _is_ranged_hero() is asked.
+	if _is_ranged_hero():
+		return
 
 	var cleave_damage: float = attack_damage * CLEAVER_DAMAGE_PCT
 	if cleave_damage <= 0.0:
 		return
 
-	var target_pos: int = target["pos_index"]
-	for enemy in _enemies:
-		if is_same(enemy, target) or _is_target_hidden(enemy):
-			continue
-		if _distance(enemy["pos_index"], target_pos) <= CLEAVER_RANGE:
-			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
+	_apply_splash_damage(target, cleave_damage, CLEAVER_RANGE)
 
 
 # ------------------------------------------------------------------
@@ -4609,13 +4865,41 @@ func _apply_rip_tide_cleave(target: Dictionary, attack_damage: float) -> void:
 	if cleave_damage <= 0.0:
 		return
 
-	var radius: int = int(level_data.get("radius", 0))
+	_apply_splash_damage(target, cleave_damage, int(level_data.get("radius", 0)))
+
+
+## The standard splash/cleave off a hit on `target`: every OTHER living,
+## targetable enemy within `radius` columns of `target`'s own column
+## takes `splash_damage` - raw and pre-mitigation, each still mitigated
+## by ITS OWN armor via _deal_fixed_damage_to_enemy() - and gets
+## _flash_bounce_hit()'s red flash, the same one Moon Glaives' bounces
+## use, so a splashed enemy visibly reads as hit. Every enemy illusion
+## within that same radius is hit (and flashed) too - illusions are
+## unconditional collateral on any AoE splash, same rule Moon Glaives
+## follows. The boss's own Spirit Bear needs nothing extra: it's a
+## regular _enemies entry, so the loop reaches it like any other enemy.
+##
+## Shared by Tidebringer, the Cleaver item and Rip Tide - any future
+## cleave/splash should route through here too, so they all behave and
+## look the same.
+func _apply_splash_damage(target: Dictionary, splash_damage: float, radius: int) -> void:
+	if splash_damage <= 0.0:
+		return
+
 	var target_pos: int = target["pos_index"]
-	for enemy in _enemies:
+	# Iterates a copy - a splash kill removes that enemy from _enemies
+	# mid-loop.
+	for enemy in _enemies.duplicate():
 		if is_same(enemy, target) or _is_target_hidden(enemy):
 			continue
+		if enemy.get("current_hp", 0) <= 0:
+			continue
 		if _distance(enemy["pos_index"], target_pos) <= radius:
-			_deal_fixed_damage_to_enemy(enemy, cleave_damage)
+			_deal_fixed_damage_to_enemy(enemy, splash_damage)
+			if is_instance_valid(enemy.get("node")):
+				_flash_bounce_hit(enemy["node"])
+
+	_deal_aoe_damage_to_enemy_illusions(target_pos, radius, splash_damage, true)
 
 
 # ------------------------------------------------------------------
@@ -5587,6 +5871,7 @@ func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
 
 	PlayerManager.damage_hero(hp_cost)
 	heal(float(level_data.get("heal", 0)))
+	_play_mist_coil_effect(hero_image, hero_image)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -5820,6 +6105,11 @@ func _tick_player_turn_start_effects() -> void:
 		_player_ice_vortex_dot_turns_left -= 1
 		if _player_ice_vortex_dot_damage > 0.0:
 			apply_damage(_player_ice_vortex_dot_damage)
+	# His illusions caught in the same vortex tick right here too,
+	# independently of whether the hero himself still is - and so does
+	# every DoT a rival has put on his Spirit Bear.
+	_tick_player_allies_ice_vortex()
+	_tick_bear_turn_start_effects()
 
 	if _player_ice_blast_dot_turns_left > 0:
 		_player_ice_blast_dot_turns_left -= 1
@@ -5939,7 +6229,70 @@ func _apply_essence_shift_steal(target: Dictionary) -> void:
 	_essence_shift_bonus["mana"] = _essence_shift_bonus.get("mana", 0.0) + contribution["mana"]
 	_essence_shift_bonus["armor"] = _essence_shift_bonus.get("armor", 0.0) + contribution["armor"]
 
+	_play_drain_effect(target.get("node"), hero_image, ESSENCE_SHIFT_MOTE_COLOR)
 	_refresh_bars()
+
+
+## Purely cosmetic: a short stream of small motes drifting from
+## `from_node` (whoever was just drained) to `to_node` (whoever did the
+## draining), each along its own slightly-arced path and staggered so
+## they read as a flow rather than a single blob, in `mote_color`. Used
+## by Essence Shift's steal (ESSENCE_SHIFT_MOTE_COLOR) and Spirit Link's
+## lifesteal (SPIRIT_LINK_MOTE_COLOR), each from both the player's side
+## and the rival's - the stat/HP has already moved by the time this
+## plays; it never gates on this. Individual tweened ColorRects rather than
+## CPUParticles2D (see _play_scatterblast_effect()) since every mote has
+## to land on a specific moving-free target point, not just spray out.
+func _play_drain_effect(from_node: Variant, to_node: Variant, mote_color: Color) -> void:
+	if not (from_node is Control) or not (to_node is Control):
+		return
+	if not is_instance_valid(from_node) or not is_instance_valid(to_node):
+		return
+
+	var start: Vector2 = from_node.position + from_node.size / 2.0
+	var end: Vector2 = to_node.position + to_node.size / 2.0
+	var travel: Vector2 = end - start
+	# Perpendicular to the flight line - each mote's arc bulges along
+	# this by a random amount, up or down.
+	var normal: Vector2 = Vector2(-travel.y, travel.x).normalized() if travel.length() > 0.001 else Vector2.UP
+	var arc_height: float = maxf(24.0, travel.length() * 0.25)
+
+	var mote_count: int = 14
+	var flight_time: float = 0.55
+	var stagger: float = 0.025
+	var mote_size: float = 7.0
+
+	for i in mote_count:
+		var mote := ColorRect.new()
+		mote.color = mote_color
+		mote.size = Vector2(mote_size, mote_size)
+		mote.pivot_offset = mote.size / 2.0
+		mote.rotation = PI / 4.0
+		mote.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mote.modulate.a = 0.0
+		var jitter: Vector2 = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * from_node.size * 0.2
+		var mote_start: Vector2 = start + jitter
+		var control_point: Vector2 = (mote_start + end) / 2.0 + normal * arc_height * randf_range(-1.0, 1.0)
+		mote.position = mote_start - mote.pivot_offset
+		add_child(mote)
+		# Same layering as _play_scatterblast_effect() - at the hero/enemy
+		# layer, not on top of every UI panel.
+		move_child(mote, enemies_layer.get_index() + 1)
+
+		var tween: Tween = mote.create_tween()
+		tween.tween_interval(i * stagger)
+		tween.tween_property(mote, "modulate:a", 1.0, 0.08)
+		tween.parallel().tween_method(
+			func(t: float) -> void:
+				var a: Vector2 = mote_start.lerp(control_point, t)
+				var b: Vector2 = control_point.lerp(end, t)
+				mote.position = a.lerp(b, t) - mote.pivot_offset,
+			0.0, 1.0, flight_time
+		).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		# Shrink/fade on arrival, as if absorbed.
+		tween.tween_property(mote, "scale", Vector2(0.2, 0.2), 0.12)
+		tween.parallel().tween_property(mote, "modulate:a", 0.0, 0.12)
+		tween.tween_callback(mote.queue_free)
 
 
 ## What 1 stolen point of `stat_name` ("strength"/"agility"/
@@ -6105,6 +6458,8 @@ func _activate_cold_embrace(level_data: Dictionary) -> void:
 
 	_set_hero_image(COLD_EMBRACE_IMAGE_PATH)
 	_show_message_over_hero("Encased in ice!")
+	_flash_bounce_hit(hero_image, COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 
 ## Dispels every other effect currently on the hero, good or bad, right
@@ -6203,6 +6558,7 @@ func _end_cold_embrace() -> void:
 
 	_set_hero_image(_hero_static.get("image", ""))
 	_show_message_over_hero("Cold Embrace wears off")
+	_refresh_cold_feet_frost()
 
 
 # ------------------------------------------------------------------
@@ -6388,6 +6744,7 @@ func _activate_spirit_link(level_data: Dictionary) -> void:
 	_spirit_link_bonus_armor = float(level_data.get("bonus_armor", 0))
 	_spirit_link_turns_remaining = int(level_data.get("duration", 0))
 	_spirit_link_duration_pending_start = true
+	_set_spirit_link_visual(hero_image, true)
 
 
 ## Ticks Spirit Link's duration down once per End Turn, same timing
@@ -6413,6 +6770,25 @@ func _end_spirit_link() -> void:
 	_spirit_link_bonus_armor = 0.0
 	_spirit_link_turns_remaining = 0
 	_spirit_link_duration_pending_start = false
+	_set_spirit_link_visual(hero_image, false)
+
+
+## Purely cosmetic: while Spirit Link is active, `node` (the player's
+## hero_image, or the rival Lone Druid's own node) grows to
+## SPIRIT_LINK_SCALE. Only does anything when the state actually
+## changes (the "base_scale" meta is the "currently on" marker), so a
+## recast while it's already up just leaves it as is.
+func _set_spirit_link_visual(node: Variant, active: bool) -> void:
+	if not (node is Control) or not is_instance_valid(node):
+		return
+	var target_scale: Vector2 = Vector2.ONE * (SPIRIT_LINK_SCALE if active else 1.0)
+	if node.get_meta("base_scale", Vector2.ONE) == target_scale:
+		return
+
+	node.set_meta("base_scale", target_scale)
+	node.pivot_offset = node.size / 2.0
+	var scale_tween: Tween = node.create_tween()
+	scale_tween.tween_property(node, "scale", target_scale, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 ## Spirit Link's lifesteal: converts `_spirit_link_lifesteal_pct` of an
@@ -6422,10 +6798,13 @@ func _end_spirit_link() -> void:
 ## Pact, Entangle's DoT, the Spirit Bear's own hits, etc.) never routes
 ## through here, matching the skill's own wording. No-op while Spirit
 ## Link isn't active or the hit did no damage (e.g. fully absorbed).
-func _apply_spirit_link_lifesteal(mitigated_attack_damage: float) -> void:
+## `target` is only used for the red drain motes flowing from it back
+## to the hero (_play_drain_effect()).
+func _apply_spirit_link_lifesteal(mitigated_attack_damage: float, target: Dictionary) -> void:
 	if not _spirit_link_active or mitigated_attack_damage <= 0.0:
 		return
 	heal(mitigated_attack_damage * _spirit_link_lifesteal_pct)
+	_play_drain_effect(target.get("node"), hero_image, SPIRIT_LINK_MOTE_COLOR)
 
 
 const MORBID_MASK_LIFESTEAL_PCT := 0.10
@@ -6579,7 +6958,12 @@ func _deal_damage_to_bear(amount: float) -> void:
 	if not _is_bear_alive():
 		return
 
-	var mitigated: float = _apply_armor_reduction(amount, float(_bear.get("armor", 0)))
+	# A rival's Corrosive Haze on the bear boosts every hit it takes,
+	# and its/Lil' Shredder's armor shred lowers its armor - same two
+	# effects the player's own apply_damage() applies to him.
+	amount *= (1.0 + float(_bear.get("corrosive_haze_bonus_pct", 0.0)))
+	var bear_armor: float = float(_bear.get("armor", 0)) - float(_bear.get("armor_reduction", 0.0))
+	var mitigated: float = _apply_armor_reduction(amount, bear_armor)
 	mitigated *= (1.0 - _savage_roar_damage_reduction_pct)
 	_bear["current_hp"] -= mitigated
 	_show_damage_number(_bear["node"], mitigated)
@@ -6597,11 +6981,16 @@ func _deal_damage_to_bear(amount: float) -> void:
 ## has its own armor stat (set at summon time), not the hero's, and
 ## that function already mitigates with it internally. A no-op while no
 ## bear is out.
-func _deal_aoe_damage_to_bear(center_pos_index: int, radius: int, amount: float) -> void:
+## `flash_hits` gives each one hit the same red hit-flash as Moon
+## Glaives' bounce (_flash_bounce_hit()) - off by default, opted into by
+## Dark Pact.
+func _deal_aoe_damage_to_bear(center_pos_index: int, radius: int, amount: float, flash_hits: bool = false) -> void:
 	if not _is_bear_alive() or amount <= 0.0:
 		return
 	if _distance(_bear["pos_index"], center_pos_index) <= radius:
 		_deal_damage_to_bear(amount)
+		if flash_hits and _is_bear_alive() and is_instance_valid(_bear.get("node")):
+			_flash_bounce_hit(_bear["node"])
 
 
 ## The line-shaped equivalent of _deal_aoe_damage_to_bear() above - for
@@ -6672,12 +7061,30 @@ func _bear_turn() -> void:
 	if not _is_bear_alive() or _enemies.is_empty():
 		return
 
+	# A rival's stun (Torrent/Sacred Arrow/Lucent Beam/Ice Blast/
+	# Frostbite/Winter's Curse/Snowball/Walrus Punch aimed at the bear)
+	# costs it this whole turn; a root (Entangle/Ensnare) still lets it
+	# attack what's already on its column, just not walk. Both are
+	# checked with their CURRENT value before ticking down - the same
+	# "use it, then decrement" order the rival's own root/stun use - so
+	# a 1-turn stun/root actually blocks the one turn it's meant to.
+	var stunned: bool = int(_bear.get("stun_turns_left", 0)) > 0
+	if stunned:
+		_bear["stun_turns_left"] -= 1
+		return
+	var rooted: bool = int(_bear.get("root_turns_left", 0)) > 0
+	if rooted:
+		_bear["root_turns_left"] -= 1
+
 	var target: Dictionary = _get_enemy_at(_bear["pos_index"])
 	if not target.is_empty():
 		# The bear's own attack, not the hero's - Corrosive Haze's own
 		# bonus (see _deal_fixed_damage_to_enemy()'s own is_hero_action
 		# param) never applies to it.
 		_deal_fixed_damage_to_enemy(target, _roll_bear_damage(), false, false)
+		return
+
+	if rooted:
 		return
 
 	var nearest: Dictionary = {}
@@ -6716,7 +7123,7 @@ func _refresh_skill_cooldown_labels() -> void:
 	# state the way a manually-cast buff's activation message does, so
 	# this overlays "Active" on top of whatever the loop above just
 	# wrote (its cooldown only starts counting down once it ends - see
-	# _maybe_auto_activate_borrowed_time() - so "Ready"/"N turns left"
+	# _end_borrowed_time() - so "Ready"/"N turns left"
 	# would otherwise read as if it wasn't doing anything right now).
 	if _borrowed_time_active and _skill_cooldown_labels.has("borrowed_time"):
 		var borrowed_time_label: Label = _skill_cooldown_labels["borrowed_time"]
@@ -6888,6 +7295,14 @@ func _activate_aphotic_shield(level_data: Dictionary) -> void:
 	# every other duration-based buff.
 	_aphotic_shield_duration_pending_start = true
 
+	# Checked before the dispel below clears it all - only drives the
+	# cleanse sparks in _show_aphotic_shell().
+	var cleansed: bool = _player_root_turns_left > 0 or _player_entangle_dot_turns_left > 0 \
+		or _player_stun_turns_left > 0 or _player_winters_curse_active
+	for penalty in _player_essence_shift_penalty.values():
+		if float(penalty) > 0.0:
+			cleansed = true
+
 	_player_root_turns_left = 0
 	_player_entangle_dot_damage = 0.0
 	_player_entangle_dot_turns_left = 0
@@ -6896,6 +7311,7 @@ func _activate_aphotic_shield(level_data: Dictionary) -> void:
 	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 	_show_message_over_hero("Shield up!")
+	_show_aphotic_shell(hero_image, _aphotic_shield_hp, cleansed)
 	_refresh_bars()
 
 
@@ -6936,6 +7352,8 @@ func _end_aphotic_shield(exploded: bool) -> void:
 	_aphotic_shield_turns_remaining = 0
 	_aphotic_shield_duration_pending_start = false
 
+	_remove_aphotic_shell(hero_image, exploded, radius)
+
 	if not exploded:
 		_show_message_over_hero("Shield fades")
 		return
@@ -6948,12 +7366,187 @@ func _end_aphotic_shield(exploded: bool) -> void:
 			targets.append(enemy)
 	for enemy in targets:
 		_deal_fixed_damage_to_enemy(enemy, aoe_damage)
+		# Same red hit-flash as Dark Pact.
+		if is_instance_valid(enemy.get("node")):
+			_flash_bounce_hit(enemy["node"])
 	# Self-centered on the hero, same as the check above - a rival's own
 	# illusion (Naga Siren's Mirror Image) can be in range independently
 	# of whether the boss itself currently is.
-	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, aoe_damage)
+	_deal_aoe_damage_to_enemy_illusions(_hero_pos_index, radius, aoe_damage, true)
 
 	_show_message_over_hero("Shield shattered!")
+
+
+## Purely cosmetic: puts Aphotic Shield's shell on `node` (the
+## player's hero_image, or the rival Abaddon's own node) - a
+## translucent dark purple bubble, a child Panel so it follows the
+## sprite's position/scale/fades for free, snapping on from small with
+## an overshoot, then slowly "breathing" for as long as it's up. Also
+## flashes the sprite purple and, if the cast actually `cleansed`
+## anything, lets off a few purple sparks. `shield_hp` is remembered as
+## the shell's full strength so _update_aphotic_shell() can fade it as
+## it drains. A recast replaces any existing shell outright, the same
+## way the shield itself is replaced.
+func _show_aphotic_shell(node: Variant, shield_hp: float, cleansed: bool) -> void:
+	if not (node is TextureRect) or not is_instance_valid(node):
+		return
+
+	var old_shell: Node = node.get_node_or_null(APHOTIC_SHELL_NAME)
+	if old_shell != null:
+		old_shell.name = APHOTIC_SHELL_NAME + "Replaced"
+		old_shell.queue_free()
+
+	var shell := Panel.new()
+	shell.name = APHOTIC_SHELL_NAME
+	shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# A circle centered on the sprite, as wide as the sprite is tall.
+	shell.size = Vector2(node.size.y, node.size.y)
+	shell.position = (node.size - shell.size) / 2.0
+	shell.pivot_offset = shell.size / 2.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = APHOTIC_SHELL_FILL_COLOR
+	style.border_color = APHOTIC_SHELL_RIM_COLOR
+	style.set_border_width_all(2)
+	# Corner radius of half the (square) size makes it a full circle.
+	style.set_corner_radius_all(int(ceilf(shell.size.x / 2.0)))
+	# Smooth the curve at this size - StyleBoxFlat's default corner
+	# detail looks faceted on a large circle.
+	style.corner_detail = 32
+	style.shadow_color = Color(APHOTIC_SHARD_COLOR.r, APHOTIC_SHARD_COLOR.g, APHOTIC_SHARD_COLOR.b, 0.45)
+	style.shadow_size = 12
+	shell.add_theme_stylebox_override("panel", style)
+	shell.set_meta("max_hp", maxf(1.0, shield_hp))
+	shell.scale = Vector2(0.3, 0.3)
+	node.add_child(shell)
+
+	var snap: Tween = shell.create_tween()
+	snap.tween_property(shell, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+	# Breathing lives on self_modulate, so it multiplies with the
+	# HP-based strength _update_aphotic_shell() keeps on modulate.
+	var breath: Tween = shell.create_tween().set_loops()
+	breath.tween_property(shell, "self_modulate:a", 0.6, 0.9).set_trans(Tween.TRANS_SINE)
+	breath.tween_property(shell, "self_modulate:a", 1.0, 0.9).set_trans(Tween.TRANS_SINE)
+	shell.set_meta("breath_tween", breath)
+
+	_flash_bounce_hit(node, APHOTIC_FLASH_COLOR)
+
+	if cleansed:
+		_play_aphotic_cleanse_sparks(node)
+
+
+## Called whenever the shield soaks up part of a hit but survives it:
+## fades the shell toward faint as `remaining_hp` drops (full strength
+## when fresh, ~30% just before it breaks) and gives it a quick ripple
+## so the absorbed hit visibly lands on the shield.
+func _update_aphotic_shell(node: Variant, remaining_hp: float) -> void:
+	if not (node is Control) or not is_instance_valid(node):
+		return
+	var shell: Panel = node.get_node_or_null(APHOTIC_SHELL_NAME)
+	if shell == null:
+		return
+
+	var fraction: float = clampf(remaining_hp / float(shell.get_meta("max_hp", 1.0)), 0.0, 1.0)
+	var tween: Tween = shell.create_tween()
+	tween.tween_property(shell, "scale", Vector2(1.08, 1.08), 0.08).set_trans(Tween.TRANS_SINE)
+	tween.parallel().tween_property(shell, "modulate:a", lerpf(0.3, 1.0, fraction), 0.2)
+	tween.tween_property(shell, "scale", Vector2.ONE, 0.15).set_trans(Tween.TRANS_SINE)
+
+
+## Takes Aphotic Shield's shell off `node`: a quiet ~0.4s dissolve when
+## it just ran out (or was cleared on a reset), or - when `shattered` -
+## a burst of dark purple shards flying out about `radius` columns (the
+## explosion's own reach) plus a light screen shake. The explosion's
+## damage and hit flashes are the caller's.
+func _remove_aphotic_shell(node: Variant, shattered: bool, radius: int) -> void:
+	if not (node is Control) or not is_instance_valid(node):
+		return
+	var shell: Panel = node.get_node_or_null(APHOTIC_SHELL_NAME)
+	if shell == null:
+		return
+
+	# Renamed right away so a recast during the fade creates a fresh
+	# shell instead of finding this dying one.
+	shell.name = APHOTIC_SHELL_NAME + "Ending"
+	var breath: Variant = shell.get_meta("breath_tween", null)
+	if breath is Tween and breath.is_valid():
+		breath.kill()
+
+	var fade_time: float = 0.15 if shattered else 0.4
+	var tween: Tween = shell.create_tween()
+	tween.tween_property(shell, "scale", Vector2(1.25, 1.25) if shattered else Vector2(1.1, 1.1), fade_time)
+	tween.parallel().tween_property(shell, "modulate:a", 0.0, fade_time)
+	tween.tween_callback(shell.queue_free)
+
+	if not shattered:
+		return
+
+	_play_aphotic_shatter(node.position + node.size / 2.0, radius)
+	_shake_screen()
+
+
+## The shatter's shards: a one-shot radial burst of spinning dark
+## purple pieces, fast enough to reach about `radius` columns before
+## they fade (at least one column, even for a radius-0 shield). Same
+## CPUParticles2D one-shot-burst recipe as _spawn_lil_shredder_impact().
+func _play_aphotic_shatter(pos: Vector2, radius: int) -> void:
+	var lifetime: float = 0.5
+	var reach: float = _grid_unit() * maxf(1.0, float(radius))
+	var particles := CPUParticles2D.new()
+	particles.position = pos
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 48
+	particles.lifetime = lifetime
+	particles.explosiveness = 1.0
+	particles.spread = 180.0
+	particles.gravity = Vector2.ZERO
+	particles.initial_velocity_min = reach / lifetime * 0.6
+	particles.initial_velocity_max = reach / lifetime * 1.1
+	particles.angle_min = 0.0
+	particles.angle_max = 360.0
+	particles.angular_velocity_min = -360.0
+	particles.angular_velocity_max = 360.0
+	particles.scale_amount_min = 4.0
+	particles.scale_amount_max = 9.0
+	particles.color = APHOTIC_SHARD_COLOR
+	add_child(particles)
+	# Same reasoning as _play_scatterblast_effect()'s own move_child()
+	# call - render at the hero/enemy layer, not on top of every UI panel.
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+
+
+## The cleanse: a few small purple sparks drifting up off `node`, as if
+## the removed debuffs are being lifted away. Only played when the
+## cast actually dispelled something.
+func _play_aphotic_cleanse_sparks(node: Control) -> void:
+	var lifetime: float = 0.8
+	var particles := CPUParticles2D.new()
+	particles.position = node.position + node.size / 2.0
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 16
+	particles.lifetime = lifetime
+	particles.explosiveness = 0.7
+	particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	particles.emission_rect_extents = node.size * 0.3
+	particles.direction = Vector2(0, -1)
+	particles.spread = 25.0
+	particles.gravity = Vector2.ZERO
+	particles.initial_velocity_min = 40.0
+	particles.initial_velocity_max = 90.0
+	particles.scale_amount_min = 2.0
+	particles.scale_amount_max = 4.0
+	particles.color = APHOTIC_SHELL_RIM_COLOR
+	add_child(particles)
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
 
 
 # ------------------------------------------------------------------
@@ -7016,7 +7609,7 @@ func _apply_curse_of_avernus_stack(target: Dictionary) -> void:
 	target["silence_turns_left"] = int(level_data.get("silence_turns", 0))
 	target["curse_dot_damage"] = float(level_data.get("dot_damage", 0))
 	target["curse_dot_turns_left"] = int(level_data.get("dot_duration", 0))
-	_show_message_over_hero("Cursed!")
+	_refresh_enemy_overhead_labels()
 
 
 ## Curse of Avernus's own DoT (and the silence sharing Entangle's
@@ -7095,6 +7688,7 @@ func _maybe_auto_activate_borrowed_time() -> void:
 	PlayerManager.set_skill_cooldown("borrowed_time", _skill_cooldowns["borrowed_time"])
 
 	_show_message_over_hero("Borrowed Time!")
+	_set_borrowed_time_visual(hero_image, true)
 	_refresh_bars()
 	_refresh_skill_cooldown_labels()
 
@@ -7115,18 +7709,84 @@ func _tick_borrowed_time() -> void:
 		_end_borrowed_time()
 
 
-## Ends Borrowed Time once its duration runs out - its cooldown (see
-## _maybe_auto_activate_borrowed_time()) is a separate, already-running
-## counter in _skill_cooldowns, untouched here.
+## Ends Borrowed Time once its duration runs out (or it's dispelled) and
+## restarts its cooldown at the full value from here - the cooldown set
+## at activation keeps ticking down WHILE the buff is active, so without
+## this reset the wait after it ends would only be cooldown - duration.
 func _end_borrowed_time() -> void:
 	_borrowed_time_active = false
 	_borrowed_time_heal_conversion_pct = 0.0
 	_borrowed_time_turns_remaining = 0
 	_borrowed_time_duration_pending_start = false
+	_set_borrowed_time_visual(hero_image, false)
+
+	var level_data: Dictionary = _get_borrowed_time_level_data()
+	if not level_data.is_empty():
+		_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
+		PlayerManager.set_skill_cooldown("borrowed_time", _skill_cooldowns["borrowed_time"])
 
 	_show_message_over_hero("Borrowed Time fades")
 	_refresh_bars()
 	_refresh_skill_cooldown_labels()
+
+
+## Purely cosmetic: turns Borrowed Time's pulsing greenish-teal glow on
+## or off for `node` (the player's hero_image, or the rival Abaddon's
+## own node). The glow is a child TextureRect showing the same texture,
+## additively blended and tinted BORROWED_TIME_GLOW_COLOR, so it
+## brightens the sprite's own silhouette toward teal and follows its
+## position/scale/fades for free. Its strength pulses on a loop; the
+## same per-frame update also keeps its flip_h/texture in sync with the
+## sprite, since the hero can turn around while it's up. Only does
+## anything when the state actually changes (the glow child's presence
+## is the "currently on" marker).
+func _set_borrowed_time_visual(node: Variant, active: bool) -> void:
+	if not (node is TextureRect) or not is_instance_valid(node):
+		return
+	var glow: TextureRect = node.get_node_or_null(BORROWED_TIME_GLOW_NAME)
+	if active == (glow != null):
+		return
+
+	if not active:
+		# Renamed right away so a quick re-activation during the fade
+		# creates a fresh glow instead of finding this dying one.
+		glow.name = BORROWED_TIME_GLOW_NAME + "Fading"
+		var pulse: Variant = glow.get_meta("pulse_tween", null)
+		if pulse is Tween and pulse.is_valid():
+			pulse.kill()
+		var fade: Tween = glow.create_tween()
+		fade.tween_property(glow, "modulate:a", 0.0, 0.4)
+		fade.tween_callback(glow.queue_free)
+		return
+
+	var material := CanvasItemMaterial.new()
+	material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	glow = TextureRect.new()
+	glow.name = BORROWED_TIME_GLOW_NAME
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glow.material = material
+	glow.texture = node.texture
+	glow.expand_mode = node.expand_mode
+	glow.stretch_mode = node.stretch_mode
+	glow.flip_h = node.flip_h
+	glow.flip_v = node.flip_v
+	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	glow.self_modulate = BORROWED_TIME_GLOW_COLOR
+	glow.modulate.a = 0.0
+	node.add_child(glow)
+
+	# 0 -> 1 is one full pulse: faint -> strong -> faint.
+	var pulse: Tween = glow.create_tween().set_loops()
+	pulse.tween_method(
+		func(phase: float) -> void:
+			if not is_instance_valid(node):
+				return
+			glow.flip_h = node.flip_h
+			glow.texture = node.texture
+			glow.modulate.a = lerpf(0.15, 0.8, 0.5 - 0.5 * cos(phase * TAU)),
+		0.0, 1.0, BORROWED_TIME_PULSE_SECONDS
+	)
+	glow.set_meta("pulse_tween", pulse)
 
 
 # ------------------------------------------------------------------
@@ -7197,6 +7857,8 @@ func apply_damage(amount: float) -> float:
 			PlayerManager.damage_hero(overflow)
 		if _aphotic_shield_hp <= 0.0:
 			_end_aphotic_shield(true)
+		elif absorbed > 0.0:
+			_update_aphotic_shell(hero_image, _aphotic_shield_hp)
 		_refresh_bars()
 		_maybe_auto_activate_borrowed_time()
 		return reduced
@@ -8426,7 +9088,71 @@ func _cancel_targeting() -> void:
 
 func _on_enemy_gui_input(event: InputEvent, enemy: Dictionary) -> void:
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_on_enemy_clicked(enemy)
+		_on_enemy_clicked(_pick_enemy_under_mouse(enemy))
+
+
+## Every enemy's TextureRect catches clicks across its whole rectangle,
+## transparent padding included - so where two sprites overlap, whichever
+## was added to enemies_layer last swallows the click even when the
+## cursor is plainly over the creature drawn behind it. This re-resolves
+## the click against actual opaque pixels instead: of every enemy whose
+## sprite is visibly under the cursor, prefer the topmost one that's
+## currently a valid target (so a non-targetable sprite overlapping a
+## targetable one doesn't block it), else the topmost opaque one. Falls
+## back to `fallback` (the node Godot actually delivered the click to)
+## when the cursor is only over transparent padding.
+func _pick_enemy_under_mouse(fallback: Dictionary) -> Dictionary:
+	var hits: Array = []
+	for enemy in _enemies:
+		var node: TextureRect = enemy.get("node")
+		if node == null or not is_instance_valid(node) or not node.is_visible_in_tree():
+			continue
+		if _is_texture_rect_opaque_at(node, node.get_local_mouse_position()):
+			hits.append(enemy)
+	if hits.is_empty():
+		return fallback
+	# Topmost first - later siblings draw over earlier ones.
+	hits.sort_custom(func(a, b): return a["node"].get_index() > b["node"].get_index())
+	if _targeting_mode:
+		for enemy in hits:
+			if _valid_targets.has(enemy):
+				return enemy
+	return hits[0]
+
+
+# Texture -> decompressed Image, so repeated clicks don't re-fetch the
+# texture data from the GPU every time.
+var _hit_test_image_cache: Dictionary = {}
+
+
+## Whether `node`'s texture has a visible (non-transparent) pixel at
+## `local_pos` - accounts for STRETCH_KEEP_ASPECT's centered letterboxing
+## and flip_h, the two modes _spawn_enemy() actually uses.
+func _is_texture_rect_opaque_at(node: TextureRect, local_pos: Vector2) -> bool:
+	if not Rect2(Vector2.ZERO, node.size).has_point(local_pos):
+		return false
+	var texture: Texture2D = node.texture
+	if texture == null:
+		return false
+	var image: Image = _hit_test_image_cache.get(texture)
+	if image == null:
+		image = texture.get_image()
+		if image == null:
+			return true
+		if image.is_compressed():
+			image = image.duplicate()
+			image.decompress()
+		_hit_test_image_cache[texture] = image
+	var tex_size: Vector2 = Vector2(image.get_size())
+	var s: float = minf(node.size.x / tex_size.x, node.size.y / tex_size.y)
+	var offset: Vector2 = (node.size - tex_size * s) / 2.0
+	var px: Vector2 = (local_pos - offset) / s
+	if px.x < 0 or px.y < 0 or px.x >= tex_size.x or px.y >= tex_size.y:
+		return false
+	var x: int = int(px.x)
+	if node.flip_h:
+		x = int(tex_size.x) - 1 - x
+	return image.get_pixel(x, int(px.y)).a > 0.1
 
 
 func _on_enemy_clicked(enemy: Dictionary) -> void:
@@ -8601,7 +9327,7 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# to skill damage (Pounce, Dark Pact, Entangle's DoT, etc.) - and
 	# uses the damage actually dealt, i.e. after the target's armor
 	# has already reduced it.
-	_apply_spirit_link_lifesteal(mitigated_damage)
+	_apply_spirit_link_lifesteal(mitigated_damage, target)
 	# Morbid Mask's own lifesteal - independent of and stacks with
 	# Spirit Link's above.
 	_apply_morbid_mask_lifesteal(mitigated_damage)
@@ -8783,6 +9509,8 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 			_show_damage_number(target["node"], overflow, is_critical)
 		if _enemy_aphotic_shield_hp <= 0.0:
 			_end_enemy_aphotic_shield(true)
+		elif absorbed > 0.0:
+			_update_aphotic_shell(target.get("node"), _enemy_aphotic_shield_hp)
 		if target["current_hp"] <= 0:
 			_kill_enemy(target)
 		else:
@@ -8932,6 +9660,32 @@ func _show_message_over_hero(text: String) -> void:
 	tween.tween_interval(MESSAGE_READ_HOLD_DURATION)
 	tween.tween_property(label, "position:y", label.position.y - 40, 0.8)
 	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.8)
+	tween.finished.connect(label.queue_free)
+
+
+## A callout that floats up from the moment it appears instead of
+## holding still first like _show_message_over_hero() - rising ~70px
+## over 1.4s, fading out over the last part of the climb - over `node`
+## (the hero_image or an enemy's node), in `color`. Used for passive
+## procs like Tidebringer's, where the text is flavor that doesn't need
+## a still, readable hold.
+func _show_rising_message_over(node: Control, text: String, color: Color) -> void:
+	if not is_instance_valid(node):
+		return
+
+	var label := Label.new()
+	label.text = text
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_color_override("font_outline_color", TIDEBRINGER_TEXT_OUTLINE_COLOR)
+	label.add_theme_constant_override("outline_size", 5)
+	label.add_theme_font_size_override("font_size", 20)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.position = node.position + Vector2(node.size.x / 2.0 - 70, -10)
+	add_child(label)
+
+	var tween := create_tween()
+	tween.tween_property(label, "position:y", label.position.y - 70, 1.4).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(label, "modulate:a", 0.0, 0.6).set_delay(0.8)
 	tween.finished.connect(label.queue_free)
 
 
@@ -9174,6 +9928,7 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_spirit_link_bonus_armor = 0.0
 	_enemy_spirit_link_turns_remaining = 0
 	_enemy_spirit_link_duration_pending_start = false
+	_set_spirit_link_visual(_get_hero_fight_boss().get("node"), false)
 
 	_enemy_true_form_active = false
 	_enemy_true_form_bonus_hp = 0.0
@@ -9190,11 +9945,13 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_aphotic_shield_radius = 0
 	_enemy_aphotic_shield_turns_remaining = 0
 	_enemy_aphotic_shield_duration_pending_start = false
+	_remove_aphotic_shell(_get_hero_fight_boss().get("node"), false, 0)
 
 	_enemy_borrowed_time_active = false
 	_enemy_borrowed_time_heal_conversion_pct = 0.0
 	_enemy_borrowed_time_turns_remaining = 0
 	_enemy_borrowed_time_duration_pending_start = false
+	_set_borrowed_time_visual(_get_hero_fight_boss().get("node"), false)
 
 	_enemy_tidebringer_attack_count = 0
 	_enemy_xmarks_pending = false
@@ -9519,6 +10276,12 @@ func _enemy_turn() -> void:
 	var curse_target_pos: int = curse_target.get("pos_index", -1) if curse_active else -1
 	var curse_damage_multiplier: float = 1.0 + _winter_curse_bonus_damage_pct
 
+	# The rival's own illusions caught in the player's Ice Vortex tick
+	# at the start of the enemy turn, same as every enemy's own DoT
+	# does just below. Illusions never decide the battle, so no
+	# _battle_over bail-out is needed here.
+	_tick_enemy_illusions_ice_vortex()
+
 	for enemy in _enemies.duplicate():
 		# Every DoT/execute effect currently on this enemy lands right
 		# here, at the very start of its own turn - before stun is even
@@ -9772,12 +10535,20 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 		_drink_enemy_health_potion(enemy)
 		return
 
-	if not hero_hidden and not silenced:
+	# A hidden player can't be targeted, but his Spirit Bear still can,
+	# and a self-cast heal (Mist Coil on himself) needs no target at all
+	# - so the rival still gets to pick a skill; the picker (via
+	# _enemy_ai_hero_hidden) then only considers the bear-targetable
+	# ones, aimed at the bear, plus that self-heal.
+	if not silenced:
+		_enemy_ai_hero_hidden = hero_hidden
 		var skill_id: String = _pick_enemy_ready_skill(enemy, enemy_type, hero_distance)
 		if skill_id != "":
 			_cast_enemy_skill(enemy, skill_id)
+			_enemy_ai_hero_hidden = false
 			return
-		elif _enemy_has_unaffordable_ready_skill(enemy_type, hero_distance, enemy) and _enemy_potion_mana_count > 0:
+		_enemy_ai_hero_hidden = false
+		if not hero_hidden and _enemy_has_unaffordable_ready_skill(enemy_type, hero_distance, enemy) and _enemy_potion_mana_count > 0:
 			_drink_enemy_mana_potion()
 			return
 
@@ -9891,7 +10662,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 		attack_damage += attack_damage * float(bash_level_data.get("bonus_damage_pct", 0.0))
 	var mitigated: float = apply_damage(attack_damage)
 
-	_apply_enemy_essence_shift_steal()
+	_apply_enemy_essence_shift_steal(enemy)
 	_apply_enemy_spirit_link_lifesteal(enemy, mitigated)
 	_apply_enemy_curse_of_avernus_stack()
 	_apply_enemy_arctic_burn_attack()
@@ -9901,7 +10672,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 		# only one possible target in a hero fight, so Tidebringer's
 		# cleave has nothing else to reach; only its bonus damage
 		# (already folded into the roll above) applies.
-		_show_message_over_hero("Tidebringer!")
+		_show_rising_message_over(hero_image, "Tidebringer!", TIDEBRINGER_TEXT_COLOR)
 
 	# Moon Glaives' own bounce - a no-op unless the skill is learned (see
 	# _apply_enemy_moon_glaives_bounces()'s own gate). Independent of
@@ -10031,11 +10802,11 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			# total damage over just letting the existing DoT run out,
 			# so (same simplification as every buff above) it's simply
 			# not worth it while one is already ticking.
-			return _player_cold_feet_dot_turns_left <= 0
+			return _enemy_skill_worth_on_target("cold_feet", false) or (_is_bear_alive() and _enemy_skill_worth_on_target("cold_feet", true))
 		"ice_vortex":
 			# Same "no benefit from resetting your own DoT" reasoning
 			# as Cold Feet above.
-			return _player_ice_vortex_dot_turns_left <= 0
+			return _enemy_skill_worth_on_target("ice_vortex", false) or (_is_bear_alive() and _enemy_skill_worth_on_target("ice_vortex", true))
 		"arctic_burn":
 			return not _enemy_arctic_burn_active
 		"cold_embrace":
@@ -10052,7 +10823,7 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			# whichever living enemy is currently lowest-HP and so can't
 			# rely on a single flag like this - recasting here can only
 			# ever land on the same, already-frozen player).
-			return _player_frostbite_dot_turns_left <= 0
+			return _enemy_skill_worth_on_target("frostbite", false) or (_is_bear_alive() and _enemy_skill_worth_on_target("frostbite", true))
 		"tag_team":
 			return not _enemy_tag_team_active
 		"nature's_guise":
@@ -10065,7 +10836,7 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			# already-seeded player just restarts the same level's own
 			# damage/healing back to full, no extra total value over
 			# letting the existing one run its course.
-			return _player_leech_seed_dot_turns_left <= 0
+			return _enemy_skill_worth_on_target("leech_seed", false) or (_is_bear_alive() and _enemy_skill_worth_on_target("leech_seed", true))
 		"mortimer_kisses":
 			# Purely defensive/documentation consistency, mirroring Cold
 			# Embrace's own case above - _enemy_hero_turn()'s own top-of-
@@ -10097,6 +10868,15 @@ func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: 
 		return false
 	var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 	if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
+		return false
+	# A skill that can be aimed at the player's Spirit Bear is ready as
+	# long as EITHER target is reachable and worth hitting - see
+	# _enemy_skill_target_options(). Every other skill still needs the
+	# player himself, visible and in range.
+	if ENEMY_BEAR_TARGETABLE_SKILLS.has(skill_id):
+		var options: Dictionary = _enemy_skill_target_options(skill_id, enemy_type, hero_distance, enemy, ignore_range)
+		return options["hero"] or options["bear"]
+	if _enemy_ai_hero_hidden:
 		return false
 	if not ignore_range and not _enemy_skill_in_range(skill_id, enemy_type, hero_distance, enemy):
 		return false
@@ -10134,12 +10914,37 @@ func _pick_enemy_ready_skill(enemy: Dictionary, enemy_type: String, hero_distanc
 		var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 		candidates.append({"id": skill_id, "score": EnemySkillAI.evaluate_skill(skill_id, level_data, context)})
 
+	# Mist Coil on himself (the self-heal) competes as its own candidate,
+	# alongside Mist Coil aimed at the player - see
+	# EnemySkillAI.MIST_COIL_SELF_ID. _cast_enemy_skill() maps a win
+	# back onto a self-targeted "mist_coil" cast.
+	if _enemy_mist_coil_self_ready(enemy):
+		var mist_coil_level_data: Dictionary = _get_enemy_skill_level_data("mist_coil")
+		candidates.append({"id": EnemySkillAI.MIST_COIL_SELF_ID, "score": EnemySkillAI.evaluate_skill(EnemySkillAI.MIST_COIL_SELF_ID, mist_coil_level_data, context)})
+
 	var archetype: String = str(context.get("archetype", ""))
 	if EnemySkillAI.basic_attack_participates(archetype):
 		candidates.append({"id": EnemySkillAI.BASIC_ATTACK_ID, "score": EnemySkillAI.evaluate_basic_attack(context)})
 
 	var chosen_id: String = EnemySkillAI.pick_best_skill(archetype, candidates, str(_enemy_hero_static.get("name", _enemy_hero_id)))
 	return "" if chosen_id == EnemySkillAI.BASIC_ATTACK_ID else chosen_id
+
+
+## Whether the rival could cast Mist Coil on himself right now: learned,
+## off cooldown, affordable, and with more HP than its hp_cost - paying
+## it must never kill him. No range or "worth casting" gate (it's a
+## self-cast heal; EnemySkillAI's own scoring decides whether it's worth
+## it), and - being self-targeted - it stays available even while the
+## player is hidden.
+func _enemy_mist_coil_self_ready(enemy: Dictionary) -> bool:
+	if PlayerManager.get_npc_skill_level(_enemy_hero_id, "mist_coil") <= 0:
+		return false
+	if _enemy_skill_cooldowns.get("mist_coil", 0) > 0:
+		return false
+	var level_data: Dictionary = _get_enemy_skill_level_data("mist_coil")
+	if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
+		return false
+	return float(enemy.get("current_hp", 0.0)) > float(level_data.get("hp_cost", 0))
 
 
 ## True if there's a known, off-cooldown, currently-worthwhile, in-range
@@ -10511,17 +11316,39 @@ func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: 
 	# level data (which only carries its AoE radius, 1-2) - falling
 	# through the same generic chain would silently grab that AoE
 	# radius instead, so it's special-cased here first.
+	return _enemy_skill_reaches_distance(skill_id, enemy_type, hero_distance)
+
+
+## The generic half of _enemy_skill_in_range() - whether `skill_id`
+## reaches a target `distance` columns away - split out so the same
+## check can be asked about the player's Spirit Bear too (see
+## _enemy_skill_target_options()). Scatterblast's directional check
+## stays in _enemy_skill_in_range() itself; it's never bear-targetable.
+func _enemy_skill_reaches_distance(skill_id: String, enemy_type: String, distance: int) -> bool:
+	if not EnemySkillRange.requires_range_check(skill_id):
+		return true
+	var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 	var radius: int = ICE_VORTEX_RANGE if skill_id == "ice_vortex" else int(level_data.get("range", level_data.get("radius", level_data.get("distance", 0))))
 	var attack_range: int = RANGE_ENEMY_ATTACK_RANGE if enemy_type == "range" else 0
-	return EnemySkillRange.is_in_range(skill_id, hero_distance, radius, attack_range)
+	return EnemySkillRange.is_in_range(skill_id, distance, radius, attack_range)
 
 
 func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
+	# The self-heal candidate (EnemySkillAI.MIST_COIL_SELF_ID) is just
+	# Mist Coil aimed at himself - same skill, cooldown and mana.
+	var mist_coil_self: bool = skill_id == EnemySkillAI.MIST_COIL_SELF_ID
+	if mist_coil_self:
+		skill_id = "mist_coil"
 	var skill: Dictionary = _find_enemy_skill(skill_id)
 	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
 	var level_data: Dictionary = GameManager.get_skill_level_data(skill, level)
 	_enemy_skill_cooldowns[skill_id] = int(level_data.get("cooldown", 0))
 	_enemy_current_mana -= float(level_data.get("mana_cost", 0))
+
+	# Aimed at the player's Spirit Bear instead of the player? Each
+	# bear-targetable _cast_enemy_*() below reads this first.
+	_enemy_mist_coil_self = mist_coil_self
+	_enemy_skill_on_bear = not mist_coil_self and ENEMY_BEAR_TARGETABLE_SKILLS.has(skill_id) and _choose_enemy_skill_on_bear(enemy, skill_id)
 
 	match skill_id:
 		"dark_pact":
@@ -10541,7 +11368,7 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 		"true_form":
 			_activate_enemy_true_form(enemy, level_data)
 		"mist_coil":
-			_cast_enemy_mist_coil(level_data)
+			_cast_enemy_mist_coil(enemy, level_data)
 		"aphotic_shield":
 			_activate_enemy_aphotic_shield(enemy, level_data)
 		"torrent":
@@ -10633,6 +11460,9 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 	# _on_skill_pressed(). Only one of the two could ever be active at
 	# once (different heroes' kits), so this just ends whichever one
 	# actually is.
+	_enemy_skill_on_bear = false
+	_enemy_mist_coil_self = false
+
 	if _enemy_shadow_dance_active and skill_id != "shadow_dance":
 		_end_enemy_shadow_dance()
 	if _enemy_natures_guise_active and skill_id != "nature's_guise":
@@ -10688,13 +11518,14 @@ func _play_enemy_cast_feedback(enemy: Dictionary, skill: Dictionary) -> void:
 func _pulse_caster_sprite(node: TextureRect, big: bool) -> void:
 	node.pivot_offset = node.size / 2.0
 	var peak_scale: float = 1.28 if big else 1.12
+	var base_scale: Vector2 = node.get_meta("base_scale", Vector2.ONE)
 	var base_modulate: Color = node.modulate
 	var flash_modulate: Color = Color(1.6, 1.6, 1.6, base_modulate.a)
 
 	var tween := create_tween()
-	tween.tween_property(node, "scale", Vector2(peak_scale, peak_scale), 0.12).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(node, "scale", base_scale * peak_scale, 0.12).set_trans(Tween.TRANS_SINE)
 	tween.parallel().tween_property(node, "modulate", flash_modulate, 0.12)
-	tween.tween_property(node, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(node, "scale", base_scale, 0.18).set_trans(Tween.TRANS_SINE)
 	tween.parallel().tween_property(node, "modulate", base_modulate, 0.18)
 
 
@@ -10704,15 +11535,293 @@ func _pulse_caster_sprite(node: TextureRect, big: bool) -> void:
 ## something." Used by Moon Glaives' own bounce (_apply_moon_glaives_
 ## bounces()) so a bounced enemy visibly flashes red instead of only a
 ## damage number appearing on an enemy that was never the main target.
-func _flash_bounce_hit(node: TextureRect) -> void:
+##
+## `flash_color` defaults to that red; Entangle passes
+## ENTANGLE_FLASH_COLOR for the same pop in green.
+func _flash_bounce_hit(node: TextureRect, flash_color: Color = BOUNCE_HIT_FLASH_COLOR) -> void:
 	node.pivot_offset = node.size / 2.0
+	var base_scale: Vector2 = node.get_meta("base_scale", Vector2.ONE)
 	var base_modulate: Color = node.modulate
 
 	var tween := create_tween()
-	tween.tween_property(node, "scale", Vector2(1.12, 1.12), 0.12).set_trans(Tween.TRANS_SINE)
-	tween.parallel().tween_property(node, "modulate", BOUNCE_HIT_FLASH_COLOR, 0.12)
-	tween.tween_property(node, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(node, "scale", base_scale * 1.12, 0.12).set_trans(Tween.TRANS_SINE)
+	tween.parallel().tween_property(node, "modulate", flash_color, 0.12)
+	tween.tween_property(node, "scale", base_scale, 0.18).set_trans(Tween.TRANS_SINE)
 	tween.parallel().tween_property(node, "modulate", base_modulate, 0.18)
+
+
+## Purely cosmetic: Entangle's cast visual on `node` (an enemy, or the
+## player's own hero_image when a rival casts it) - a burst of green
+## leaves springing up from its feet plus a green version of the hit
+## flash. The root itself has already been applied by the time this
+## plays; the lingering tint afterwards is _refresh_entangle_tints()'s.
+## Same CPUParticles2D one-shot-burst recipe as
+## _spawn_lil_shredder_impact().
+func _play_entangle_effect(node: TextureRect) -> void:
+	_flash_bounce_hit(node, ENTANGLE_FLASH_COLOR)
+
+	var lifetime: float = 0.7
+	var particles := CPUParticles2D.new()
+	particles.position = node.position + Vector2(node.size.x / 2.0, node.size.y * 0.85)
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 26
+	particles.lifetime = lifetime
+	particles.explosiveness = 0.9
+	particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	particles.emission_rect_extents = Vector2(node.size.x * 0.3, 4.0)
+	particles.direction = Vector2(0, -1)
+	particles.spread = 35.0
+	# Leaves shoot up, then drift back down.
+	particles.gravity = Vector2(0, 260)
+	particles.initial_velocity_min = 110.0
+	particles.initial_velocity_max = 200.0
+	particles.angle_min = 0.0
+	particles.angle_max = 360.0
+	particles.angular_velocity_min = -240.0
+	particles.angular_velocity_max = 240.0
+	particles.scale_amount_min = 4.0
+	particles.scale_amount_max = 7.0
+	particles.color = Color(0.35, 0.85, 0.3, 1.0)
+	particles.hue_variation_min = -0.06
+	particles.hue_variation_max = 0.06
+	add_child(particles)
+	# Same reasoning as _play_scatterblast_effect()'s own move_child()
+	# call - render at the hero/enemy layer, not on top of every UI panel.
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+
+
+## Keeps Entangle's lingering green tint in sync with who's actually
+## entangled right now - called from _refresh_bars() (i.e. constantly),
+## so the tint just follows current state instead of being toggled at
+## every cast/tick/dispel/reset site, same approach as
+## _refresh_status_effects(). "Entangled" = rooted AND still carrying
+## Entangle's own DoT, so Ensnare's/Overgrowth's plain roots (which
+## never set the Entangle DoT) don't pick up the tint.
+func _refresh_entangle_tints() -> void:
+	for enemy in _enemies:
+		var entangled: bool = enemy.get("root_turns_left", 0) > 0 and enemy.get("entangle_dot_turns_left", 0) > 0
+		_set_entangle_tint(enemy.get("node"), entangled)
+	_set_entangle_tint(hero_image, _player_root_turns_left > 0 and _player_entangle_dot_turns_left > 0)
+	if _is_bear_alive():
+		_set_entangle_tint(_bear.get("node"), int(_bear.get("root_turns_left", 0)) > 0 and int(_bear.get("entangle_dot_turns_left", 0)) > 0)
+
+
+## Keeps the frost in sync with who's currently frozen by Cold Feet's,
+## Ice Vortex's, Ice Blast's OR Frostbite's DoT, or held by Winter's
+## Curse's freeze (for as long as its stun lasts), or encased by their
+## own Cold Embrace (the caster - the player or the rival - for as long
+## as it's active) - every enemy (their own cold_feet_dot_turns_left/
+## ice_vortex_dot_turns_left) and the player's hero (the matching
+## _player_* counters, from a rival's cast). Both skills share the one
+## frost look, so being marked by both never stacks two. Called from
+## _refresh_bars() (i.e. constantly), same approach as
+## _refresh_entangle_tints(), so the frost just follows current state
+## instead of being toggled at every cast/tick/dispel site.
+func _refresh_cold_feet_frost() -> void:
+	for enemy in _enemies:
+		var frozen: bool = enemy.get("cold_feet_dot_turns_left", 0) > 0 or enemy.get("ice_vortex_dot_turns_left", 0) > 0 \
+			or enemy.get("ice_blast_dot_turns_left", 0) > 0 or enemy.get("frostbite_dot_turns_left", 0) > 0 \
+			or (is_same(enemy, _winter_curse_target) and _is_winters_curse_active()) \
+			or (_enemy_cold_embrace_active and enemy["static"].get("is_hero_fight_boss", false))
+		_set_cold_feet_frost(enemy.get("node"), frozen)
+	_set_cold_feet_frost(hero_image, _player_cold_feet_dot_turns_left > 0 or _player_ice_vortex_dot_turns_left > 0 \
+		or _player_ice_blast_dot_turns_left > 0 or _player_frostbite_dot_turns_left > 0 or _player_winters_curse_active \
+		or _cold_embrace_active)
+	# Illusions (either side) can only ever carry Ice Vortex's DoT,
+	# never Cold Feet's - a single-target cast never lands on one. The
+	# player's own Spirit Bear can carry either (a rival can aim Cold
+	# Feet at it - see _cast_enemy_cold_feet_on_bear()).
+	for illusion in _illusions + _enemy_illusions:
+		_set_cold_feet_frost(illusion.get("node"), illusion.get("ice_vortex_dot_turns_left", 0) > 0)
+	if _is_bear_alive():
+		var bear_frozen: bool = int(_bear.get("cold_feet_dot_turns_left", 0)) > 0 or int(_bear.get("ice_vortex_dot_turns_left", 0)) > 0 \
+			or int(_bear.get("ice_blast_dot_turns_left", 0)) > 0 or int(_bear.get("frostbite_dot_turns_left", 0)) > 0 \
+			or (bool(_bear.get("winters_curse_active", false)) and int(_bear.get("stun_turns_left", 0)) > 0)
+		_set_cold_feet_frost(_bear.get("node"), bear_frozen)
+
+
+## Purely cosmetic: Ice Vortex's cast - a ring of ice crystals swirling
+## outward from `center_node`, sized to reach about `radius` columns (at
+## least half a column, so a radius-0 cast still reads), spinning as
+## they go. The lingering frost on everyone caught is
+## _refresh_cold_feet_frost()'s. Same CPUParticles2D one-shot-burst
+## recipe as _spawn_lil_shredder_impact(), with tangential acceleration
+## for the swirl.
+func _play_ice_vortex_swirl(center_node: Variant, radius: int) -> void:
+	if not (center_node is Control) or not is_instance_valid(center_node):
+		return
+
+	var lifetime: float = 0.9
+	var reach: float = _grid_unit() * maxf(0.5, float(radius))
+	var particles := CPUParticles2D.new()
+	particles.position = center_node.position + center_node.size / 2.0
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = 60
+	particles.lifetime = lifetime
+	particles.explosiveness = 0.8
+	particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
+	particles.emission_sphere_radius = 10.0
+	particles.spread = 180.0
+	particles.gravity = Vector2.ZERO
+	particles.initial_velocity_min = reach / lifetime * 0.5
+	particles.initial_velocity_max = reach / lifetime * 0.9
+	particles.tangential_accel_min = 180.0
+	particles.tangential_accel_max = 260.0
+	particles.damping_min = 20.0
+	particles.damping_max = 40.0
+	particles.angle_min = 0.0
+	particles.angle_max = 360.0
+	particles.angular_velocity_min = -270.0
+	particles.angular_velocity_max = 270.0
+	particles.scale_amount_min = 2.5
+	particles.scale_amount_max = 5.5
+	particles.color = COLD_FEET_FLAKE_COLOR
+	particles.hue_variation_min = -0.04
+	particles.hue_variation_max = 0.04
+	add_child(particles)
+	# Same reasoning as _play_scatterblast_effect()'s own move_child()
+	# call - render at the hero/enemy layer, not on top of every UI panel.
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+
+
+## Purely cosmetic: frosts `node` (any unit's sprite) for `seconds`
+## regardless of any DoT - the icy flash plus the same frost Cold Feet/
+## Ice Vortex/Ice Blast/Frostbite leave, which then fades on its own.
+## Used by Crystal Nova, a single burst with nothing lingering to tie
+## the frost to. If a DoT-driven frost is also on the unit, whichever
+## lasts longer wins - the timed hold only ever keeps frost on, never
+## takes it off early.
+func _flash_frost_briefly(node: Variant, seconds: float) -> void:
+	if not (node is TextureRect) or not is_instance_valid(node):
+		return
+	node.set_meta("frost_hold_until_msec", Time.get_ticks_msec() + int(seconds * 1000.0))
+	_flash_bounce_hit(node, COLD_FEET_FLASH_COLOR)
+	_set_cold_feet_frost(node, true)
+	# Re-evaluated once the hold runs out: stays frosted if a DoT is
+	# still holding it, otherwise fades. A tween bound to this node (not
+	# a SceneTree timer) so it dies with the battle scene if it closes
+	# first.
+	create_tween().tween_callback(_refresh_cold_feet_frost).set_delay(seconds + 0.05)
+
+
+## Purely cosmetic: puts Cold Feet's frost on `node` - an enemy's node
+## or the player's hero_image - (or takes it off):
+## an additive icy-blue copy of the sprite for a frosty sheen that
+## slowly shimmers, plus a few snowflakes drifting off it. Both live
+## under one child Control, so they follow the sprite's position/
+## scale/fades for free and fade in/out together. The shimmer's
+## per-frame update also keeps the sheen's flip_h/texture in sync with
+## the sprite, the same way Borrowed Time's glow does. Only does
+## anything when the state actually changes (the child's presence is
+## the "currently on" marker).
+func _set_cold_feet_frost(node: Variant, active: bool) -> void:
+	if not (node is TextureRect) or not is_instance_valid(node):
+		return
+	# A timed hold (Crystal Nova - see _flash_frost_briefly()) keeps the
+	# frost up even when no DoT is holding it anymore, until it expires.
+	if not active and Time.get_ticks_msec() < int(node.get_meta("frost_hold_until_msec", 0)):
+		active = true
+	var frost: Control = node.get_node_or_null(COLD_FEET_FROST_NAME)
+	if active == (frost != null):
+		return
+
+	if not active:
+		# Renamed right away so a quick re-mark during the fade creates a
+		# fresh frost instead of finding this dying one.
+		frost.name = COLD_FEET_FROST_NAME + "Fading"
+		var shimmer: Variant = frost.get_meta("shimmer_tween", null)
+		if shimmer is Tween and shimmer.is_valid():
+			shimmer.kill()
+		var flakes: CPUParticles2D = frost.get_meta("flakes", null)
+		if is_instance_valid(flakes):
+			flakes.emitting = false
+		var fade: Tween = frost.create_tween()
+		fade.tween_property(frost, "modulate:a", 0.0, 0.5)
+		fade.tween_callback(frost.queue_free)
+		return
+
+	frost = Control.new()
+	frost.name = COLD_FEET_FROST_NAME
+	frost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	frost.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	frost.modulate.a = 0.0
+	node.add_child(frost)
+
+	var material := CanvasItemMaterial.new()
+	material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	var sheen := TextureRect.new()
+	sheen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sheen.material = material
+	sheen.texture = node.texture
+	sheen.expand_mode = node.expand_mode
+	sheen.stretch_mode = node.stretch_mode
+	sheen.flip_h = node.flip_h
+	sheen.flip_v = node.flip_v
+	sheen.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	sheen.self_modulate = COLD_FEET_SHEEN_COLOR
+	frost.add_child(sheen)
+
+	var flakes := CPUParticles2D.new()
+	flakes.position = node.size / 2.0
+	flakes.amount = 14
+	flakes.lifetime = 1.4
+	flakes.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	flakes.emission_rect_extents = node.size * 0.35
+	flakes.direction = Vector2(0, -1)
+	flakes.spread = 60.0
+	flakes.gravity = Vector2(0, 25)
+	flakes.initial_velocity_min = 8.0
+	flakes.initial_velocity_max = 22.0
+	flakes.angle_min = 0.0
+	flakes.angle_max = 360.0
+	flakes.angular_velocity_min = -90.0
+	flakes.angular_velocity_max = 90.0
+	flakes.scale_amount_min = 2.0
+	flakes.scale_amount_max = 4.0
+	flakes.color = COLD_FEET_FLAKE_COLOR
+	frost.add_child(flakes)
+	flakes.emitting = true
+	frost.set_meta("flakes", flakes)
+
+	var fade_in: Tween = frost.create_tween()
+	fade_in.tween_property(frost, "modulate:a", 1.0, 0.35)
+
+	# 0 -> 1 is one full shimmer: dimmer -> brighter -> dimmer.
+	var shimmer: Tween = frost.create_tween().set_loops()
+	shimmer.tween_method(
+		func(phase: float) -> void:
+			if not is_instance_valid(node):
+				return
+			sheen.flip_h = node.flip_h
+			sheen.texture = node.texture
+			sheen.modulate.a = lerpf(0.35, 0.6, 0.5 - 0.5 * cos(phase * TAU)),
+		0.0, 1.0, 1.8
+	)
+	frost.set_meta("shimmer_tween", shimmer)
+
+
+## Fades `node`'s self_modulate to ENTANGLE_TINT_COLOR (or back to
+## white) - only when the state actually changes, so the constant
+## _refresh_bars() calls don't keep restarting tweens.
+func _set_entangle_tint(node: Variant, entangled: bool) -> void:
+	if not (node is CanvasItem) or not is_instance_valid(node):
+		return
+	var target_color: Color = ENTANGLE_TINT_COLOR if entangled else Color(1, 1, 1, 1)
+	if node.self_modulate.is_equal_approx(target_color):
+		return
+	if bool(node.get_meta("entangle_tint_target", false)) == entangled and node.has_meta("entangle_tint_target"):
+		return
+	node.set_meta("entangle_tint_target", entangled)
+	var tween: Tween = node.create_tween()
+	tween.tween_property(node, "self_modulate", target_color, 0.3)
 
 
 ## Same floating/fading style as _show_message_over_hero(), just over
@@ -10773,11 +11882,14 @@ func _cast_enemy_dark_pact(enemy: Dictionary, level_data: Dictionary) -> void:
 	var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
 	var pact_damage: float = _roll_enemy_hero_damage(enemy) * multiplier
 	apply_damage(pact_damage)
+	# Same red hit-flash the player's own Dark Pact gives every enemy it
+	# catches (see _cast_dark_pact()).
+	_flash_bounce_hit(hero_image)
 	# Dark Pact is centered on the CASTER's own column, not the
 	# player's - an illusion standing near the rival (not necessarily
 	# near the hero) can still be caught in it.
-	_deal_aoe_damage_to_illusions(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage)
-	_deal_aoe_damage_to_bear(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage)
+	_deal_aoe_damage_to_illusions(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage, true)
+	_deal_aoe_damage_to_bear(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage, true)
 
 
 func _cast_enemy_pounce(enemy: Dictionary, level_data: Dictionary) -> void:
@@ -10841,7 +11953,7 @@ func _activate_enemy_essence_shift(level_data: Dictionary) -> void:
 ## GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT, since the player has
 ## no such counter - a hero fight is expected to resolve in far fewer
 ## turns than it'd take for this to matter in practice.
-func _apply_enemy_essence_shift_steal() -> void:
+func _apply_enemy_essence_shift_steal(enemy: Dictionary) -> void:
 	if not _enemy_essence_shift_active or _enemy_essence_shift_attacks_remaining <= 0:
 		return
 
@@ -10864,6 +11976,7 @@ func _apply_enemy_essence_shift_steal() -> void:
 	for stat_key in enemy_contribution.keys():
 		_enemy_essence_shift_bonus[stat_key] = _enemy_essence_shift_bonus.get(stat_key, 0.0) + enemy_contribution[stat_key]
 
+	_play_drain_effect(hero_image, enemy.get("node"), ESSENCE_SHIFT_MOTE_COLOR)
 	_refresh_bars()
 
 
@@ -10968,11 +12081,16 @@ func _update_enemy_hero_visibility() -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_entangle(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_entangle_on_bear(level_data)
+		return
 	_player_root_turns_left = int(level_data.get("root_turns", 0))
 	_player_silence_turns_left = int(level_data.get("silence_turns", 0))
 	_player_entangle_dot_damage = float(level_data.get("dot_damage", 0))
 	_player_entangle_dot_turns_left = int(level_data.get("dot_duration", 0))
 	_show_message_over_hero("Entangled!")
+	_play_entangle_effect(hero_image)
+	_refresh_entangle_tints()
 
 
 
@@ -11042,6 +12160,7 @@ func _activate_enemy_spirit_link(level_data: Dictionary) -> void:
 	_enemy_spirit_link_bonus_armor = float(level_data.get("bonus_armor", 0))
 	_enemy_spirit_link_turns_remaining = int(level_data.get("duration", 0))
 	_enemy_spirit_link_duration_pending_start = true
+	_set_spirit_link_visual(_get_hero_fight_boss().get("node"), true)
 
 
 func _tick_enemy_spirit_link() -> void:
@@ -11061,6 +12180,7 @@ func _end_enemy_spirit_link() -> void:
 	_enemy_spirit_link_bonus_armor = 0.0
 	_enemy_spirit_link_turns_remaining = 0
 	_enemy_spirit_link_duration_pending_start = false
+	_set_spirit_link_visual(_get_hero_fight_boss().get("node"), false)
 
 
 ## Only ever called for the plain basic-attack branch of the rival's
@@ -11073,6 +12193,7 @@ func _apply_enemy_spirit_link_lifesteal(enemy: Dictionary, mitigated_attack_dama
 	var heal_amount: float = mitigated_attack_damage * _enemy_spirit_link_lifesteal_pct
 	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 	enemy["current_hp"] = minf(max_hp, enemy["current_hp"] + heal_amount)
+	_play_drain_effect(hero_image, enemy.get("node"), SPIRIT_LINK_MOTE_COLOR)
 
 
 # ------------------------------------------------------------------
@@ -11166,14 +12287,227 @@ func _update_enemy_savage_roar_state(enemy: Dictionary) -> void:
 # Abaddon's Mist Coil and Aphotic Shield, cast by the rival at (or on
 # behalf of) himself - mirrors the player's own
 # _resolve_mist_coil_enemy_cast()/_activate_aphotic_shield()/
-# _tick_aphotic_shield()/_end_aphotic_shield(). Simplification versus
-# Mist Coil's own player-facing copy: the rival never casts it on
-# himself to heal - like Dark Pact/Pounce, it's always a straight hit
-# on the player, the only other participant in a hero fight.
+# _tick_aphotic_shield()/_end_aphotic_shield(). Mist Coil goes either
+# way, same as the player's own copy: a hit on the player (or his
+# bear), or - picked by EnemySkillAI as its own "mist_coil_self"
+# candidate when he's hurt - a self-heal (_cast_enemy_mist_coil_on_
+# self()).
 # ------------------------------------------------------------------
 
-func _cast_enemy_mist_coil(level_data: Dictionary) -> void:
+func _cast_enemy_mist_coil(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_mist_coil_self:
+		_cast_enemy_mist_coil_on_self(enemy, level_data)
+		return
+	if _enemy_skill_on_bear:
+		_cast_enemy_mist_coil_on_bear(enemy, level_data)
+		return
+	_play_mist_coil_effect(enemy.get("node"), hero_image)
 	apply_damage(float(level_data.get("damage", 0)))
+
+
+## Purely cosmetic: Mist Coil's glowing green ball, flying on a slight
+## arc from `from_node` (the caster) to `to_node` (the target), trailing
+## green sparks, then bursting in green and flashing the target on
+## arrival. When both are the same node (Abaddon's self-cast heal) the
+## ball drops onto him from above his head instead. The damage/heal has
+## already been applied by the time this plays; it never gates on it.
+## Start/end points are captured up front, so a target killed by the
+## hit still gets its ball and burst, just no flash.
+func _play_mist_coil_effect(from_node: Variant, to_node: Variant) -> void:
+	_play_orb_projectile(from_node, to_node, MIST_COIL_COLOR, MIST_COIL_COLOR, MIST_COIL_FLASH_COLOR, 22.0)
+
+
+## The shared glowing-ball projectile behind Mist Coil's and Ice
+## Blast's own visuals: a ball of `color` (rimmed in `rim_color`) flies
+## on a slight upward arc from `from_node` to `to_node`, trailing sparks,
+## then bursts (_play_orb_impact()) and flashes the target in
+## `flash_color`. Everything scales off `ball_size` - its glow, trail
+## and burst - so a bigger ball reads as a heavier hit. When both nodes
+## are the same (Mist Coil's self-cast) it drops from above instead.
+## Start/end points are captured up front, so a target killed by the
+## hit still gets its ball and burst, just no flash.
+func _play_orb_projectile(from_node: Variant, to_node: Variant, color: Color, rim_color: Color, flash_color: Color, ball_size: float) -> void:
+	if not (from_node is Control) or not (to_node is Control):
+		return
+	if not is_instance_valid(from_node) or not is_instance_valid(to_node):
+		return
+	var size_scale: float = ball_size / 22.0
+
+	var end: Vector2 = to_node.position + to_node.size / 2.0
+	var start: Vector2 = from_node.position + from_node.size / 2.0
+	if from_node == to_node:
+		start = end - Vector2(0, to_node.size.y * 0.9)
+	var travel: Vector2 = end - start
+	var normal: Vector2 = Vector2(-travel.y, travel.x).normalized() if travel.length() > 0.001 else Vector2.UP
+	# Always bulge upward, whichever way it's flying.
+	if normal.y > 0.0:
+		normal = -normal
+	var control_point: Vector2 = (start + end) / 2.0 + normal * minf(60.0, travel.length() * 0.2)
+	# A bigger ball travels a little slower, so it reads as heavier.
+	var flight_time: float = clampf(travel.length() / (900.0 / sqrt(size_scale)), 0.3, 0.6 * sqrt(size_scale))
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.border_color = rim_color
+	style.set_border_width_all(maxi(0, int(size_scale) - 1))
+	style.set_corner_radius_all(int(ceilf(ball_size / 2.0)))
+	style.corner_detail = 16
+	# The glow.
+	style.shadow_color = Color(color.r, color.g, color.b, 0.6)
+	style.shadow_size = int(10 * size_scale)
+	var ball := Panel.new()
+	ball.add_theme_stylebox_override("panel", style)
+	ball.size = Vector2(ball_size, ball_size)
+	ball.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ball.position = start - ball.size / 2.0
+	add_child(ball)
+	# Same layering as _play_scatterblast_effect() - at the hero/enemy
+	# layer, not on top of every UI panel.
+	move_child(ball, enemies_layer.get_index() + 1)
+
+	var trail := CPUParticles2D.new()
+	trail.local_coords = false
+	trail.position = ball.size / 2.0
+	trail.amount = int(30 * size_scale)
+	trail.lifetime = 0.3 * sqrt(size_scale)
+	if size_scale > 1.0:
+		# A big ball sheds sparks from its whole body, not one point.
+		trail.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
+		trail.emission_sphere_radius = ball_size * 0.3
+	trail.spread = 180.0
+	trail.gravity = Vector2.ZERO
+	trail.initial_velocity_min = 5.0
+	trail.initial_velocity_max = 25.0
+	trail.scale_amount_min = 2.0 * size_scale
+	trail.scale_amount_max = 5.0 * size_scale
+	trail.color = color
+	ball.add_child(trail)
+	trail.emitting = true
+
+	var tween: Tween = ball.create_tween()
+	tween.tween_method(
+		func(t: float) -> void:
+			var a: Vector2 = start.lerp(control_point, t)
+			var b: Vector2 = control_point.lerp(end, t)
+			ball.position = a.lerp(b, t) - ball.size / 2.0,
+		0.0, 1.0, flight_time
+	).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	tween.tween_callback(func() -> void:
+		_play_orb_impact(end, color, size_scale)
+		if is_instance_valid(to_node) and to_node is TextureRect:
+			_flash_bounce_hit(to_node, flash_color)
+		# Hide the ball but let the trail's last sparks finish fading.
+		# (self_modulate hides the ball itself, not its trail child.)
+		trail.emitting = false
+		ball.self_modulate.a = 0.0
+	)
+	tween.tween_interval(trail.lifetime + 0.1)
+	tween.tween_callback(ball.queue_free)
+
+
+## The orb projectile's impact (see _play_orb_projectile()): a one-shot
+## ring of `color` sparks at `pos`, scaled by `size_scale` (1.0 =
+## Mist Coil's own size). Same CPUParticles2D one-shot-burst recipe as
+## _spawn_lil_shredder_impact().
+func _play_orb_impact(pos: Vector2, color: Color, size_scale: float) -> void:
+	var lifetime: float = 0.45 * sqrt(size_scale)
+	var particles := CPUParticles2D.new()
+	particles.position = pos
+	particles.emitting = false
+	particles.one_shot = true
+	particles.amount = int(28 * size_scale)
+	particles.lifetime = lifetime
+	particles.explosiveness = 1.0
+	particles.spread = 180.0
+	particles.gravity = Vector2.ZERO
+	particles.initial_velocity_min = 80.0 * sqrt(size_scale)
+	particles.initial_velocity_max = 170.0 * sqrt(size_scale)
+	particles.damping_min = 120.0
+	particles.damping_max = 200.0
+	if size_scale > 1.0:
+		# Bigger bursts read as shards - randomly rotated pieces.
+		particles.angle_min = 0.0
+		particles.angle_max = 360.0
+	particles.scale_amount_min = 3.0 * sqrt(size_scale)
+	particles.scale_amount_max = 6.0 * sqrt(size_scale)
+	particles.color = color
+	add_child(particles)
+	move_child(particles, enemies_layer.get_index() + 1)
+	particles.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+
+
+## Purely cosmetic: Splinter Blast bursting on `from_node` (the blast's
+## target) - an explosion of ice chunks and a cold flash right on it,
+## then SPLINTER_SHARDS_PER_TARGET big, spinning ice chunks flung from
+## there to each node in `to_nodes` (every unit its splinters hit),
+## slightly spread and staggered so each volley reads as several
+## pieces, shattering into a small burst on arrival. Positions are
+## captured up front, so a unit killed by its splinter still gets its
+## chunks. Same layering as _play_scatterblast_effect().
+func _play_splinter_shards(from_node: Variant, to_nodes: Array) -> void:
+	if not (from_node is Control) or not is_instance_valid(from_node):
+		return
+	var start: Vector2 = from_node.position + from_node.size / 2.0
+
+	# The explosion on the target itself - the same shard burst the orb
+	# projectile's impact uses, scaled well up.
+	_play_orb_impact(start, SPLINTER_SHARD_COLOR, SPLINTER_EXPLOSION_SCALE)
+	if from_node is TextureRect:
+		_flash_bounce_hit(from_node, COLD_FEET_FLASH_COLOR)
+
+	for to_node in to_nodes:
+		if not (to_node is Control) or not is_instance_valid(to_node):
+			continue
+		var end: Vector2 = to_node.position + to_node.size / 2.0
+		var travel: Vector2 = end - start
+		if travel.length() < 1.0:
+			continue
+		var flight_time: float = clampf(travel.length() / 900.0, 0.2, 0.45)
+		var normal: Vector2 = Vector2(-travel.y, travel.x).normalized()
+
+		for i in SPLINTER_SHARDS_PER_TARGET:
+			var chunk := ColorRect.new()
+			chunk.color = SPLINTER_SHARD_COLOR
+			var chunk_size: float = randf_range(SPLINTER_CHUNK_SIZE * 0.75, SPLINTER_CHUNK_SIZE * 1.15)
+			chunk.size = Vector2(chunk_size, chunk_size * 0.7)
+			chunk.pivot_offset = chunk.size / 2.0
+			chunk.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			chunk.rotation = randf_range(0.0, TAU)
+			# Each chunk aims at a slightly different spot on the target
+			# and starts from a slightly different spot in the explosion.
+			var chunk_start: Vector2 = start + Vector2(randf_range(-12.0, 12.0), randf_range(-12.0, 12.0))
+			var chunk_end: Vector2 = end + normal * randf_range(-22.0, 22.0)
+			chunk.position = chunk_start - chunk.pivot_offset
+			chunk.modulate.a = 0.0
+			add_child(chunk)
+			move_child(chunk, enemies_layer.get_index() + 1)
+
+			var tween: Tween = chunk.create_tween()
+			tween.tween_interval(0.08 + i * 0.05)
+			tween.tween_property(chunk, "modulate:a", 1.0, 0.03)
+			tween.tween_property(chunk, "position", chunk_end - chunk.pivot_offset, flight_time).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			tween.parallel().tween_property(chunk, "rotation", chunk.rotation + randf_range(-1.0, 1.0) * TAU, flight_time)
+			# Only the last chunk of each volley shatters on arrival, so
+			# a volley makes one burst rather than several stacked ones.
+			if i == SPLINTER_SHARDS_PER_TARGET - 1:
+				tween.tween_callback(func() -> void:
+					_play_orb_impact(chunk_end, SPLINTER_SHARD_COLOR, 1.0)
+				)
+			tween.tween_property(chunk, "scale", Vector2(0.2, 0.2), 0.1)
+			tween.parallel().tween_property(chunk, "modulate:a", 0.0, 0.1)
+			tween.tween_callback(chunk.queue_free)
+
+
+## Purely cosmetic: Ice Blast's big ice ball, flying from the caster to
+## the blast's target - the same orb projectile as Mist Coil
+## (_play_orb_projectile()), scaled up to ICE_BLAST_BALL_SIZE in pale
+## ice with a white rim, bursting into ice shards and flashing the
+## target icy-blue on impact. The frost left on everyone the blast's
+## DoT landed on is _refresh_cold_feet_frost()'s.
+func _play_ice_blast_effect(from_node: Variant, to_node: Variant) -> void:
+	_play_orb_projectile(from_node, to_node, ICE_BLAST_BALL_COLOR, ICE_BLAST_RIM_COLOR, COLD_FEET_FLASH_COLOR, ICE_BLAST_BALL_SIZE)
 
 
 ## Activates (or, if already active, replaces outright, same as the
@@ -11191,6 +12525,13 @@ func _activate_enemy_aphotic_shield(enemy: Dictionary, level_data: Dictionary) -
 	_enemy_aphotic_shield_turns_remaining = int(level_data.get("duration", 0))
 	_enemy_aphotic_shield_duration_pending_start = true
 
+	# Checked before the dispel below clears it all - only drives the
+	# cleanse sparks in _show_aphotic_shell().
+	var cleansed: bool = bool(enemy.get("curse_active", false))
+	for field in ["root_turns_left", "silence_turns_left", "entangle_dot_turns_left", "stun_turns_left", "curse_stacks", "curse_dot_turns_left"]:
+		if int(enemy.get(field, 0)) > 0:
+			cleansed = true
+
 	enemy["root_turns_left"] = 0
 	enemy["silence_turns_left"] = 0
 	enemy["entangle_dot_damage"] = 0.0
@@ -11200,6 +12541,8 @@ func _activate_enemy_aphotic_shield(enemy: Dictionary, level_data: Dictionary) -
 	enemy["curse_active"] = false
 	enemy["curse_dot_damage"] = 0.0
 	enemy["curse_dot_turns_left"] = 0
+
+	_show_aphotic_shell(enemy.get("node"), _enemy_aphotic_shield_hp, cleansed)
 
 
 func _tick_enemy_aphotic_shield() -> void:
@@ -11216,9 +12559,10 @@ func _tick_enemy_aphotic_shield() -> void:
 ## Ends the rival's Aphotic Shield, whether its duration simply ran out
 ## (`exploded` false) or enough damage drained it to 0 HP (`exploded`
 ## true, from _deal_fixed_damage_to_enemy()) - in which case it deals
-## the cast's own aoe_damage to the player, the only other participant
-## in a hero fight, mirroring Dark Pact's own single-target
-## simplification for a rival hero (see _cast_enemy_dark_pact()).
+## the cast's own aoe_damage to the player, his illusions and his bear,
+## each only if within the shield's own radius columns of the boss -
+## the same radius-around-the-caster rule the player's own explosion
+## uses (see _end_aphotic_shield()).
 func _end_enemy_aphotic_shield(exploded: bool) -> void:
 	var aoe_damage: float = _enemy_aphotic_shield_aoe_damage
 	var radius: int = _enemy_aphotic_shield_radius
@@ -11231,14 +12575,25 @@ func _end_enemy_aphotic_shield(exploded: bool) -> void:
 	_enemy_aphotic_shield_turns_remaining = 0
 	_enemy_aphotic_shield_duration_pending_start = false
 
-	if exploded and not _is_hero_hidden():
+	_remove_aphotic_shell(boss.get("node"), exploded, radius)
+
+	if not exploded:
+		return
+
+	# Same radius-around-the-boss check as his illusions/bear below - the
+	# hero is only caught in it if he's actually standing close enough.
+	var hero_in_range: bool = not boss.is_empty() and _distance(_hero_pos_index, boss["pos_index"]) <= radius
+	if hero_in_range and not _is_hero_hidden():
 		apply_damage(aoe_damage)
-		# The explosion is centered on the boss's own column, not the
-		# player's - an illusion standing near him can still be caught
-		# in it.
-		if not boss.is_empty():
-			_deal_aoe_damage_to_illusions(boss["pos_index"], radius, aoe_damage)
-			_deal_aoe_damage_to_bear(boss["pos_index"], radius, aoe_damage)
+		# Same red hit-flash as Dark Pact.
+		_flash_bounce_hit(hero_image)
+	# The explosion is centered on the boss's own column, not the
+	# player's - an illusion or the bear standing near him can still be
+	# caught in it. Outside the stealth check above on purpose: the
+	# hero hiding only protects the hero, not his illusions or bear.
+	if not boss.is_empty():
+		_deal_aoe_damage_to_illusions(boss["pos_index"], radius, aoe_damage, true)
+		_deal_aoe_damage_to_bear(boss["pos_index"], radius, aoe_damage, true)
 
 
 # ------------------------------------------------------------------
@@ -11251,16 +12606,78 @@ func _end_enemy_aphotic_shield(exploded: bool) -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_torrent(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_torrent_on_bear(level_data)
+		return
 	var damage: float = float(level_data.get("damage", 0))
+	_play_torrent_splash(hero_image)
 	apply_damage(damage)
 	# Torrent's own splash radius is centered on the impact point (the
 	# player, the only possible target here) - an illusion near the
 	# player can still be caught in it even though the single-hit
 	# simplification above skips it for other creeps.
-	_deal_aoe_damage_to_illusions(_hero_pos_index, int(level_data.get("radius", 0)), damage)
-	_deal_aoe_damage_to_bear(_hero_pos_index, int(level_data.get("radius", 0)), damage)
+	var radius: int = int(level_data.get("radius", 0))
+	_play_torrent_splash_on_illusions(_illusions, _hero_pos_index, radius)
+	if _is_bear_alive() and _distance(_bear["pos_index"], _hero_pos_index) <= radius:
+		_play_torrent_splash(_bear.get("node"))
+	_deal_aoe_damage_to_illusions(_hero_pos_index, radius, damage)
+	_deal_aoe_damage_to_bear(_hero_pos_index, radius, damage)
 	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 	_show_message_over_hero("Stunned!")
+
+
+## Torrent's spray under every illusion in `illusions` (either side's
+## array - `_illusions` or `_enemy_illusions`) within `radius` columns
+## of `center_pos_index` - the same area check the matching
+## _deal_aoe_damage_to_*illusions() helper uses. Called just BEFORE
+## that damage, since a killed illusion's node gets freed.
+func _play_torrent_splash_on_illusions(illusions: Array, center_pos_index: int, radius: int) -> void:
+	for illusion in illusions:
+		if _distance(illusion["pos_index"], center_pos_index) <= radius:
+			_play_torrent_splash(illusion.get("node"))
+
+
+## Purely cosmetic: Torrent erupting under `node` (an enemy hit by the
+## player's Torrent, or the player's own hero_image when a rival casts
+## it) - a geyser-like burst of water spray shooting up from its feet
+## and falling back down. The position is captured up front, so a
+## target killed by the hit still gets its splash.
+func _play_torrent_splash(node: Variant) -> void:
+	if not (node is Control) or not is_instance_valid(node):
+		return
+
+	var feet: Vector2 = node.position + Vector2(node.size.x / 2.0, node.size.y * 0.9)
+
+	# The spray: a geyser-like burst straight up that rains back down.
+	# Same CPUParticles2D one-shot-burst recipe as
+	# _spawn_lil_shredder_impact().
+	var lifetime: float = 0.8
+	var spray := CPUParticles2D.new()
+	spray.position = feet
+	spray.emitting = false
+	spray.one_shot = true
+	spray.amount = 40
+	spray.lifetime = lifetime
+	spray.explosiveness = 0.85
+	spray.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	spray.emission_rect_extents = Vector2(node.size.x * 0.12, 2.0)
+	spray.direction = Vector2(0, -1)
+	spray.spread = 12.0
+	spray.gravity = Vector2(0, 700)
+	spray.initial_velocity_min = 220.0
+	spray.initial_velocity_max = 380.0
+	spray.scale_amount_min = 3.0
+	spray.scale_amount_max = 6.0
+	spray.color = TORRENT_SPRAY_COLOR
+	spray.hue_variation_min = -0.03
+	spray.hue_variation_max = 0.03
+	add_child(spray)
+	# Same reasoning as _play_scatterblast_effect()'s own move_child()
+	# call - render at the hero/enemy layer, not on top of every UI panel.
+	move_child(spray, enemies_layer.get_index() + 1)
+	spray.emitting = true
+
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(spray.queue_free)
 
 
 # ------------------------------------------------------------------
@@ -11382,7 +12799,7 @@ func _apply_enemy_curse_of_avernus_stack() -> void:
 	_player_silence_turns_left = int(level_data.get("silence_turns", 0))
 	_player_curse_dot_damage = float(level_data.get("dot_damage", 0))
 	_player_curse_dot_turns_left = int(level_data.get("dot_duration", 0))
-	_show_message_over_hero("Cursed!")
+	_refresh_status_effects()
 
 
 ## The player-side mirror of _tick_curse_of_avernus_effects(): the
@@ -11436,6 +12853,7 @@ func _maybe_auto_activate_enemy_borrowed_time(enemy: Dictionary) -> void:
 	_enemy_borrowed_time_heal_conversion_pct = float(level_data.get("heal_conversion_pct", 1.0))
 	_enemy_borrowed_time_turns_remaining = int(level_data.get("duration", 0))
 	_enemy_borrowed_time_duration_pending_start = true
+	_set_borrowed_time_visual(enemy.get("node"), true)
 
 	_enemy_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
 
@@ -11456,6 +12874,12 @@ func _end_enemy_borrowed_time() -> void:
 	_enemy_borrowed_time_heal_conversion_pct = 0.0
 	_enemy_borrowed_time_turns_remaining = 0
 	_enemy_borrowed_time_duration_pending_start = false
+	_set_borrowed_time_visual(_get_hero_fight_boss().get("node"), false)
+
+	# Full cooldown from the moment it ends - see _end_borrowed_time().
+	var level_data: Dictionary = _get_enemy_borrowed_time_level_data()
+	if not level_data.is_empty():
+		_enemy_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
 
 
 # ------------------------------------------------------------------
@@ -11472,15 +12896,94 @@ func _end_enemy_borrowed_time() -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_cold_feet(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_cold_feet_on_bear(level_data)
+		return
 	_player_cold_feet_dot_damage = float(level_data.get("damage", 0))
 	_player_cold_feet_dot_turns_left = int(level_data.get("duration", 0))
 	_show_message_over_hero("Cold Feet!")
+	_flash_bounce_hit(hero_image, COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 
 func _cast_enemy_ice_vortex(level_data: Dictionary) -> void:
-	_player_ice_vortex_dot_damage = float(level_data.get("damage", 0))
-	_player_ice_vortex_dot_turns_left = int(level_data.get("duration", 0))
+	if _enemy_skill_on_bear:
+		_cast_enemy_ice_vortex_on_bear(level_data)
+		return
+	var damage: float = float(level_data.get("damage", 0))
+	var duration: int = int(level_data.get("duration", 0))
+	# Same default as the player's own copy (_resolve_ice_vortex_cast()).
+	var radius: int = int(level_data.get("radius", 1))
+	_player_ice_vortex_dot_damage = damage
+	_player_ice_vortex_dot_turns_left = duration
 	_show_message_over_hero("Ice Vortex!")
+	_flash_bounce_hit(hero_image, COLD_FEET_FLASH_COLOR)
+
+	# Centered on the player (the vortex's only possible target here) -
+	# his illusions and Spirit Bear within that radius get the same DoT,
+	# ticked alongside his own in _tick_player_turn_start_effects().
+	_mark_illusions_ice_vortex(_illusions, _hero_pos_index, radius, damage, duration)
+	if _is_bear_alive() and _distance(_bear["pos_index"], _hero_pos_index) <= radius:
+		_bear["ice_vortex_dot_damage"] = damage
+		_bear["ice_vortex_dot_turns_left"] = duration
+		if is_instance_valid(_bear.get("node")):
+			_flash_bounce_hit(_bear["node"], COLD_FEET_FLASH_COLOR)
+
+	_play_ice_vortex_swirl(hero_image, radius)
+	_refresh_cold_feet_frost()
+
+
+## Arms Ice Vortex's DoT (`damage` per turn for `duration` turns) onto
+## every illusion in `illusions` - either side's array, `_illusions` or
+## `_enemy_illusions` - within `radius` columns of `center_pos_index`,
+## the same area check the enemy-side loop uses, and gives each one the
+## cast's icy flash. Stored on the illusion's own Dictionary under the
+## same ice_vortex_dot_* keys an enemy uses; ticked by
+## _tick_enemy_illusions_ice_vortex()/_tick_player_allies_ice_vortex().
+func _mark_illusions_ice_vortex(illusions: Array, center_pos_index: int, radius: int, damage: float, duration: int) -> void:
+	for illusion in illusions:
+		if _distance(illusion["pos_index"], center_pos_index) <= radius:
+			illusion["ice_vortex_dot_damage"] = damage
+			illusion["ice_vortex_dot_turns_left"] = duration
+			if is_instance_valid(illusion.get("node")):
+				_flash_bounce_hit(illusion["node"], COLD_FEET_FLASH_COLOR)
+
+
+## Ticks Ice Vortex's DoT on the rival's own illusions - once per enemy
+## turn, at its very start (see _enemy_turn()), the same timing every
+## enemy's own DoT ticks at. Each tick is mitigated by the boss's own
+## effective armor, the same way every other hit on one of his
+## illusions is (see _deal_aoe_damage_to_enemy_illusions()).
+func _tick_enemy_illusions_ice_vortex() -> void:
+	if _enemy_illusions.is_empty():
+		return
+	var boss: Dictionary = _get_hero_fight_boss()
+	var armor: float = _enemy_hero_effective_armor(boss) if not boss.is_empty() else 0.0
+	for illusion in _enemy_illusions.duplicate():
+		if illusion.get("ice_vortex_dot_turns_left", 0) <= 0:
+			continue
+		illusion["ice_vortex_dot_turns_left"] -= 1
+		var dot: float = float(illusion.get("ice_vortex_dot_damage", 0))
+		if dot > 0.0:
+			_deal_damage_to_enemy_illusion(illusion, _apply_armor_reduction(dot, armor))
+
+
+## Ticks Ice Vortex's DoT on the player's own illusions - called from
+## _tick_player_turn_start_effects(), right alongside the hero's own
+## tick. Illusions mitigate with the hero's own armor (same as every
+## other hit on them - see _deal_aoe_damage_to_illusions()).
+func _tick_player_allies_ice_vortex() -> void:
+	var hero_armor: float = _hero_armor()
+	for illusion in _illusions.duplicate():
+		if illusion.get("ice_vortex_dot_turns_left", 0) <= 0:
+			continue
+		illusion["ice_vortex_dot_turns_left"] -= 1
+		var dot: float = float(illusion.get("ice_vortex_dot_damage", 0))
+		if dot > 0.0:
+			_deal_damage_to_illusion(illusion, _apply_armor_reduction(dot, hero_armor))
+
+	# The Spirit Bear's own Ice Vortex tick - along with every other DoT
+	# a rival can put on it - lives in _tick_bear_turn_start_effects().
 
 
 # ------------------------------------------------------------------
@@ -11495,6 +12998,9 @@ func _cast_enemy_ice_vortex(level_data: Dictionary) -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_chilling_touch(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_chilling_touch_on_bear(enemy, level_data)
+		return
 	apply_damage(_roll_enemy_hero_damage(enemy) + float(level_data.get("bonus_damage", 0)))
 
 
@@ -11510,7 +13016,11 @@ func _cast_enemy_chilling_touch(enemy: Dictionary, level_data: Dictionary) -> vo
 # ------------------------------------------------------------------
 
 func _cast_enemy_ice_blast(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_ice_blast_on_bear(level_data)
+		return
 	var damage: float = float(level_data.get("damage", 0))
+	_play_ice_blast_effect(_get_hero_fight_boss().get("node"), hero_image)
 	apply_damage(damage)
 	# Ice Blast's own splash radius is centered on the impact point (the
 	# player, the only possible target here) - an illusion near the
@@ -11522,6 +13032,7 @@ func _cast_enemy_ice_blast(level_data: Dictionary) -> void:
 	_player_ice_blast_execute_pct = float(level_data.get("execute_pct", 0.0))
 	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 	_show_message_over_hero("Ice Blast!")
+	_refresh_cold_feet_frost()
 
 
 
@@ -11582,6 +13093,17 @@ func _end_enemy_arctic_burn() -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_splinter_blast(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_splinter_blast_on_bear(level_data)
+		return
+	var splinter_range: int = int(level_data.get("splinter_range", 0))
+	var shard_nodes: Array = []
+	for illusion in _illusions:
+		if _distance(illusion["pos_index"], _hero_pos_index) <= splinter_range:
+			shard_nodes.append(illusion.get("node"))
+	if _is_bear_alive() and _distance(_bear["pos_index"], _hero_pos_index) <= splinter_range:
+		shard_nodes.append(_bear.get("node"))
+	_play_splinter_shards(hero_image, shard_nodes)
 	apply_damage(float(level_data.get("damage", 0)))
 	# Splinter Blast's own splash (its lighter splinter_damage, not the
 	# main hit) is centered on the impact point (the player, the only
@@ -11619,6 +13141,8 @@ func _cast_enemy_cold_embrace(level_data: Dictionary) -> void:
 	var boss: Dictionary = _get_hero_fight_boss()
 	if not boss.is_empty() and ResourceLoader.exists(COLD_EMBRACE_IMAGE_PATH) and is_instance_valid(boss["node"]):
 		boss["node"].texture = load(COLD_EMBRACE_IMAGE_PATH)
+		_flash_bounce_hit(boss["node"], COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 
 ## Dispels every other effect currently on the rival, good or bad, right
@@ -11668,6 +13192,7 @@ func _end_enemy_cold_embrace() -> void:
 	_enemy_cold_embrace_heal_per_turn = 0.0
 	_enemy_cold_embrace_turns_remaining = 0
 	_enemy_cold_embrace_duration_pending_start = false
+	_refresh_cold_feet_frost()
 
 	var boss: Dictionary = _get_hero_fight_boss()
 	if boss.is_empty() or not is_instance_valid(boss["node"]):
@@ -11694,9 +13219,14 @@ func _end_enemy_cold_embrace() -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_winters_curse(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_winters_curse_on_bear(level_data)
+		return
 	_player_stun_turns_left = int(level_data.get("duration", 0))
 	_player_winters_curse_active = true
 	_show_message_over_hero("Winter's Curse!")
+	_flash_bounce_hit(hero_image, COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 
 # ------------------------------------------------------------------
@@ -11712,6 +13242,14 @@ func _cast_enemy_winters_curse(level_data: Dictionary) -> void:
 
 func _cast_enemy_crystal_nova(level_data: Dictionary) -> void:
 	var damage: float = float(level_data.get("damage", 0))
+	var radius: int = int(level_data.get("radius", 0))
+	# Frosted before the hits land - a kill frees the node.
+	_flash_frost_briefly(hero_image, CRYSTAL_NOVA_FROST_SECONDS)
+	for illusion in _illusions:
+		if _distance(illusion["pos_index"], _hero_pos_index) <= radius:
+			_flash_frost_briefly(illusion.get("node"), CRYSTAL_NOVA_FROST_SECONDS)
+	if _is_bear_alive() and _distance(_bear["pos_index"], _hero_pos_index) <= radius:
+		_flash_frost_briefly(_bear.get("node"), CRYSTAL_NOVA_FROST_SECONDS)
 	apply_damage(damage)
 	# Crystal Nova's own splash (the same damage as the main hit) is
 	# centered on the impact point (the player, the only possible
@@ -11723,10 +13261,15 @@ func _cast_enemy_crystal_nova(level_data: Dictionary) -> void:
 
 
 func _cast_enemy_frostbite(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_frostbite_on_bear(level_data)
+		return
 	_player_frostbite_dot_damage = float(level_data.get("dot_damage", 0))
 	_player_frostbite_dot_turns_left = int(level_data.get("dot_duration", 0))
 	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 	_show_message_over_hero("Frostbite!")
+	_flash_bounce_hit(hero_image, COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
 
 
 
@@ -11860,6 +13403,9 @@ func _is_column_enemy_ice_shards_blocked(col: int) -> bool:
 # ------------------------------------------------------------------
 
 func _cast_enemy_snowball(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_snowball_on_bear(enemy, level_data)
+		return
 	apply_damage(float(level_data.get("damage", 0)))
 	_player_stun_turns_left = int(level_data.get("stun_turns", 1))
 
@@ -11931,6 +13477,9 @@ func _end_enemy_tag_team() -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_walrus_punch(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_walrus_punch_on_bear(enemy, level_data)
+		return
 	var multiplier: float = float(level_data.get("damage_multiplier", 1.0))
 	var punch_damage: float = _roll_enemy_hero_damage(enemy) * multiplier
 
@@ -12022,6 +13571,9 @@ func _end_enemy_natures_guise() -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_leech_seed(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_leech_seed_on_bear(level_data)
+		return
 	_player_leech_seed_dot_damage = float(level_data.get("dot_damage", 0))
 	_player_leech_seed_heal_per_turn = float(level_data.get("heal_per_turn", 0))
 	_player_leech_seed_dot_turns_left = int(level_data.get("duration", 0))
@@ -12332,6 +13884,10 @@ func _cast_enemy_scatterblast(enemy: Dictionary, level_data: Dictionary) -> void
 	var direction: int = -1 if bool(enemy["node"].flip_h) else 1
 	_deal_directional_aoe_damage_to_illusions(int(enemy["pos_index"]), direction, int(level_data.get("range", 0)), damage)
 	_deal_directional_aoe_damage_to_bear(int(enemy["pos_index"]), direction, int(level_data.get("range", 0)), damage)
+	# Same particle cone the player's own cast gets (see
+	# _play_scatterblast_effect()'s own comment), bursting from the
+	# rival's own node instead of hero_image.
+	_play_scatterblast_effect(enemy["node"], direction, int(level_data.get("range", 0)))
 	_show_message_over_hero("Scatterblast!")
 
 
@@ -12396,6 +13952,9 @@ func _cast_enemy_firesnap_cookie(enemy: Dictionary, level_data: Dictionary) -> v
 # ------------------------------------------------------------------
 
 func _cast_enemy_lil_shredder(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_lil_shredder_on_bear(enemy, level_data)
+		return
 	var shots: int = int(level_data.get("shots", 3))
 	var damage_pct: float = float(level_data.get("damage_pct", 0))
 	var armor_reduction_per_shot: float = float(level_data.get("armor_reduction_per_shot", 0))
@@ -12405,6 +13964,11 @@ func _cast_enemy_lil_shredder(enemy: Dictionary, level_data: Dictionary) -> void
 			break
 		var shot_damage: float = _roll_enemy_hero_damage(enemy) * damage_pct
 		apply_damage(shot_damage)
+		# Same staggered impact-spark volley the player's own shots get
+		# (see _play_lil_shredder_shot_effect()'s own comment) - purely
+		# position-based, so it works the same regardless of which side
+		# is casting.
+		_play_lil_shredder_shot_effect(_hero_pos_index, i * 0.15)
 		if _recruited.get("current_hp", 0) <= 0:
 			break
 		_player_armor_reduction += armor_reduction_per_shot
@@ -12620,7 +14184,10 @@ func _enemy_hero_effective_armor(boss: Dictionary) -> float:
 ## the boss's own effective armor (_enemy_hero_effective_armor()). A
 ## no-op while no enemy illusions are up or there's no boss to read
 ## armor from (i.e. outside a hero fight).
-func _deal_aoe_damage_to_enemy_illusions(center_pos_index: int, radius: int, amount: float) -> void:
+## `flash_hits` gives each one hit the same red hit-flash as Moon
+## Glaives' bounce (_flash_bounce_hit()) - off by default, opted into by
+## Dark Pact.
+func _deal_aoe_damage_to_enemy_illusions(center_pos_index: int, radius: int, amount: float, flash_hits: bool = false) -> void:
 	if _enemy_illusions.is_empty() or amount <= 0.0:
 		return
 
@@ -12632,6 +14199,8 @@ func _deal_aoe_damage_to_enemy_illusions(center_pos_index: int, radius: int, amo
 	for illusion in _enemy_illusions.duplicate():
 		if _distance(illusion["pos_index"], center_pos_index) <= radius:
 			_deal_damage_to_enemy_illusion(illusion, mitigated)
+			if flash_hits and is_instance_valid(illusion.get("node")):
+				_flash_bounce_hit(illusion["node"])
 
 
 ## The line-shaped equivalent of _deal_aoe_damage_to_enemy_illusions()
@@ -12688,6 +14257,9 @@ func _deal_directional_aoe_damage_to_enemy_illusions(origin_pos_index: int, dire
 # ------------------------------------------------------------------
 
 func _cast_enemy_ensnare(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_ensnare_on_bear(level_data)
+		return
 	apply_damage(float(level_data.get("damage", 0)))
 	if _recruited.get("current_hp", 0) > 0:
 		_player_root_turns_left = int(level_data.get("root_turns", 0))
@@ -12911,6 +14483,9 @@ func _apply_enemy_bash_of_the_deep_knockback(enemy: Dictionary, level_data: Dict
 # ------------------------------------------------------------------
 
 func _cast_enemy_corrosive_haze(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_corrosive_haze_on_bear(level_data)
+		return
 	_player_armor_reduction += float(level_data.get("armor_reduction", 0))
 	_player_corrosive_haze_bonus_pct = float(level_data.get("bonus_damage_pct", 0.0))
 	_player_armor_reduction_turns_left = int(level_data.get("duration", 0))
@@ -12960,11 +14535,18 @@ func _cast_enemy_starstorm(enemy: Dictionary, level_data: Dictionary) -> void:
 # ------------------------------------------------------------------
 
 func _cast_enemy_sacred_arrow(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_sacred_arrow_on_bear(enemy, level_data)
+		return
 	var distance: int = _distance(enemy["pos_index"], _hero_pos_index)
 	var damage: float = float(level_data.get("base_damage", 0)) + float(level_data.get("bonus_per_column", 0)) * distance
 	apply_damage(damage)
 	if _recruited.get("current_hp", 0) > 0:
 		_player_stun_turns_left = int(level_data.get("stun_turns", 0))
+	# Same light-blue flight the player's own cast gets (see
+	# _play_sacred_arrow_flight()'s own comment), just flying the other
+	# way - from the rival's own node to hero_image.
+	_play_sacred_arrow_flight(enemy["node"], hero_image, distance)
 
 	_show_message_over_hero("Sacred Arrow!")
 
@@ -13133,9 +14715,17 @@ func _get_enemy_lunar_blessing_level_data() -> Dictionary:
 # ------------------------------------------------------------------
 
 func _cast_enemy_lucent_beam(level_data: Dictionary) -> void:
+	if _enemy_skill_on_bear:
+		_cast_enemy_lucent_beam_on_bear(level_data)
+		return
 	apply_damage(float(level_data.get("damage", 0)))
 	if _recruited.get("current_hp", 0) > 0:
 		_player_stun_turns_left = int(level_data.get("stun_turns", 0))
+	# Same falling-moonlight visual the player's own cast gets (see
+	# _play_lucent_beam_impact()'s own comment) - hero_image is a
+	# TextureRect just like an enemy's own node, so it drops onto him
+	# exactly the same way.
+	_play_lucent_beam_impact(hero_image)
 
 	_show_message_over_hero("Lucent Beam!")
 
@@ -13202,14 +14792,21 @@ func _tick_enemy_eclipse() -> void:
 
 		if not candidates.is_empty():
 			var picked: Dictionary = candidates[randi() % candidates.size()]
+			# Same falling-moonlight visual the player-side copy's own
+			# beams land with (see _tick_eclipse()'s own comment/
+			# _play_lucent_beam_impact()) - each Dictionary branch just
+			# needs whichever TextureRect that beam actually struck.
 			match picked["kind"]:
 				"player":
 					apply_damage(_enemy_eclipse_damage_per_beam)
+					_play_lucent_beam_impact(hero_image)
 				"illusion":
 					var illusion_damage: float = _apply_armor_reduction(_enemy_eclipse_damage_per_beam, _hero_armor())
 					_deal_damage_to_illusion(picked["ref"], illusion_damage)
+					_play_lucent_beam_impact(picked["ref"].get("node"))
 				"bear":
 					_deal_damage_to_bear(_enemy_eclipse_damage_per_beam)
+					_play_lucent_beam_impact(_bear.get("node"))
 
 		if _battle_over:
 			return
@@ -13291,6 +14888,12 @@ func _fire_enemy_mortimer_kisses_shot() -> void:
 			_deal_damage_to_bear(main_damage)
 		elif bear_dist == 1:
 			_deal_damage_to_bear(splash_damage)
+
+	# Same burning-lava-pool flare the player's own shots land with
+	# (see _play_mortimer_kisses_impact_effect()'s own comment) -
+	# purely position-based, so it works the same regardless of which
+	# side is casting.
+	_play_mortimer_kisses_impact_effect(_hero_pos_index)
 
 
 ## Ends the rival's Mortimer Kisses channel - called once its last shot
@@ -13881,3 +15484,447 @@ func _handle_defeat() -> void:
 
 	defeat_popup.visible = true
 	print("Hero defeated.")
+
+
+# ------------------------------------------------------------------
+# The rival hero aiming single-target skills at the player's Spirit
+# Bear (see ENEMY_BEAR_TARGETABLE_SKILLS). The player is still the
+# default target; the bear is picked when the player can't be hit
+# (out of range, hidden), isn't worth hitting (already carries that
+# skill's DoT), or when the hit would likely finish the bear off - see
+# _choose_enemy_skill_on_bear(). Everything a skill does to the player
+# has a bear-side counterpart below, stored on the _bear Dictionary
+# itself and ticked by _tick_bear_turn_start_effects()/_bear_turn().
+# ------------------------------------------------------------------
+
+## Whether `skill_id` would be worth casting on the player (`on_bear`
+## false) or on his Spirit Bear (`on_bear` true) right now - only the
+## DoT skills have a "not worth restarting" rule (see
+## _enemy_skill_worth_casting()'s own comments); everything else is
+## always worth it.
+func _enemy_skill_worth_on_target(skill_id: String, on_bear: bool) -> bool:
+	var field: String = ""
+	match skill_id:
+		"cold_feet":
+			field = "cold_feet_dot_turns_left"
+			if not on_bear:
+				return _player_cold_feet_dot_turns_left <= 0
+		"ice_vortex":
+			field = "ice_vortex_dot_turns_left"
+			if not on_bear:
+				return _player_ice_vortex_dot_turns_left <= 0
+		"frostbite":
+			field = "frostbite_dot_turns_left"
+			if not on_bear:
+				return _player_frostbite_dot_turns_left <= 0
+		"leech_seed":
+			field = "leech_seed_dot_turns_left"
+			if not on_bear:
+				return _player_leech_seed_dot_turns_left <= 0
+		_:
+			return true
+	return int(_bear.get(field, 0)) <= 0
+
+
+## Which of the two possible targets `skill_id` could land on right
+## now: {"hero": bool, "bear": bool}. The player needs to be visible
+## (see _enemy_ai_hero_hidden) and in range; the bear needs to be out
+## and in range - each also has to be worth hitting
+## (_enemy_skill_worth_on_target()). `ignore_range` skips both range
+## checks, same as _is_enemy_skill_ready()'s own flag.
+func _enemy_skill_target_options(skill_id: String, enemy_type: String, hero_distance: int, enemy: Dictionary, ignore_range: bool = false) -> Dictionary:
+	var hero_ok: bool = not _enemy_ai_hero_hidden \
+		and (ignore_range or _enemy_skill_in_range(skill_id, enemy_type, hero_distance, enemy)) \
+		and _enemy_skill_worth_on_target(skill_id, false)
+	var bear_ok: bool = false
+	if _is_bear_alive():
+		var bear_distance: int = _distance(enemy["pos_index"], _bear["pos_index"])
+		bear_ok = (ignore_range or _enemy_skill_reaches_distance(skill_id, enemy_type, bear_distance)) \
+			and _enemy_skill_worth_on_target(skill_id, true)
+	return {"hero": hero_ok, "bear": bear_ok}
+
+
+## Decides, for one cast of a bear-targetable `skill_id`, whether the
+## rival aims it at the player's Spirit Bear. The player stays the
+## default; the bear gets it when the player isn't a valid target at
+## all, or when this hit would likely kill the bear outright (an
+## estimate - see _estimate_enemy_skill_hit_on_bear()).
+func _choose_enemy_skill_on_bear(enemy: Dictionary, skill_id: String) -> bool:
+	var enemy_type: String = enemy["static"].get("type", "")
+	var hero_distance: int = _distance(enemy["pos_index"], _hero_pos_index)
+	var options: Dictionary = _enemy_skill_target_options(skill_id, enemy_type, hero_distance, enemy)
+	if not options["bear"]:
+		return false
+	if not options["hero"]:
+		return true
+	var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
+	var estimated_hit: float = _estimate_enemy_skill_hit_on_bear(enemy, skill_id, level_data)
+	return estimated_hit > 0.0 and estimated_hit >= float(_bear.get("current_hp", 0.0))
+
+
+## Roughly how much damage `skill_id`'s own immediate hit would do to
+## the bear after its armor - only used to judge whether a cast would
+## finish it off. DoT-only skills (Entangle/Cold Feet/Ice Vortex/
+## Frostbite/Leech Seed/Corrosive Haze/Winter's Curse) return 0.
+func _estimate_enemy_skill_hit_on_bear(enemy: Dictionary, skill_id: String, level_data: Dictionary) -> float:
+	var raw: float = 0.0
+	match skill_id:
+		"mist_coil", "torrent", "ensnare", "lucent_beam", "ice_blast", "splinter_blast", "snowball":
+			raw = float(level_data.get("damage", 0))
+		"sacred_arrow":
+			var distance: int = _distance(enemy["pos_index"], _bear["pos_index"])
+			raw = float(level_data.get("base_damage", 0)) + float(level_data.get("bonus_per_column", 0)) * distance
+		"chilling_touch":
+			raw = _roll_enemy_hero_damage(enemy) + float(level_data.get("bonus_damage", 0))
+		"walrus_punch":
+			raw = _roll_enemy_hero_damage(enemy) * float(level_data.get("damage_multiplier", 1.0))
+		"lil_shredder":
+			raw = _roll_enemy_hero_damage(enemy) * float(level_data.get("damage_pct", 0)) * int(level_data.get("shots", 3))
+	if raw <= 0.0:
+		return 0.0
+	var bear_armor: float = float(_bear.get("armor", 0)) - float(_bear.get("armor_reduction", 0.0))
+	return _apply_armor_reduction(raw * (1.0 + float(_bear.get("corrosive_haze_bonus_pct", 0.0))), bear_armor)
+
+
+## Floating text over the bear (e.g. "Stunned!") - the bear-side
+## counterpart of _show_message_over_hero().
+func _show_message_over_bear(text: String) -> void:
+	if _is_bear_alive() and is_instance_valid(_bear.get("node")):
+		_show_message_over_enemy(_bear["node"], text)
+
+
+## Every DoT/timed debuff a rival has put on the player's Spirit Bear,
+## ticked once per turn at the start of the player's own turn (from
+## _tick_player_turn_start_effects(), right after the hero's own) - the
+## bear-side mirror of that function's own entries for the same
+## skills. Stops as soon as the bear dies. Stun/root tick in
+## _bear_turn() instead, when they're actually consulted.
+func _tick_bear_turn_start_effects() -> void:
+	if not _is_bear_alive():
+		return
+
+	for key in ["entangle", "cold_feet", "ice_vortex", "frostbite"]:
+		var turns_key: String = key + "_dot_turns_left"
+		if int(_bear.get(turns_key, 0)) > 0:
+			_bear[turns_key] -= 1
+			var dot: float = float(_bear.get(key + "_dot_damage", 0))
+			if dot > 0.0:
+				_deal_damage_to_bear(dot)
+				if not _is_bear_alive():
+					return
+
+	if int(_bear.get("ice_blast_dot_turns_left", 0)) > 0:
+		_bear["ice_blast_dot_turns_left"] -= 1
+		var ice_blast_dot: float = float(_bear.get("ice_blast_dot_damage", 0))
+		if ice_blast_dot > 0.0:
+			_deal_damage_to_bear(ice_blast_dot)
+			if not _is_bear_alive():
+				return
+		# Same execute rule the player's own Ice Blast tick uses.
+		var execute_pct: float = float(_bear.get("ice_blast_execute_pct", 0.0))
+		if execute_pct > 0.0 and float(_bear.get("current_hp", 0.0)) <= float(_bear.get("hp", 0.0)) * execute_pct:
+			_show_message_over_bear("Shattered!")
+			_kill_bear()
+			return
+		if int(_bear.get("ice_blast_dot_turns_left", 0)) <= 0:
+			_bear["ice_blast_execute_pct"] = 0.0
+
+	if int(_bear.get("leech_seed_dot_turns_left", 0)) > 0:
+		_bear["leech_seed_dot_turns_left"] -= 1
+		var leech_seed_dot: float = float(_bear.get("leech_seed_dot_damage", 0))
+		if leech_seed_dot > 0.0:
+			_deal_damage_to_bear(leech_seed_dot)
+		# The healing half goes to the caster (the rival), same as the
+		# player-side tick.
+		var heal_per_turn: float = float(_bear.get("leech_seed_heal_per_turn", 0.0))
+		if heal_per_turn > 0.0:
+			var caster: Dictionary = _get_hero_fight_boss()
+			if not caster.is_empty():
+				var caster_max_hp: float = _enemy_hero_effective_max_hp(caster)
+				caster["current_hp"] = minf(caster_max_hp, float(caster.get("current_hp", 0.0)) + heal_per_turn)
+		if not _is_bear_alive():
+			return
+
+	if int(_bear.get("armor_reduction_turns_left", 0)) > 0:
+		_bear["armor_reduction_turns_left"] -= 1
+		if int(_bear.get("armor_reduction_turns_left", 0)) <= 0:
+			_bear["armor_reduction"] = 0.0
+			_bear["corrosive_haze_bonus_pct"] = 0.0
+
+
+## Stuns the bear for `turns` of its own turns (see _bear_turn()) - only
+## if it survived whatever hit came with the stun.
+func _stun_bear(turns: int) -> void:
+	if _is_bear_alive() and turns > 0:
+		_bear["stun_turns_left"] = turns
+		# A fresh stun from anything else replaces Winter's Curse's
+		# freeze - _cast_enemy_winters_curse_on_bear() sets this back
+		# right after calling here.
+		_bear["winters_curse_active"] = false
+		_show_message_over_bear("Stunned!")
+
+
+## The hero caught by an AoE centered on the bear (Torrent's splash,
+## Ice Blast's radius, Splinter Blast's splinters) - only while the
+## rival can actually see him, the same visibility rule every other
+## rival cast follows.
+func _is_hero_in_bear_aoe(radius: int) -> bool:
+	return not _enemy_ai_hero_hidden and _is_bear_alive() and _distance(_hero_pos_index, _bear["pos_index"]) <= radius
+
+
+func _cast_enemy_entangle_on_bear(level_data: Dictionary) -> void:
+	_bear["root_turns_left"] = int(level_data.get("root_turns", 0))
+	_bear["entangle_dot_damage"] = float(level_data.get("dot_damage", 0))
+	_bear["entangle_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	_show_message_over_bear("Entangled!")
+	_play_entangle_effect(_bear["node"])
+	_refresh_entangle_tints()
+
+
+func _cast_enemy_mist_coil_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
+	_play_mist_coil_effect(enemy.get("node"), _bear["node"])
+	_deal_damage_to_bear(float(level_data.get("damage", 0)))
+
+
+func _cast_enemy_torrent_on_bear(level_data: Dictionary) -> void:
+	var damage: float = float(level_data.get("damage", 0))
+	var radius: int = int(level_data.get("radius", 0))
+	var bear_pos: int = _bear["pos_index"]
+	_play_torrent_splash(_bear["node"])
+	# The splash is centered on the bear - the hero and his illusions
+	# standing close enough get caught too.
+	if _is_hero_in_bear_aoe(radius):
+		_play_torrent_splash(hero_image)
+		apply_damage(damage)
+	_play_torrent_splash_on_illusions(_illusions, bear_pos, radius)
+	_deal_aoe_damage_to_illusions(bear_pos, radius, damage)
+	_deal_damage_to_bear(damage)
+	_stun_bear(int(level_data.get("stun_turns", 1)))
+
+
+func _cast_enemy_corrosive_haze_on_bear(level_data: Dictionary) -> void:
+	_bear["armor_reduction"] = float(_bear.get("armor_reduction", 0.0)) + float(level_data.get("armor_reduction", 0))
+	_bear["corrosive_haze_bonus_pct"] = float(level_data.get("bonus_damage_pct", 0.0))
+	_bear["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
+	_show_message_over_bear("Corrosive Haze!")
+
+
+func _cast_enemy_sacred_arrow_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
+	var distance: int = _distance(enemy["pos_index"], _bear["pos_index"])
+	var damage: float = float(level_data.get("base_damage", 0)) + float(level_data.get("bonus_per_column", 0)) * distance
+	# Played before the hit, which may kill (and free) the bear.
+	_play_sacred_arrow_flight(enemy["node"], _bear["node"], distance)
+	_show_message_over_bear("Sacred Arrow!")
+	_deal_damage_to_bear(damage)
+	_stun_bear(int(level_data.get("stun_turns", 0)))
+
+
+func _cast_enemy_lucent_beam_on_bear(level_data: Dictionary) -> void:
+	_play_lucent_beam_impact(_bear["node"])
+	_show_message_over_bear("Lucent Beam!")
+	_deal_damage_to_bear(float(level_data.get("damage", 0)))
+	_stun_bear(int(level_data.get("stun_turns", 0)))
+
+
+func _cast_enemy_ensnare_on_bear(level_data: Dictionary) -> void:
+	_show_message_over_bear("Ensnare!")
+	_deal_damage_to_bear(float(level_data.get("damage", 0)))
+	if _is_bear_alive():
+		_bear["root_turns_left"] = int(level_data.get("root_turns", 0))
+
+
+func _cast_enemy_cold_feet_on_bear(level_data: Dictionary) -> void:
+	_bear["cold_feet_dot_damage"] = float(level_data.get("damage", 0))
+	_bear["cold_feet_dot_turns_left"] = int(level_data.get("duration", 0))
+	_show_message_over_bear("Cold Feet!")
+	_flash_bounce_hit(_bear["node"], COLD_FEET_FLASH_COLOR)
+	_refresh_cold_feet_frost()
+
+
+func _cast_enemy_ice_vortex_on_bear(level_data: Dictionary) -> void:
+	var damage: float = float(level_data.get("damage", 0))
+	var duration: int = int(level_data.get("duration", 0))
+	# Same default as the player's own copy (_resolve_ice_vortex_cast()).
+	var radius: int = int(level_data.get("radius", 1))
+	var bear_pos: int = _bear["pos_index"]
+
+	_bear["ice_vortex_dot_damage"] = damage
+	_bear["ice_vortex_dot_turns_left"] = duration
+	_flash_bounce_hit(_bear["node"], COLD_FEET_FLASH_COLOR)
+	_show_message_over_bear("Ice Vortex!")
+
+	# Centered on the bear - the hero and his illusions nearby are
+	# caught in it as well.
+	if _is_hero_in_bear_aoe(radius):
+		_player_ice_vortex_dot_damage = damage
+		_player_ice_vortex_dot_turns_left = duration
+		_flash_bounce_hit(hero_image, COLD_FEET_FLASH_COLOR)
+	_mark_illusions_ice_vortex(_illusions, bear_pos, radius, damage, duration)
+
+	_play_ice_vortex_swirl(_bear["node"], radius)
+	_refresh_cold_feet_frost()
+
+
+func _cast_enemy_chilling_touch_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
+	_deal_damage_to_bear(_roll_enemy_hero_damage(enemy) + float(level_data.get("bonus_damage", 0)))
+
+
+func _cast_enemy_ice_blast_on_bear(level_data: Dictionary) -> void:
+	var damage: float = float(level_data.get("damage", 0))
+	var radius: int = int(level_data.get("radius", 0))
+	var bear_pos: int = _bear["pos_index"]
+	_play_ice_blast_effect(_get_hero_fight_boss().get("node"), _bear["node"])
+	_show_message_over_bear("Ice Blast!")
+	# The blast's radius is centered on the bear - the hero and his
+	# illusions nearby take its damage too (the DoT/execute/stun stay on
+	# the bear, the one it was aimed at - same as the player-aimed copy
+	# only arming them on the player).
+	if _is_hero_in_bear_aoe(radius):
+		apply_damage(damage)
+	_deal_aoe_damage_to_illusions(bear_pos, radius, damage)
+	_deal_damage_to_bear(damage)
+	if not _is_bear_alive():
+		return
+	_bear["ice_blast_dot_damage"] = float(level_data.get("dot_damage", 0))
+	_bear["ice_blast_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	_bear["ice_blast_execute_pct"] = float(level_data.get("execute_pct", 0.0))
+	_stun_bear(int(level_data.get("stun_turns", 1)))
+	_refresh_cold_feet_frost()
+
+
+func _cast_enemy_splinter_blast_on_bear(level_data: Dictionary) -> void:
+	var splinter_range: int = int(level_data.get("splinter_range", 0))
+	var splinter_damage: float = float(level_data.get("splinter_damage", 0))
+	var bear_pos: int = _bear["pos_index"]
+	var shard_nodes: Array = []
+	if _is_hero_in_bear_aoe(splinter_range):
+		shard_nodes.append(hero_image)
+	for illusion in _illusions:
+		if _distance(illusion["pos_index"], bear_pos) <= splinter_range:
+			shard_nodes.append(illusion.get("node"))
+	_play_splinter_shards(_bear["node"], shard_nodes)
+	# Splinters fly out from the bear - the hero and his illusions
+	# nearby take the splinter damage.
+	if _is_hero_in_bear_aoe(splinter_range):
+		apply_damage(splinter_damage)
+	_deal_aoe_damage_to_illusions(bear_pos, splinter_range, splinter_damage)
+	_deal_damage_to_bear(float(level_data.get("damage", 0)))
+
+
+func _cast_enemy_winters_curse_on_bear(level_data: Dictionary) -> void:
+	_show_message_over_bear("Winter's Curse!")
+	_flash_bounce_hit(_bear["node"], COLD_FEET_FLASH_COLOR)
+	_stun_bear(int(level_data.get("duration", 0)))
+	# Marks this stun as the curse's freeze (cleared by any other stun,
+	# see _stun_bear()) - drives the bear's frost for as long as it holds.
+	_bear["winters_curse_active"] = true
+	_refresh_cold_feet_frost()
+
+
+func _cast_enemy_frostbite_on_bear(level_data: Dictionary) -> void:
+	_bear["frostbite_dot_damage"] = float(level_data.get("dot_damage", 0))
+	_bear["frostbite_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	_show_message_over_bear("Frostbite!")
+	_flash_bounce_hit(_bear["node"], COLD_FEET_FLASH_COLOR)
+	_stun_bear(int(level_data.get("stun_turns", 1)))
+	_refresh_cold_feet_frost()
+
+
+func _cast_enemy_snowball_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
+	var bear_pos: int = _bear["pos_index"]
+	_show_message_over_bear("Snowball!")
+	_deal_damage_to_bear(float(level_data.get("damage", 0)))
+	_stun_bear(int(level_data.get("stun_turns", 1)))
+
+	# Same charge as the player-aimed copy, just ending on the bear's
+	# column (captured before the hit, in case it died).
+	var charge_direction: int = _step_toward(enemy["pos_index"], bear_pos)
+	var landing_pos: int = enemy["pos_index"]
+	while charge_direction != 0 and landing_pos != bear_pos:
+		var next_pos: int = landing_pos + charge_direction
+		if _is_column_ice_shards_blocked(next_pos):
+			break
+		landing_pos = next_pos
+	_move_enemy(enemy, landing_pos)
+
+
+func _cast_enemy_walrus_punch_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
+	var punch_damage: float = _roll_enemy_hero_damage(enemy) * float(level_data.get("damage_multiplier", 1.0))
+
+	# Same knockback rules as the player-aimed copy, applied to the
+	# bear: pushed the way the rival is facing, stopped by the board's
+	# edge, an enemy's column or an Ice Shards wall - hitting one of
+	# those deals 50% extra.
+	var knockback_columns: int = int(level_data.get("knockback", 0))
+	var direction: int = -1 if enemy["node"].flip_h else 1
+	var pos: int = _bear["pos_index"]
+	var actual_distance: int = 0
+	for i in range(knockback_columns):
+		var next_pos: int = pos + direction
+		if next_pos < 0 or next_pos >= GRID_COLUMNS:
+			break
+		if not _get_enemy_at(next_pos).is_empty():
+			break
+		if _is_column_enemy_ice_shards_blocked(next_pos):
+			break
+		pos = next_pos
+		actual_distance += 1
+
+	var hit_wall: bool = actual_distance < knockback_columns
+	if hit_wall:
+		punch_damage *= 1.5
+		_show_message_over_bear("Wall hit!")
+
+	_deal_damage_to_bear(punch_damage)
+	if not _is_bear_alive():
+		return
+	_bear["pos_index"] = pos
+	_bear["node"].flip_h = direction < 0
+	_bear["node"].position = Vector2(_index_to_x(pos), _creature_y())
+	_stun_bear(int(level_data.get("stun_turns", 1)))
+
+
+func _cast_enemy_leech_seed_on_bear(level_data: Dictionary) -> void:
+	_bear["leech_seed_dot_damage"] = float(level_data.get("dot_damage", 0))
+	_bear["leech_seed_heal_per_turn"] = float(level_data.get("heal_per_turn", 0))
+	_bear["leech_seed_dot_turns_left"] = int(level_data.get("duration", 0))
+	_show_message_over_bear("Leech Seed!")
+
+
+func _cast_enemy_lil_shredder_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
+	var shots: int = int(level_data.get("shots", 3))
+	var damage_pct: float = float(level_data.get("damage_pct", 0))
+	var armor_reduction_per_shot: float = float(level_data.get("armor_reduction_per_shot", 0))
+	var bear_pos: int = _bear["pos_index"]
+
+	_show_message_over_bear("Lil' Shredder!")
+	for i in range(shots):
+		if not _is_bear_alive():
+			break
+		_play_lil_shredder_shot_effect(bear_pos, i * 0.15)
+		_deal_damage_to_bear(_roll_enemy_hero_damage(enemy) * damage_pct)
+		if not _is_bear_alive():
+			break
+		_bear["armor_reduction"] = float(_bear.get("armor_reduction", 0.0)) + armor_reduction_per_shot
+
+	if _is_bear_alive():
+		_bear["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
+
+
+## The rival's Mist Coil on himself - the mirror of the player's own
+## _resolve_mist_coil_self_cast(): pays `level_data.hp_cost` straight
+## off his current HP (no armor, no shield - it's a cost, not a hit),
+## then heals `level_data.heal`, capped at his effective max HP. Only
+## ever reached when _enemy_mist_coil_self_ready() already confirmed he
+## can afford the cost without dying.
+func _cast_enemy_mist_coil_on_self(enemy: Dictionary, level_data: Dictionary) -> void:
+	var hp_before: float = float(enemy.get("current_hp", 0.0))
+	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
+	var after_cost: float = maxf(1.0, hp_before - float(level_data.get("hp_cost", 0)))
+	enemy["current_hp"] = minf(max_hp, after_cost + float(level_data.get("heal", 0)))
+
+	_play_mist_coil_effect(enemy.get("node"), enemy.get("node"))
+	if is_instance_valid(enemy.get("node")):
+		var gain: int = roundi(float(enemy["current_hp"]) - hp_before)
+		_show_message_over_enemy(enemy["node"], "Mist Coil +%d" % gain)
+	_refresh_enemy_overhead_labels()

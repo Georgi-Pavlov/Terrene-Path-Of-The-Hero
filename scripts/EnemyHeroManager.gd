@@ -928,7 +928,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_spirit_link(state["spirit_link"])
 		_tick_npc_true_form(state["true_form"])
 		_tick_npc_aphotic_shield(state["aphotic_shield"])
-		_tick_npc_borrowed_time(state["borrowed_time"])
+		_tick_npc_borrowed_time(state["borrowed_time"], cooldowns)
 		_tick_npc_tag_team(state["tag_team"])
 		_tick_npc_natures_guise(state["nature's_guise"])
 		_tick_npc_entangle_effects(enemies)
@@ -1003,7 +1003,13 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		else:
 			var ai_context: Dictionary = _build_npc_ai_context(hero_id, hero_static, current_hp, effective_max_hp, current_mana, max_mana, damage_range, state, living)
 			var ready_skill_id: String = _pick_ready_skill(hero_id, hero_static, cooldowns, current_mana, state, ai_context)
-			if ready_skill_id != "":
+			if ready_skill_id == EnemySkillAI.MIST_COIL_SELF_ID:
+				# Self-heal: changes this loop's own current_hp, which
+				# _cast_skill() has no access to - so handled right here.
+				current_hp = _cast_npc_mist_coil_self(hero_id, hero_static, cooldowns, current_hp, effective_max_hp)
+				current_mana -= _npc_skill_mana_cost(hero_id, hero_static, "mist_coil")
+				acted_with = "mist_coil"
+			elif ready_skill_id != "":
 				_cast_skill(hero_id, hero_static, ready_skill_id, cooldowns, damage_range, living, state)
 				current_mana -= _npc_skill_mana_cost(hero_id, hero_static, ready_skill_id)
 				acted_with = ready_skill_id
@@ -1718,6 +1724,17 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 ## preferred in - see battle.gd's own _pick_enemy_ready_skill() for the
 ## real-fight mirror of this same scoring, shared through EnemySkillAI
 ## rather than duplicated.
+## An NPC's Mist Coil on himself, in the simulation - the mirror of
+## battle.gd's _cast_enemy_mist_coil_on_self(): starts Mist Coil's
+## cooldown, pays hp_cost (never below 1 HP), heals `heal` capped at
+## `max_hp`, and returns the new HP for the turn loop to keep.
+func _cast_npc_mist_coil_self(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_hp: float, max_hp: float) -> float:
+	var level_data: Dictionary = _get_npc_skill_level_data(hero_id, hero_static, "mist_coil")
+	cooldowns["mist_coil"] = int(level_data.get("cooldown", 0))
+	var after_cost: float = maxf(1.0, current_hp - float(level_data.get("hp_cost", 0)))
+	return minf(max_hp, after_cost + float(level_data.get("heal", 0)))
+
+
 func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_mana: float, state: Dictionary, ai_context: Dictionary) -> String:
 	var candidates: Array = []
 
@@ -1732,6 +1749,16 @@ func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dict
 		if current_mana < float(level_data.get("mana_cost", 0)):
 			continue
 		candidates.append({"id": skill_id, "score": EnemySkillAI.evaluate_skill(skill_id, level_data, ai_context)})
+
+	# Mist Coil on himself (the self-heal) competes as its own candidate,
+	# same as in a real hero fight (battle.gd's _pick_enemy_ready_skill())
+	# - only while he'd survive paying its hp_cost. The turn loop applies
+	# it directly to its own current_hp (see _cast_npc_mist_coil_self()).
+	if PlayerManager.get_npc_skill_level(hero_id, "mist_coil") > 0 and cooldowns.get("mist_coil", 0) <= 0:
+		var mist_coil_level_data: Dictionary = _get_npc_skill_level_data(hero_id, hero_static, "mist_coil")
+		if current_mana >= float(mist_coil_level_data.get("mana_cost", 0)) \
+		and float(ai_context.get("hero_hp", 0.0)) > float(mist_coil_level_data.get("hp_cost", 0)):
+			candidates.append({"id": EnemySkillAI.MIST_COIL_SELF_ID, "score": EnemySkillAI.evaluate_skill(EnemySkillAI.MIST_COIL_SELF_ID, mist_coil_level_data, ai_context)})
 
 	var archetype: String = str(ai_context.get("archetype", ""))
 	if EnemySkillAI.basic_attack_participates(archetype):
@@ -3215,9 +3242,12 @@ func _maybe_auto_activate_npc_borrowed_time(hero_id: String, hero_static: Dictio
 	# able skill - exactly mirroring how battle.gd's own auto-activate
 	# starts a normal entry in _skill_cooldowns/_enemy_skill_cooldowns.
 	cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
+	# Re-applied in full once it ends (see _tick_npc_borrowed_time()),
+	# matching battle.gd's _end_borrowed_time().
+	bt["cooldown"] = int(level_data.get("cooldown", 0))
 
 
-func _tick_npc_borrowed_time(bt: Dictionary) -> void:
+func _tick_npc_borrowed_time(bt: Dictionary, cooldowns: Dictionary) -> void:
 	if not bt["active"]:
 		return
 	if bt["duration_pending_start"]:
@@ -3226,6 +3256,7 @@ func _tick_npc_borrowed_time(bt: Dictionary) -> void:
 	bt["turns_remaining"] -= 1
 	if bt["turns_remaining"] <= 0:
 		_end_npc_borrowed_time(bt)
+		cooldowns["borrowed_time"] = int(bt.get("cooldown", 0))
 
 
 func _end_npc_borrowed_time(bt: Dictionary) -> void:
