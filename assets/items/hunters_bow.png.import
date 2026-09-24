@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://rnbvgx1tfuas"
-path="res://.godot/imported/Timbersaw_Chakram.png-8c0a4c125ab7d50656389200b2a15ec3.ctex"
+uid="uid://beug7qk7ry04i"
+path="res://.godot/imported/hunters_bow.png-e949d047935875a257bb1e3c6c1499fa.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/heroes skills/Timbersaw_Chakram.png"
-dest_files=["res://.godot/imported/Timbersaw_Chakram.png-8c0a4c125ab7d50656389200b2a15ec3.ctex"]
+source_file="res://assets/items/hunters_bow.png"
+dest_files=["res://.godot/imported/hunters_bow.png-e949d047935875a257bb1e3c6c1499fa.ctex"]
 
 [params]
 

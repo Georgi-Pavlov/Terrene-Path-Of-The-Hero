@@ -190,8 +190,8 @@ func compute_derived_stats(hero_static: Dictionary, current_strength: float, cur
 # than returning to the Map) - see battle.gd's _handle_victory() and
 # _advance_to_next_stage(). A zone that's been fully cleared (all
 # stages beaten in one run, no fleeing) is marked via
-# PlayerManager.set_zone_cleared() and always reopens on the final
-# stage afterward - see PlayerManager.get_zone_start_stage().
+# PlayerManager.set_zone_cleared(), but every new entry still starts
+# back at stage 1 - see PlayerManager.get_zone_start_stage().
 
 const MAX_ZONE_STAGE: int = 3
 
@@ -1160,10 +1160,10 @@ var zones: Dictionary = {
 						"type": "standard",
 						"description": "Rolls into a snowball and charges an enemy within range, dealing damage and stunning it on impact.",
 						"levels": [
-							{"damage": 80, "stun_turns": 1, "range": 2, "mana_cost": 90, "cooldown": 5},
-							{"damage": 120, "stun_turns": 1, "range": 2, "mana_cost": 115, "cooldown": 5},
-							{"damage": 170, "stun_turns": 2, "range": 3, "mana_cost": 145, "cooldown": 6},
-							{"damage": 230, "stun_turns": 2, "range": 3, "mana_cost": 175, "cooldown": 6}
+							{"damage": 85, "stun_turns": 1, "range": 2, "mana_cost": 90, "cooldown": 5},
+							{"damage": 130, "stun_turns": 1, "range": 3, "mana_cost": 115, "cooldown": 5},
+							{"damage": 175, "stun_turns": 2, "range": 3, "mana_cost": 145, "cooldown": 6},
+							{"damage": 230, "stun_turns": 2, "range": 4, "mana_cost": 175, "cooldown": 6}
 						]
 					},
 					{
@@ -1319,9 +1319,9 @@ var zones: Dictionary = {
 						"type": "ultimate",
 						"description": "Ultimate: roots every enemy within radius of the hero in place - they can't move, but can still attack and cast skills - and deals damage over time to each of them for the same duration.",
 						"levels": [
-							{"dot_damage": 50, "root_duration": 2, "radius": 1, "mana_cost": 180, "cooldown": 9},
-							{"dot_damage": 80, "root_duration": 3, "radius": 2, "mana_cost": 240, "cooldown": 10},
-							{"dot_damage": 120, "root_duration": 3, "radius": 2, "mana_cost": 300, "cooldown": 11}
+							{"dot_damage": 65, "root_duration": 2, "radius": 1, "mana_cost": 180, "cooldown": 9},
+							{"dot_damage": 100, "root_duration": 3, "radius": 2, "mana_cost": 240, "cooldown": 10},
+							{"dot_damage": 150, "root_duration": 3, "radius": 2, "mana_cost": 300, "cooldown": 11}
 						]
 					},
 				],
@@ -1355,7 +1355,7 @@ var zones: Dictionary = {
 						"id": "whirling_death",
 						"name": "Whirling Death",
 						"type": "standard",
-						"description": "Deals pure damage and destroys surrounding trees, reducing enemy primary attributes if a hero is hit.",
+						"description": "Deals damage around the hero, reducing enemy primary attributes if a hero is hit.",
 						"levels": [
 							{"damage": 100, "radius": 1, "mana_cost": 70, "cooldown": 4},
 							{"damage": 150, "radius": 1, "mana_cost": 90, "cooldown": 4},
@@ -2368,7 +2368,7 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 # boosts) doesn't have to be filtered down at runtime.
 
 const SHOP_ITEM_IDS: Array[String] = ["health", "mana", "gauntlets_of_strength", "mantle_of_intelligence",
-"slippers_of_agility", "circlet", "blades_of_attack", "cleaver", "morbid_mask", "broadsword", "claymore"]
+"slippers_of_agility", "circlet", "blades_of_attack", "cleaver", "hunters_bow", "morbid_mask", "broadsword", "claymore"]
 const SHOP_STOCK_PER_ITEM: int = 3
 
 
@@ -2452,6 +2452,16 @@ var items: Dictionary = {
 		"stat": "damage",
 		"value": 10,
 		"cost": 850
+	},
+	"hunters_bow": {
+		"id": "hunters_bow",
+		"name": "Hunter's Bow",
+		"image": "res://assets/items/hunters_bow.png",
+		"description": "Adds +10 damage. Passive (ranged heroes only): every 3rd Attack splits, also hitting another enemy within 2 columns of the target for full damage.",
+		"effect": "passive",
+		"stat": "damage",
+		"value": 10,
+		"cost": 900
 	},
 	"morbid_mask": {
 		"id": "morbid_mask",

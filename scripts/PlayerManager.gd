@@ -580,10 +580,11 @@ func set_zone_cleared(zone_id: String) -> void:
 	_write_player_data(current_player, data)
 
 
-## Which stage a fresh battle in `zone_id` should open on: the final
-## stage if it's already been fully cleared, otherwise always stage 1.
-func get_zone_start_stage(zone_id: String) -> int:
-	return GameManager.MAX_ZONE_STAGE if is_zone_cleared(zone_id) else 1
+## Which stage a fresh battle in `zone_id` should open on: always stage
+## 1 - fleeing, dying, or clearing the zone all restart the next entry
+## from the first stage, even for an already-cleared zone.
+func get_zone_start_stage(_zone_id: String) -> int:
+	return 1
 
 
 # ------------------------------------------------------------------

@@ -478,9 +478,9 @@ const ECLIPSE_BEAMS_PER_TURN := 2
 ## (2, 3, ...) is treated as continuing that same attempt - no
 ## restore, HP/mana just carry over as-is, mirroring battle.gd's own
 ## _advance_to_next_stage().
-## This does not yet know about zone-mate hero fights or becoming
-## "freed" to invade (Step 5) - clearing the final stage here just
-## caps at the final stage rather than advancing past it.
+## This does not know about zone-mate hero fights or becoming "freed"
+## to invade (Step 5) - clearing the final stage here just resets the
+## hero back to stage 1 for its next run.
 func simulate_npc_stage_attempt(hero_id: String, hero_static: Dictionary) -> Dictionary:
 	var zone_id: String = PlayerManager.get_npc_current_zone(hero_id)
 	var stage: int = PlayerManager.get_npc_current_stage(hero_id)
@@ -510,7 +510,13 @@ func simulate_npc_stage_attempt(hero_id: String, hero_static: Dictionary) -> Dic
 		PlayerManager.add_npc_gold(hero_id, fight["gold_gained"])
 
 	if fight["result"] == "win":
-		PlayerManager.set_npc_current_stage(hero_id, mini(stage + 1, GameManager.MAX_ZONE_STAGE))
+		# Clearing the final stage finishes this run - the next attempt
+		# starts over at stage 1, same as the player re-entering a zone
+		# (see PlayerManager.get_zone_start_stage()). Callers that follow
+		# up with a hero fight read the stage BEFORE this attempt, so the
+		# reset here doesn't hide that the final stage was just cleared.
+		var next_stage: int = stage + 1 if stage < GameManager.MAX_ZONE_STAGE else 1
+		PlayerManager.set_npc_current_stage(hero_id, next_stage)
 	else:
 		# Loss, stalemate, or a flee - reset to stage 1, mirroring the
 		# player's own reset-on-failure rule. HP/mana were already
@@ -603,11 +609,10 @@ func _try_npc_zone_mate_fight(hero_id: String, hero_static: Dictionary) -> void:
 		PlayerManager.mark_hero_defeated(opponent_id)
 		award_npc_xp(hero_id, hero_static, get_hero_kill_bounty(opponent_id))
 
-	# A loss/stalemate here leaves current_stage at MAX_ZONE_STAGE
-	# (set by simulate_npc_stage_attempt just before this ran) with no
-	# other persisted penalty - next tick just re-clears the home
-	# zone's creeps again and retries this same fight, same as
-	# reaching 0 HP anywhere else in simulation.
+	# A loss/stalemate here has no other persisted penalty - current_
+	# stage was already reset to 1 by simulate_npc_stage_attempt just
+	# before this ran, so the hero re-clears all of its home zone's
+	# stages again before getting another shot at this fight.
 	restock_npc_potions(hero_id)
 
 
@@ -707,10 +712,10 @@ func _try_npc_invasion_duel(hero_id: String, hero_static: Dictionary, target_id:
 		# fresh one rather than re-fighting a hero that no longer exists.
 		PlayerManager.set_npc_invasion_target(hero_id, "")
 
-	# A loss/stalemate leaves current_stage at MAX_ZONE_STAGE (set by
-	# simulate_npc_stage_attempt just before this ran) and the target
-	# unchanged, so next tick just re-clears the target's zone again
-	# and retries this same duel - identical to the home-zone-mate
+	# A loss/stalemate leaves the target unchanged, and current_stage
+	# was already reset to 1 by simulate_npc_stage_attempt just before
+	# this ran, so the hero re-clears the target's whole zone again
+	# before retrying this same duel - identical to the home-zone-mate
 	# fight's own retry behavior.
 	restock_npc_potions(hero_id)
 
