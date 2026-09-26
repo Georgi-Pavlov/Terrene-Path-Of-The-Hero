@@ -427,9 +427,9 @@ var zones: Dictionary = {
 		"music": "the_elderwild",
 		"heroes": [
 			{
-				"id": "lone_druid",
-				"name": "Lone Druid",
-				"image": "res://assets/heroes/Lone Druid.png",
+				"id": "erynd",
+				"name": "Erynd",
+				"image": "res://assets/heroes/Erynd.png",
 				"background": "res://assets/zones/Northern_Pine.png",
 				"range_type": "Range",
 				"main_stat": "Agility",

@@ -39,7 +39,7 @@ class_name EnemySkillAI
 # _kunkka_modifier()), since a Tidebringer-empowered Attack can
 # genuinely be the better play than any of Kunkka's real skills.
 #
-# Eleven heroes have real AI logic today: Veyrik, Lone Druid, Abaddon,
+# Eleven heroes have real AI logic today: Veyrik, Erynd, Abaddon,
 # Kunkka, Ancient Apparition, Winter Wyvern, Crystal Maiden, Tusk,
 # Treant Protector, Timbersaw, and Snapfire - see resolve_hero_
 # archetype() for how a hero_static maps to one of them,
@@ -131,7 +131,7 @@ class_name EnemySkillAI
 # without inventing a parallel armor system of its own.
 #
 # Naga Siren is the twelfth hero with real AI logic. Mirror Image is
-# "utility" category, same shape as Lone Druid's own Spirit Bear - its
+# "utility" category, same shape as Erynd's own Spirit Bear - its
 # entire value (both the illusions' own expected total damage over their
 # FULL duration and the redirect chance that can soak a hit meant for
 # Naga herself) is hero-specific, computed entirely in
@@ -302,7 +302,7 @@ const MIST_COIL_SELF_ID := "mist_coil_self"
 # skill's score clearly beats the rest.
 const HERO_TIE_BREAK := {
 	"veyrik": ["barbed_lunge", "abyssal_spasm", "depthsveil", "leeching_hunger"],
-	"lone_druid": ["entangle", "summon_spirit_bear", "spirit_link", "true_form"],
+	"erynd": ["entangle", "summon_spirit_bear", "spirit_link", "true_form"],
 	"abaddon": ["aphotic_shield", "mist_coil_self", "mist_coil"],
 	"kunkka": ["ghostship", "torrent", "x_marks_the_spot"],
 	"ancient_apparition": ["ice_blast", "chilling_touch", "cold_feet", "ice_vortex"],
@@ -341,7 +341,7 @@ static func resolve_hero_archetype(hero_static: Dictionary) -> String:
 	if "barbed_lunge" in skill_ids:
 		return "veyrik"
 	if "summon_spirit_bear" in skill_ids:
-		return "lone_druid"
+		return "erynd"
 	if "borrowed_time" in skill_ids:
 		return "abaddon"
 	if "torrent" in skill_ids:
@@ -671,8 +671,8 @@ static func _hero_specific_modifier(archetype: String, skill_id: String, level_d
 	match archetype:
 		"veyrik":
 			return _veyrik_modifier(skill_id, level_data, context)
-		"lone_druid":
-			return _lone_druid_modifier(skill_id, level_data, context)
+		"erynd":
+			return _erynd_modifier(skill_id, level_data, context)
 		"abaddon":
 			return _abaddon_modifier(skill_id, level_data, context)
 		"kunkka":
@@ -720,12 +720,12 @@ static func _veyrik_modifier(skill_id: String, level_data: Dictionary, context: 
 			return 0.0
 
 
-## Lone Druid: leans hard on his Spirit Bear. A missing/dead bear is
+## Erynd: leans hard on his Spirit Bear. A missing/dead bear is
 ## treated as a near-emergency (a big enough bonus to beat almost
 ## everything except a genuine defensive crisis - see
 ## _evaluate_defensive()'s own <20% HP tier); once the bear is up,
 ## Entangle/Spirit Link get a small synergy bump instead.
-static func _lone_druid_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+static func _erynd_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
 	var bear_active: bool = bool(context.get("bear_active", false))
 	match skill_id:
 		"summon_spirit_bear":
@@ -2608,8 +2608,8 @@ static func _naga_siren_modifier(skill_id: String, level_data: Dictionary, conte
 ## illusion instead (defensive). Neither half is generic enough for
 ## _evaluate_offensive()/_evaluate_defensive() to cover (this skill's own
 ## SKILL_INFO category is "utility", same "the hero-specific modifier IS
-## the whole value" shape Lone Druid's own Spirit Bear uses - see
-## _lone_druid_modifier()), so both live here together, exactly per the
+## the whole value" shape Erynd's own Spirit Bear uses - see
+## _erynd_modifier()), so both live here together, exactly per the
 ## design doc's own "a defensive Mirror Image can be the right call even
 ## with lower immediate damage" instruction.
 static func _naga_mirror_image_modifier(level_data: Dictionary, context: Dictionary) -> float:

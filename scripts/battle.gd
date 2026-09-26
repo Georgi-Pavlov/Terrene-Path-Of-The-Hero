@@ -217,11 +217,11 @@ const TORRENT_SPRAY_COLOR := Color(0.55, 0.8, 1.0, 1.0)
 const HERO_TARGET_HIGHLIGHT_COLOR := Color(0.3, 1.7, 0.5, 1)
 const HERO_TARGET_HIGHLIGHT_PULSE_COLOR := Color(0.6, 2.0, 0.8, 1)
 
-# Lone Druid's Spirit Bear (summon_spirit_bear) always uses this art,
+# Erynd's Spirit Bear (summon_spirit_bear) always uses this art,
 # regardless of skill level.
-const SPIRIT_BEAR_IMAGE_PATH := "res://assets/heroes/Lone Druid Bear.png"
+const SPIRIT_BEAR_IMAGE_PATH := "res://assets/heroes/Erynd Bear.png"
 # True Form's transformed portrait, likewise fixed regardless of level.
-const TRUE_FORM_IMAGE_PATH := "res://assets/heroes/Lone Druid Ultimate.png"
+const TRUE_FORM_IMAGE_PATH := "res://assets/heroes/Erynd Ultimate.png"
 # How much of the hero's own max HP he loses when the bear dies (see
 # _apply_bear_death_penalty()).
 const BEAR_DEATH_HP_PENALTY_PCT := 0.2
@@ -725,7 +725,7 @@ var _tag_team_turns_remaining: int = 0
 var _tag_team_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
-# Lone Druid's Spirit Bear (summon_spirit_bear): a persistent ally
+# Erynd's Spirit Bear (summon_spirit_bear): a persistent ally
 # that fights alongside the hero. {} when no bear is out (see
 # _is_bear_alive()); otherwise {hp, current_hp, damage_min,
 # damage_max, armor, speed, pos_index, node}. It lives outside
@@ -780,7 +780,7 @@ var _player_siren_song_asleep: bool = false
 var _enemy_ai_hero_hidden: bool = false
 
 # ------------------------------------------------------------------
-# Lone Druid's Spirit Link: while active, the hero gets a flat armor
+# Erynd's Spirit Link: while active, the hero gets a flat armor
 # bonus (folded into _hero_armor(), same slot Leeching Hunger's borrowed
 # armor uses) and lifesteal on his Attacks - a % of an Attack's
 # damage, taken AFTER the target's armor has already reduced it, paid
@@ -798,7 +798,7 @@ var _spirit_link_turns_remaining: int = 0
 var _spirit_link_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
-# Lone Druid's Savage Roar: a passive (no button press, no mana, no
+# Erynd's Savage Roar: a passive (no button press, no mana, no
 # cooldown - see _populate_skill_buttons()'s "passive" branch) that
 # turns itself on and off automatically based on the hero's own HP%,
 # recalculated every time the bars refresh (_update_savage_roar_state,
@@ -819,7 +819,7 @@ var _savage_roar_damage_reduction_pct: float = 0.0
 var _savage_roar_status_label: Label = null
 
 # ------------------------------------------------------------------
-# Lone Druid's ultimate, True Form: transforms the hero into a bear
+# Erynd's ultimate, True Form: transforms the hero into a bear
 # for the duration - swaps his portrait to TRUE_FORM_IMAGE_PATH (and
 # back to his normal one on expiry), grants bonus max HP (added to his
 # CURRENT HP too the moment it's granted, then taken back off again on
@@ -959,14 +959,14 @@ var _enemy_depthsveil_bonus_damage: float = 0.0
 var _enemy_depthsveil_turns_remaining: int = 0
 var _enemy_depthsveil_duration_pending_start: bool = false
 
-# Lone Druid's Spirit Link, cast by the rival on himself.
+# Erynd's Spirit Link, cast by the rival on himself.
 var _enemy_spirit_link_active: bool = false
 var _enemy_spirit_link_lifesteal_pct: float = 0.0
 var _enemy_spirit_link_bonus_armor: float = 0.0
 var _enemy_spirit_link_turns_remaining: int = 0
 var _enemy_spirit_link_duration_pending_start: bool = false
 
-# Lone Druid's True Form, cast by the rival on himself. No forced-
+# Erynd's True Form, cast by the rival on himself. No forced-
 # melee-range or portrait-swap-on-a-dedicated-node concept is needed
 # here the way the player's own copy has one - True Form just swaps
 # the boss's existing enemy node's texture (see
@@ -978,7 +978,7 @@ var _enemy_true_form_bonus_damage: float = 0.0
 var _enemy_true_form_turns_remaining: int = 0
 var _enemy_true_form_duration_pending_start: bool = false
 
-# Lone Druid's Savage Roar, on the rival - same automatic hysteresis
+# Erynd's Savage Roar, on the rival - same automatic hysteresis
 # as the player's own copy, just re-evaluated once per rival turn (see
 # _update_enemy_savage_roar_state()) rather than after every HP change,
 # since there's no bars UI to keep live for an enemy.
@@ -8019,7 +8019,7 @@ func _update_hero_visibility() -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Spirit Link.
+# Erynd's Spirit Link.
 # ------------------------------------------------------------------
 
 ## Activates (or refreshes) Spirit Link at `level_data`'s values.
@@ -8062,7 +8062,7 @@ func _end_spirit_link() -> void:
 
 
 ## Purely cosmetic: while an empowering self-buff is active - Spirit
-## Link (Lone Druid), Arctic Burn (Winter Wyvern) or Tag Team (Tusk) -
+## Link (Erynd), Arctic Burn (Winter Wyvern) or Tag Team (Tusk) -
 ## `node` (the player's hero_image, or the rival's own node) grows to
 ## HERO_ENLARGED_SCALE. Shared because no hero has more than one of
 ## them, so they never overlap on one sprite. Only does anything when the state
@@ -8128,7 +8128,7 @@ func _play_lifesteal_effect(from_node: Variant, to_node: Variant) -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's ultimate, True Form.
+# Erynd's ultimate, True Form.
 # ------------------------------------------------------------------
 
 ## Activates (or, if already active, restarts) True Form at
@@ -8188,7 +8188,7 @@ func _end_true_form() -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Spirit Bear.
+# Erynd's Spirit Bear.
 # ------------------------------------------------------------------
 
 func _is_bear_alive() -> bool:
@@ -13577,7 +13577,7 @@ func _update_enemy_hero_visibility() -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Entangle, cast by the rival on the player - mirrors
+# Erynd's Entangle, cast by the rival on the player - mirrors
 # _apply_root(), just aimed at the player instead of an enemy. There's
 # only one possible target (the player),
 # so no targeting step is needed the way the player's own Entangle
@@ -13599,7 +13599,7 @@ func _cast_enemy_entangle(level_data: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Summon Spirit Bear, cast by the rival - spawned as a
+# Erynd's Summon Spirit Bear, cast by the rival - spawned as a
 # genuine extra entry in _enemies via the normal _spawn_enemy() path,
 # so it automatically gets real movement/attack behavior, a real
 # position on the board, and can be fought and killed by the player
@@ -13653,7 +13653,7 @@ func _despawn_enemy_spirit_bear() -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Spirit Link, cast by the rival on themselves - mirrors
+# Erynd's Spirit Link, cast by the rival on themselves - mirrors
 # _activate_spirit_link()/_tick_spirit_link()/_end_spirit_link()/
 # _apply_spirit_link_lifesteal().
 # ------------------------------------------------------------------
@@ -13701,7 +13701,7 @@ func _apply_enemy_spirit_link_lifesteal(enemy: Dictionary, mitigated_attack_dama
 
 
 # ------------------------------------------------------------------
-# Lone Druid's True Form (ultimate), cast by the rival on themselves -
+# Erynd's True Form (ultimate), cast by the rival on themselves -
 # mirrors _activate_true_form()/_tick_true_form()/_end_true_form().
 # No forced-melee-range concept here (a hero-fight boss is already
 # always attacking in melee or at range per its own "type", same as
@@ -13749,7 +13749,7 @@ func _end_enemy_true_form() -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Savage Roar (passive), on the rival - mirrors
+# Erynd's Savage Roar (passive), on the rival - mirrors
 # _get_savage_roar_level_data()/_update_savage_roar_state(), same
 # hysteresis: switches on once HP drops below 50%, stays on through
 # the climb back up until HP reaches 80%. Re-evaluated once at the

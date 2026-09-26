@@ -264,7 +264,7 @@ const FLEE_HP_THRESHOLD: float = 0.15
 const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
-# Every ACTIVE skill across Veyrik, Lone Druid, Abaddon, Kunkka, Ancient
+# Every ACTIVE skill across Veyrik, Erynd, Abaddon, Kunkka, Ancient
 # Apparition, Winter Wyvern, Crystal Maiden, Tusk, Treant Protector,
 # Timbersaw, and Snapfire, the only eleven heroes with any simulated
 # skill logic today - anything else a hero knows just never gets cast
@@ -274,7 +274,7 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # a priority order (see EnemySkillAI.HERO_TIE_BREAK for each hero's own
 # tie-break fallback order, only consulted when two skills' scores are
 # too close to call outright).
-# Savage Roar (Lone Druid's passive), Curse of Avernus and Borrowed
+# Savage Roar (Erynd's passive), Curse of Avernus and Borrowed
 # Time (both Abaddon's), Tidebringer (Kunkka's), Arcane Aura (Crystal
 # Maiden's), and Reactive Armor (Timbersaw's) aren't in this list - none
 # of them are ever "cast" or scored: Savage Roar and Borrowed Time turn
@@ -2236,7 +2236,7 @@ func _get_npc_lunar_blessing_level_data(hero_id: String, hero_static: Dictionary
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Entangle - mirrors battle.gd's _apply_root/
+# Erynd's Entangle - mirrors battle.gd's _apply_root/
 # _tick_entangle_effects. Root/silence have no real effect in this
 # columnless, creeps-never-cast-skills sim (tracked anyway for parity
 # with the real fight) - only the damage-over-time actually matters.
@@ -2896,7 +2896,7 @@ func _tick_npc_mortimer_burn_effects(enemies: Array) -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Spirit Link - mirrors battle.gd's _activate_spirit_link/
+# Erynd's Spirit Link - mirrors battle.gd's _activate_spirit_link/
 # _tick_spirit_link/_end_spirit_link/_apply_spirit_link_lifesteal.
 # ------------------------------------------------------------------
 
@@ -2939,7 +2939,7 @@ func _npc_spirit_link_lifesteal(sl: Dictionary, mitigated_attack_damage: float) 
 
 
 # ------------------------------------------------------------------
-# Lone Druid's ultimate, True Form - mirrors battle.gd's
+# Erynd's ultimate, True Form - mirrors battle.gd's
 # _activate_true_form/_tick_true_form/_end_true_form. There's no
 # portrait or forced-melee-range concept in this sim (no columns to
 # force anything onto), so only the bonus hp/damage carry over.
@@ -2975,7 +2975,7 @@ func _end_npc_true_form(tf: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Lone Druid's Savage Roar (passive) - mirrors battle.gd's
+# Erynd's Savage Roar (passive) - mirrors battle.gd's
 # _get_savage_roar_level_data/_update_savage_roar_state, hysteresis
 # and all: switches on once HP drops below 50%, stays on through the
 # climb back up until HP reaches 80%, same as the player's own copy.

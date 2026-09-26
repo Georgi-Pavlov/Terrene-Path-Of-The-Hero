@@ -28,7 +28,7 @@ const KEN_BURNS_ZOOM := 1.08
 const FEATURED_HERO_NAMES: Array[String] = [
 	"Veyrik",
 	"Crystal Maiden",
-	"Lone Druid",
+	"Erynd",
 ]
 
 ## The battle mockup shows this hero (must also be a valid key into
