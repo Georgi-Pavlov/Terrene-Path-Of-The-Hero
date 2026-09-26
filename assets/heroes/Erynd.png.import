@@ -3,7 +3,7 @@
 importer="texture"
 type="CompressedTexture2D"
 uid="uid://cjejybjecg6gd"
-path="res://.godot/imported/Erynd.png-fe9779c2bf5700d726b724397dfa4d15.ctex"
+path="res://.godot/imported/Erynd.png-800e9588f48dbf47df824c4166d7a6ab.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://assets/heroes/Erynd.png"
-dest_files=["res://.godot/imported/Erynd.png-fe9779c2bf5700d726b724397dfa4d15.ctex"]
+dest_files=["res://.godot/imported/Erynd.png-800e9588f48dbf47df824c4166d7a6ab.ctex"]
 
 [params]
 

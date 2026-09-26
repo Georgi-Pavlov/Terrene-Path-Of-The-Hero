@@ -7,7 +7,7 @@ class_name EnemySkillRange
 # Pure helper for battle.gd's rival-hero AI (_enemy_hero_turn()/
 # _pick_enemy_ready_skill()): decides whether a rival hero is actually
 # within range to land a given skill on the player, so a boss can't
-# hit the player with Abyssal Spasm or Entangle from clear across the
+# hit the player with Abyssal Spasm or Thornbind from clear across the
 # board regardless of distance - it has to close in first, same as it
 # already must for a plain Attack (see battle.gd's
 # RANGE_ENEMY_ATTACK_RANGE/_enemy_hero_turn()).
@@ -24,7 +24,7 @@ class_name EnemySkillRange
 #     centered AoE radius (see battle.gd's _enemy_skill_in_range(),
 #     which reads whichever of the two fields a given skill actually
 #     has).
-#   - Entangle/Mist Coil/Chilling Touch/Splinter Blast/Winter's Curse/
+#   - Thornbind/Whisper of the Veil/Chilling Touch/Splinter Blast/Winter's Curse/
 #     Crystal Nova/Frostbite: none of the seven has a range field of its
 #     own (Splinter Blast has `splinter_range`, but that's its splash
 #     radius around whichever target gets hit, not its own targeting
@@ -64,7 +64,7 @@ class_name EnemySkillRange
 #     columns) rather than any range/radius field of its own, mirroring
 #     the player's own _start_walrus_punch_targeting()'s "shares his own
 #     column" requirement - so this uses the same attack_range fallback
-#     Entangle/Mist Coil do, just against a hero whose own type is
+#     Thornbind/Whisper of the Veil do, just against a hero whose own type is
 #     always "melee" (see GameManager's own Tusk entry), where that
 #     fallback is always 0 anyway.
 #   - Leech Seed (Treant Protector's): a targeted cast with its own
@@ -92,7 +92,7 @@ class_name EnemySkillRange
 #     described as "within normal attack range" (Snapfire's own is
 #     always "range" type, so that's a real reach, not melee), so both
 #     use the rival's own basic-attack range instead, same fallback
-#     Entangle/Mist Coil/Walrus Punch already use.
+#     Thornbind/Whisper of the Veil/Walrus Punch already use.
 #   - Scatterblast (Snapfire's): DIRECTIONAL, not a plain "distance <=
 #     radius" check the way every other AoE skill above is - it only
 #     reaches the player when they're AHEAD of the rival in whichever
@@ -154,8 +154,8 @@ class_name EnemySkillRange
 # radius moves with her and is scored (via EnemySkillAI's own _luna_
 # eclipse_modifier()), never gated here. Moon Glaives and Lunar Blessing
 # are both passive and never even reach this file.
-# Every other known skill (Leeching Hunger, Depthsveil, Spirit Link,
-# True Form, Summon Spirit Bear, Aphotic Shield, Arctic Burn, Cold
+# Every other known skill (Leeching Hunger, Depthsveil, Wildbond,
+# Beast of the Elderwild, Elderwild Companion, Veil of the Forgotten, Arctic Burn, Cold
 # Embrace, Crystal Maiden's own Freezing Field, Tusk's own Tag Team, and
 # Treant Protector's own Nature's Guise/Living Armor/Overgrowth) is a
 # self-buff/summon/AoE with no target to range-check, so this always
@@ -174,12 +174,12 @@ class_name EnemySkillRange
 # Firesnap Cookie is simpler still - a self-directed hop with no target
 # requirement at all to even attempt it (mirroring the player's own
 # _activate_firesnap_cookie(), which "never fails for lack of a target"
-# the way Barbed Lunge/Abyssal Spasm/Entangle can) - whether it actually LANDS
+# the way Barbed Lunge/Abyssal Spasm/Thornbind can) - whether it actually LANDS
 # somewhere useful is purely a scoring question (see EnemySkillAI's own
 # _snapfire_firesnap_cookie_modifier()), never a candidacy gate here.
 # ============================================================
 
-const RANGE_CHECKED_SKILL_IDS: Array[String] = ["abyssal_spasm", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "barbed_lunge", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch", "leech_seed", "whirling_death", "timber_chain", "chakram", "lil_shredder", "mortimer_kisses", "scatterblast", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam"]
+const RANGE_CHECKED_SKILL_IDS: Array[String] = ["abyssal_spasm", "thornbind", "whisper_of_the_veil", "torrent", "x_marks_the_spot", "ghostship", "barbed_lunge", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch", "leech_seed", "whirling_death", "timber_chain", "chakram", "lil_shredder", "mortimer_kisses", "scatterblast", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam"]
 
 
 ## True if `skill_id` needs a range check at all before being cast -
@@ -194,7 +194,7 @@ static func requires_range_check(skill_id: String) -> bool:
 ## field, or Barbed Lunge's own `distance` field, depending on the skill (all
 ## compared the same way as "distance <= radius"); `attack_range` is the
 ## rival's basic-attack range for its type (0 for "melee", battle.gd's
-## RANGE_ENEMY_ATTACK_RANGE for "range") - Entangle/Mist Coil piggyback
+## RANGE_ENEMY_ATTACK_RANGE for "range") - Thornbind/Whisper of the Veil piggyback
 ## on that since neither has a range field of its own. Any skill not in
 ## RANGE_CHECKED_SKILL_IDS always reports true here, matching
 ## requires_range_check().
@@ -202,7 +202,7 @@ static func is_in_range(skill_id: String, distance: int, radius: int, attack_ran
 	match skill_id:
 		"abyssal_spasm", "torrent", "x_marks_the_spot", "ghostship", "barbed_lunge", "cold_feet", "ice_vortex", "ice_shards", "snowball", "leech_seed", "whirling_death", "timber_chain", "chakram", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam":
 			return distance <= radius
-		"entangle", "mist_coil", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "walrus_punch", "lil_shredder", "mortimer_kisses":
+		"thornbind", "whisper_of_the_veil", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "walrus_punch", "lil_shredder", "mortimer_kisses":
 			return distance <= attack_range
 		_:
 			# scatterblast never reaches this generic chain - battle.gd's

@@ -264,7 +264,7 @@ const FLEE_HP_THRESHOLD: float = 0.15
 const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
-# Every ACTIVE skill across Veyrik, Erynd, Abaddon, Kunkka, Ancient
+# Every ACTIVE skill across Veyrik, Erynd, Morvael, Kunkka, Ancient
 # Apparition, Winter Wyvern, Crystal Maiden, Tusk, Treant Protector,
 # Timbersaw, and Snapfire, the only eleven heroes with any simulated
 # skill logic today - anything else a hero knows just never gets cast
@@ -274,15 +274,15 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # a priority order (see EnemySkillAI.HERO_TIE_BREAK for each hero's own
 # tie-break fallback order, only consulted when two skills' scores are
 # too close to call outright).
-# Savage Roar (Erynd's passive), Curse of Avernus and Borrowed
-# Time (both Abaddon's), Tidebringer (Kunkka's), Arcane Aura (Crystal
+# Blood of the Wild (Erynd's passive), Mark of the Mist and The Mist
+# Remembers (both Morvael's), Tidebringer (Kunkka's), Arcane Aura (Crystal
 # Maiden's), and Reactive Armor (Timbersaw's) aren't in this list - none
-# of them are ever "cast" or scored: Savage Roar and Borrowed Time turn
+# of them are ever "cast" or scored: Blood of the Wild and The Mist Remembers turn
 # themselves on/off automatically off the hero's own HP%, same as the
-# player's own copies - see _update_npc_savage_roar_state()/_maybe_
-# auto_activate_npc_borrowed_time() - Curse of Avernus/Tidebringer only
-# ever build off the hero's own plain Attacks - see _apply_npc_curse_of_
-# avernus_stack()/_maybe_consume_npc_tidebringer_stack() - Arcane Aura
+# player's own copies - see _update_npc_blood_of_the_wild_state()/_maybe_
+# auto_activate_npc_the_mist_remembers() - Mark of the Mist/Tidebringer only
+# ever build off the hero's own plain Attacks - see _apply_npc_mark_of_the_
+# mist_stack()/_maybe_consume_npc_tidebringer_stack() - Arcane Aura
 # just regenerates mana passively; there's nowhere in this sim's own
 # mana bookkeeping for it to hook into yet (see _get_npc_combat_stats()/
 # _npc_estimate_damage() for where a future hook would go), so for now
@@ -358,8 +358,8 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # doing nothing.
 const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 	"abyssal_spasm", "barbed_lunge", "leeching_hunger", "depthsveil",
-	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
-	"mist_coil", "aphotic_shield", "torrent", "ghostship",
+	"thornbind", "elderwild_companion", "wildbond", "beast_of_the_elderwild",
+	"whisper_of_the_veil", "veil_of_the_forgotten", "torrent", "ghostship",
 	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
 	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
 	"crystal_nova", "frostbite", "freezing_field",
@@ -380,7 +380,7 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 # Walrus Punch's own sim copy already follows for its knockback - so it
 # falls back to a flat charge_damage_pct hit on whichever enemy the hero
 # would attack anyway, same "no columns, always hit the lowest-HP enemy"
-# simplification Ice Shards'/Mist Coil's own sim copies use. Slithereen
+# simplification Ice Shards'/Whisper of the Veil's own sim copies use. Slithereen
 # Crush is a self-centered AoE with nothing to center it on here, so -
 # like Ice Blast/Overgrowth/Song of the Siren above - it stuns and damages
 # every living enemy at once. Corrosive Haze marks whichever enemy the
@@ -432,7 +432,7 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 # has nothing to spawn actual decoy UNITS onto here (no positions/columns
 # to place them in - see this file's own header comment), so it's
 # simulated as a pure extra periodic damage source instead, same "no
-# columns, hit the lowest-HP enemy" simplification the Spirit Bear's own
+# columns, hit the lowest-HP enemy" simplification the Elderwild Companion's own
 # sim copy already uses (see state["bear"]/_run_stage_fight()'s own bear
 # block) - see this file's own "mirror_image" state in _new_npc_combat_
 # state()/_tick_npc_mirror_image(). Ensnare roots (state-lessly - see
@@ -451,10 +451,10 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 # "rip_tide_*" fields.
 
 # How many full turns a target can go without being hit by the hero's
-# Attack before its un-activated Curse of Avernus stacks are lost (see
-# _tick_npc_curse_of_avernus_effects()) - mirrors battle.gd's own
-# CURSE_OF_AVERNUS_STACK_DECAY_TURNS.
-const CURSE_OF_AVERNUS_STACK_DECAY_TURNS := 3
+# Attack before its un-activated Mark of the Mist stacks are lost (see
+# _tick_npc_mark_of_the_mist_effects()) - mirrors battle.gd's own
+# MARK_OF_THE_MIST_STACK_DECAY_TURNS.
+const MARK_OF_THE_MIST_STACK_DECAY_TURNS := 3
 
 # How many Eclipse beams fire per simulated turn while it's active -
 # mirrors battle.gd's own ECLIPSE_BEAMS_PER_TURN constant exactly (only
@@ -930,14 +930,14 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		_tick_npc_depthsveil(state["depthsveil"])
 		_tick_npc_moonlight_shadow(state["moonlight_shadow"])
 		_tick_npc_eclipse(state["eclipse"])
-		_tick_npc_spirit_link(state["spirit_link"])
-		_tick_npc_true_form(state["true_form"])
-		_tick_npc_aphotic_shield(state["aphotic_shield"])
-		_tick_npc_borrowed_time(state["borrowed_time"], cooldowns)
+		_tick_npc_wildbond(state["wildbond"])
+		_tick_npc_beast_of_the_elderwild(state["beast_of_the_elderwild"])
+		_tick_npc_veil_of_the_forgotten(state["veil_of_the_forgotten"])
+		_tick_npc_the_mist_remembers(state["the_mist_remembers"], cooldowns)
 		_tick_npc_tag_team(state["tag_team"])
 		_tick_npc_natures_guise(state["nature's_guise"])
-		_tick_npc_entangle_effects(enemies)
-		_tick_npc_curse_of_avernus_effects(enemies, turn_index)
+		_tick_npc_thornbind_effects(enemies)
+		_tick_npc_mark_of_the_mist_effects(enemies, turn_index)
 		_tick_npc_cold_feet_effects(enemies)
 		_tick_npc_ice_vortex_effects(enemies)
 		_tick_npc_ice_blast_effects(enemies)
@@ -968,7 +968,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# effective_armor is computed instead (see this function's own
 		# retaliation-loop call site below).
 		current_hp = _tick_npc_reactive_armor(state["reactive_armor"], hero_id, hero_static, current_hp, effective_max_hp)
-		_update_npc_savage_roar_state(hero_id, hero_static, state["savage_roar"], current_hp, effective_max_hp)
+		_update_npc_blood_of_the_wild_state(hero_id, hero_static, state["blood_of_the_wild"], current_hp, effective_max_hp)
 
 		var living: Array = _living_enemies(enemies)
 		if living.is_empty():
@@ -1008,12 +1008,12 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		else:
 			var ai_context: Dictionary = _build_npc_ai_context(hero_id, hero_static, current_hp, effective_max_hp, current_mana, max_mana, damage_range, state, living)
 			var ready_skill_id: String = _pick_ready_skill(hero_id, hero_static, cooldowns, current_mana, state, ai_context)
-			if ready_skill_id == EnemySkillAI.MIST_COIL_SELF_ID:
+			if ready_skill_id == EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID:
 				# Self-heal: changes this loop's own current_hp, which
 				# _cast_skill() has no access to - so handled right here.
-				current_hp = _cast_npc_mist_coil_self(hero_id, hero_static, cooldowns, current_hp, effective_max_hp)
-				current_mana -= _npc_skill_mana_cost(hero_id, hero_static, "mist_coil")
-				acted_with = "mist_coil"
+				current_hp = _cast_npc_whisper_of_the_veil_self(hero_id, hero_static, cooldowns, current_hp, effective_max_hp)
+				current_mana -= _npc_skill_mana_cost(hero_id, hero_static, "whisper_of_the_veil")
+				acted_with = "whisper_of_the_veil"
 			elif ready_skill_id != "":
 				_cast_skill(hero_id, hero_static, ready_skill_id, cooldowns, damage_range, living, state)
 				current_mana -= _npc_skill_mana_cost(hero_id, hero_static, ready_skill_id)
@@ -1053,14 +1053,14 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 					dmg += dmg * float(bash_level_data.get("bonus_damage_pct", 0.0))
 				var mitigated: float = _apply_damage_to_enemy(target, dmg)
 				_apply_npc_leeching_hunger_steal(target, state["leeching_hunger"], hero_static)
-				_apply_npc_curse_of_avernus_stack(hero_id, hero_static, target, turn_index)
+				_apply_npc_mark_of_the_mist_stack(hero_id, hero_static, target, turn_index)
 				if not tidebringer_level_data.is_empty():
 					_apply_npc_tidebringer_cleave(target, dmg, tidebringer_level_data, living)
 				var moon_glaives_level_data: Dictionary = _get_npc_moon_glaives_level_data(hero_id, hero_static)
 				if not moon_glaives_level_data.is_empty():
 					_apply_npc_moon_glaives_bounces(target, dmg, moon_glaives_level_data, living)
 				_apply_npc_arctic_burn_attack(state["arctic_burn"])
-				current_hp = minf(effective_max_hp, current_hp + _npc_spirit_link_lifesteal(state["spirit_link"], mitigated))
+				current_hp = minf(effective_max_hp, current_hp + _npc_wildbond_lifesteal(state["wildbond"], mitigated))
 				acted_with = "attack"
 
 				if moonlight_active:
@@ -1104,7 +1104,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 			result = "win"
 			break
 
-		# --- The Spirit Bear (if summoned) acts automatically, same as
+		# --- The Elderwild Companion (if summoned) acts automatically, same as
 		# for the player - see battle.gd's _bear_turn(). Simplified vs.
 		# the real fight: with no columns/positions here the bear
 		# always swings at the lowest-HP living enemy, and - since
@@ -1128,7 +1128,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# --- Naga Siren's Mirror Image (if active and past its own
 		# casting turn - see _tick_npc_mirror_image()'s own "duration_
 		# pending_start" skip) also acts automatically, same shape as the
-		# Spirit Bear's own block just above: with no columns/positions
+		# Elderwild Companion's own block just above: with no columns/positions
 		# here, the whole illusion squad always swings together at the
 		# lowest-HP living enemy, for one freshly-rolled hero-damage hit
 		# each (_npc_roll_damage()) scaled by the level's own damage_pct
@@ -1227,7 +1227,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 					continue
 
 				var reduced: float = _apply_armor_reduction(enemy_damage, effective_armor)
-				reduced *= (1.0 - float(state["savage_roar"].get("damage_reduction_pct", 0.0)))
+				reduced *= (1.0 - float(state["blood_of_the_wild"].get("damage_reduction_pct", 0.0)))
 				current_hp = _apply_reduced_damage_to_npc(hero_id, hero_static, state, cooldowns, current_hp, effective_max_hp, reduced, living)
 				# Reactive Armor stacks off this hit landing - added only
 				# after `effective_armor` above already read the stack
@@ -1255,8 +1255,8 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 
 ## Fresh per-attempt state for every buff/debuff-carrying skill -
 ## mirrors the shape (and defaults) of battle.gd's own
-## _leeching_hunger_*/_depthsveil_*/_spirit_link_*/_true_form_*/
-## _aphotic_shield_*/_borrowed_time_*/_bear instance variables, just
+## _leeching_hunger_*/_depthsveil_*/_wildbond_*/_beast_of_the_elderwild_*/
+## _veil_of_the_forgotten_*/_the_mist_remembers_*/_bear instance variables, just
 ## bundled into one Dictionary here since this state only needs to live
 ## for the duration of one _run_stage_fight() call rather than the
 ## whole scene's lifetime.
@@ -1268,12 +1268,12 @@ func _new_npc_combat_state() -> Dictionary:
 			"bonus": {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0},
 		},
 		"depthsveil": {"active": false, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
-		"spirit_link": {"active": false, "lifesteal_pct": 0.0, "bonus_armor": 0.0, "turns_remaining": 0, "duration_pending_start": false},
-		"true_form": {"active": false, "bonus_hp": 0.0, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
-		"aphotic_shield": {"active": false, "hp": 0.0, "aoe_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
-		"borrowed_time": {"active": false, "heal_conversion_pct": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"wildbond": {"active": false, "lifesteal_pct": 0.0, "bonus_armor": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"beast_of_the_elderwild": {"active": false, "bonus_hp": 0.0, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"veil_of_the_forgotten": {"active": false, "hp": 0.0, "aoe_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"the_mist_remembers": {"active": false, "heal_conversion_pct": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"bear": {},
-		"savage_roar": {"active": false, "damage_reduction_pct": 0.0},
+		"blood_of_the_wild": {"active": false, "damage_reduction_pct": 0.0},
 		"tidebringer_attack_count": 0,
 		"arctic_burn": {"active": false, "bonus_damage": 0.0, "bonus_range": 0, "attacks_remaining": 0, "turns_remaining": 0, "duration_pending_start": false},
 		"cold_embrace": {"active": false, "heal_per_turn": 0.0, "turns_remaining": 0, "duration_pending_start": false},
@@ -1314,24 +1314,24 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			_activate_npc_leeching_hunger(state["leeching_hunger"], level_data)
 		"depthsveil":
 			_activate_npc_depthsveil(state["depthsveil"], level_data)
-		"entangle":
+		"thornbind":
 			# No separate "pick a target" step here (there's no player
 			# to click one) - roots/silences/DoTs whichever enemy the
 			# hero would otherwise have attacked this turn.
 			_apply_npc_root(_lowest_hp_enemy(living), level_data)
-		"summon_spirit_bear":
+		"elderwild_companion":
 			state["bear"] = {
 				"damage_min": float(level_data.get("damage_min", 0)),
 				"damage_max": float(level_data.get("damage_max", 0)),
 			}
-		"spirit_link":
-			_activate_npc_spirit_link(state["spirit_link"], level_data)
-		"true_form":
-			_activate_npc_true_form(state["true_form"], level_data)
-		"mist_coil":
+		"wildbond":
+			_activate_npc_wildbond(state["wildbond"], level_data)
+		"beast_of_the_elderwild":
+			_activate_npc_beast_of_the_elderwild(state["beast_of_the_elderwild"], level_data)
+		"whisper_of_the_veil":
 			_apply_damage_to_enemy(_lowest_hp_enemy(living), float(level_data.get("damage", 0)))
-		"aphotic_shield":
-			_activate_npc_aphotic_shield(state["aphotic_shield"], level_data)
+		"veil_of_the_forgotten":
+			_activate_npc_veil_of_the_forgotten(state["veil_of_the_forgotten"], level_data)
 		"torrent":
 			var target: Dictionary = _lowest_hp_enemy(living)
 			var damage: float = float(level_data.get("damage", 0))
@@ -1341,9 +1341,9 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			# Level 4's small splash radius has no columns to be
 			# "around the target" in this positionless sim, so it
 			# falls back to the same "no columns, hit everyone else"
-			# simplification Abyssal Spasm/Aphotic Shield's own explosion
+			# simplification Abyssal Spasm/Veil of the Forgotten's own explosion
 			# already use here (see this match's "abyssal_spasm" case
-			# above and _end_npc_aphotic_shield()).
+			# above and _end_npc_veil_of_the_forgotten()).
 			if int(level_data.get("radius", 0)) > 0:
 				for enemy in living:
 					if is_same(enemy, target):
@@ -1462,7 +1462,7 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			# The wall itself has nothing to act on here - nothing in this
 			# sim moves at all (see KNOWN_ACTIVE_SKILL_IDS's own comment
 			# above) - so this is just a flat hit to the primary target,
-			# same as Mist Coil/Chilling Touch's own sim copies.
+			# same as Whisper of the Veil/Chilling Touch's own sim copies.
 			_apply_damage_to_enemy(_lowest_hp_enemy(living), float(level_data.get("damage", 0)))
 		"snowball":
 			var snowball_target: Dictionary = _lowest_hp_enemy(living)
@@ -1667,10 +1667,10 @@ func _npc_skill_mana_cost(hero_id: String, hero_static: Dictionary, skill_id: St
 
 ## False for a buff/summon skill that's already active and wouldn't do
 ## anything new right now (recasting Leeching Hunger/Depthsveil/Spirit
-## Link/True Form just restarts their duration from the same values,
-## and a Spirit Bear that's already out doesn't need replacing) - so
+## Link/Beast of the Elderwild just restarts their duration from the same values,
+## and a Elderwild Companion that's already out doesn't need replacing) - so
 ## the NPC doesn't burn mana refreshing something with no benefit
-## instead of attacking. Abyssal Spasm/Barbed Lunge/Entangle always report true;
+## instead of attacking. Abyssal Spasm/Barbed Lunge/Thornbind always report true;
 ## they only ever get checked once a living target is already
 ## confirmed to exist by the caller.
 func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
@@ -1683,14 +1683,14 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 			return not state["moonlight_shadow"]["active"]
 		"eclipse":
 			return not state["eclipse"]["active"]
-		"spirit_link":
-			return not state["spirit_link"]["active"]
-		"true_form":
-			return not state["true_form"]["active"]
-		"summon_spirit_bear":
+		"wildbond":
+			return not state["wildbond"]["active"]
+		"beast_of_the_elderwild":
+			return not state["beast_of_the_elderwild"]["active"]
+		"elderwild_companion":
 			return state["bear"].is_empty()
-		"aphotic_shield":
-			return not state["aphotic_shield"]["active"]
+		"veil_of_the_forgotten":
+			return not state["veil_of_the_forgotten"]["active"]
 		"arctic_burn":
 			return not state["arctic_burn"]["active"]
 		"cold_embrace":
@@ -1729,13 +1729,13 @@ func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 ## preferred in - see battle.gd's own _pick_enemy_ready_skill() for the
 ## real-fight mirror of this same scoring, shared through EnemySkillAI
 ## rather than duplicated.
-## An NPC's Mist Coil on himself, in the simulation - the mirror of
-## battle.gd's _cast_enemy_mist_coil_on_self(): starts Mist Coil's
+## An NPC's Whisper of the Veil on himself, in the simulation - the mirror of
+## battle.gd's _cast_enemy_whisper_of_the_veil_on_self(): starts Whisper of the Veil's
 ## cooldown, pays hp_cost (never below 1 HP), heals `heal` capped at
 ## `max_hp`, and returns the new HP for the turn loop to keep.
-func _cast_npc_mist_coil_self(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_hp: float, max_hp: float) -> float:
-	var level_data: Dictionary = _get_npc_skill_level_data(hero_id, hero_static, "mist_coil")
-	cooldowns["mist_coil"] = int(level_data.get("cooldown", 0))
+func _cast_npc_whisper_of_the_veil_self(hero_id: String, hero_static: Dictionary, cooldowns: Dictionary, current_hp: float, max_hp: float) -> float:
+	var level_data: Dictionary = _get_npc_skill_level_data(hero_id, hero_static, "whisper_of_the_veil")
+	cooldowns["whisper_of_the_veil"] = int(level_data.get("cooldown", 0))
 	var after_cost: float = maxf(1.0, current_hp - float(level_data.get("hp_cost", 0)))
 	return minf(max_hp, after_cost + float(level_data.get("heal", 0)))
 
@@ -1755,15 +1755,15 @@ func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dict
 			continue
 		candidates.append({"id": skill_id, "score": EnemySkillAI.evaluate_skill(skill_id, level_data, ai_context)})
 
-	# Mist Coil on himself (the self-heal) competes as its own candidate,
+	# Whisper of the Veil on himself (the self-heal) competes as its own candidate,
 	# same as in a real hero fight (battle.gd's _pick_enemy_ready_skill())
 	# - only while he'd survive paying its hp_cost. The turn loop applies
-	# it directly to its own current_hp (see _cast_npc_mist_coil_self()).
-	if PlayerManager.get_npc_skill_level(hero_id, "mist_coil") > 0 and cooldowns.get("mist_coil", 0) <= 0:
-		var mist_coil_level_data: Dictionary = _get_npc_skill_level_data(hero_id, hero_static, "mist_coil")
-		if current_mana >= float(mist_coil_level_data.get("mana_cost", 0)) \
-		and float(ai_context.get("hero_hp", 0.0)) > float(mist_coil_level_data.get("hp_cost", 0)):
-			candidates.append({"id": EnemySkillAI.MIST_COIL_SELF_ID, "score": EnemySkillAI.evaluate_skill(EnemySkillAI.MIST_COIL_SELF_ID, mist_coil_level_data, ai_context)})
+	# it directly to its own current_hp (see _cast_npc_whisper_of_the_veil_self()).
+	if PlayerManager.get_npc_skill_level(hero_id, "whisper_of_the_veil") > 0 and cooldowns.get("whisper_of_the_veil", 0) <= 0:
+		var whisper_of_the_veil_level_data: Dictionary = _get_npc_skill_level_data(hero_id, hero_static, "whisper_of_the_veil")
+		if current_mana >= float(whisper_of_the_veil_level_data.get("mana_cost", 0)) \
+		and float(ai_context.get("hero_hp", 0.0)) > float(whisper_of_the_veil_level_data.get("hp_cost", 0)):
+			candidates.append({"id": EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID, "score": EnemySkillAI.evaluate_skill(EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID, whisper_of_the_veil_level_data, ai_context)})
 
 	var archetype: String = str(ai_context.get("archetype", ""))
 	if EnemySkillAI.basic_attack_participates(archetype):
@@ -1802,7 +1802,7 @@ func _pick_ready_skill(hero_id: String, hero_static: Dictionary, cooldowns: Dict
 ##     `state` instead of an instance var.
 ##   - has_harmful_debuff: always false - nothing in this sim ever
 ##     debuffs the simulated hero itself (only ITS OWN skills debuff the
-##     enemies it's fighting - see _tick_npc_entangle_effects() and
+##     enemies it's fighting - see _tick_npc_thornbind_effects() and
 ##     friends), so Cold Embrace never has a harmful effect on the hero
 ##     to dispel here, unlike a real hero fight where the player's own
 ##     skills can land on the rival boss.
@@ -1958,7 +1958,7 @@ func _npc_estimate_damage(damage_range: String, state: Dictionary) -> float:
 	var parts: PackedStringArray = damage_range.split("-")
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
-	var bonus_damage: float = state["leeching_hunger"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["tag_team"]["bonus_damage"]
+	var bonus_damage: float = state["leeching_hunger"]["bonus"].get("damage", 0.0) + state["beast_of_the_elderwild"]["bonus_damage"] + state["tag_team"]["bonus_damage"]
 	var estimate: float = (min_dmg + max_dmg) / 2.0 + bonus_damage
 	# Luna's Lunar Blessing - see _npc_roll_damage()'s own comment for why
 	# this reads state's own cached percentage. Applied last, same order
@@ -2174,7 +2174,7 @@ func _end_npc_eclipse(ec: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Luna's Moon Glaives - a passive, so like Curse of Avernus/Tidebringer
+# Luna's Moon Glaives - a passive, so like Mark of the Mist/Tidebringer
 # above it's never "cast"; it just bounces off the hero's own plain
 # Attacks. Mirrors battle.gd's own _get_moon_glaives_level_data()/
 # _apply_moon_glaives_bounces(), simplified for this sim's own "no
@@ -2236,8 +2236,8 @@ func _get_npc_lunar_blessing_level_data(hero_id: String, hero_static: Dictionary
 
 
 # ------------------------------------------------------------------
-# Erynd's Entangle - mirrors battle.gd's _apply_root/
-# _tick_entangle_effects. Root/silence have no real effect in this
+# Erynd's Thornbind - mirrors battle.gd's _apply_root/
+# _tick_thornbind_effects. Root/silence have no real effect in this
 # columnless, creeps-never-cast-skills sim (tracked anyway for parity
 # with the real fight) - only the damage-over-time actually matters.
 # ------------------------------------------------------------------
@@ -2245,30 +2245,30 @@ func _get_npc_lunar_blessing_level_data(hero_id: String, hero_static: Dictionary
 func _apply_npc_root(target: Dictionary, level_data: Dictionary) -> void:
 	target["root_turns_left"] = int(level_data.get("root_turns", 0))
 	target["silence_turns_left"] = int(level_data.get("silence_turns", 0))
-	target["entangle_dot_damage"] = float(level_data.get("dot_damage", 0))
-	target["entangle_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	target["thornbind_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["thornbind_dot_turns_left"] = int(level_data.get("dot_duration", 0))
 
 
-func _tick_npc_entangle_effects(enemies: Array) -> void:
+func _tick_npc_thornbind_effects(enemies: Array) -> void:
 	for enemy in enemies:
 		if enemy.get("root_turns_left", 0) > 0:
 			enemy["root_turns_left"] -= 1
 		if enemy.get("silence_turns_left", 0) > 0:
 			enemy["silence_turns_left"] -= 1
 
-		if enemy.get("entangle_dot_turns_left", 0) > 0:
-			enemy["entangle_dot_turns_left"] -= 1
-			var dot_damage: float = float(enemy.get("entangle_dot_damage", 0))
+		if enemy.get("thornbind_dot_turns_left", 0) > 0:
+			enemy["thornbind_dot_turns_left"] -= 1
+			var dot_damage: float = float(enemy.get("thornbind_dot_damage", 0))
 			if dot_damage > 0.0 and enemy.get("current_hp", 0) > 0:
 				_apply_damage_to_enemy(enemy, dot_damage)
 
 
 # ------------------------------------------------------------------
 # Ancient Apparition's Cold Feet/Ice Vortex - both plain damage-over-
-# time, so both mirror _tick_npc_entangle_effects()'s own DoT half
+# time, so both mirror _tick_npc_thornbind_effects()'s own DoT half
 # exactly, just against their own dedicated per-enemy fields (see
 # battle.gd's _resolve_cold_feet_cast()/_resolve_ice_vortex_cast() for
-# why they're kept separate from Entangle's own DoT fields).
+# why they're kept separate from Thornbind's own DoT fields).
 # ------------------------------------------------------------------
 
 func _tick_npc_cold_feet_effects(enemies: Array) -> void:
@@ -2426,14 +2426,14 @@ func _dispel_all_npc_effects(state: Dictionary) -> void:
 		_end_npc_leeching_hunger(state["leeching_hunger"])
 	if state["depthsveil"]["active"]:
 		_end_npc_depthsveil(state["depthsveil"])
-	if state["spirit_link"]["active"]:
-		_end_npc_spirit_link(state["spirit_link"])
-	if state["true_form"]["active"]:
-		_end_npc_true_form(state["true_form"])
-	if state["aphotic_shield"]["active"]:
-		_end_npc_aphotic_shield(state["aphotic_shield"], false, [])
-	if state["borrowed_time"]["active"]:
-		_end_npc_borrowed_time(state["borrowed_time"])
+	if state["wildbond"]["active"]:
+		_end_npc_wildbond(state["wildbond"])
+	if state["beast_of_the_elderwild"]["active"]:
+		_end_npc_beast_of_the_elderwild(state["beast_of_the_elderwild"])
+	if state["veil_of_the_forgotten"]["active"]:
+		_end_npc_veil_of_the_forgotten(state["veil_of_the_forgotten"], false, [])
+	if state["the_mist_remembers"]["active"]:
+		_end_npc_the_mist_remembers(state["the_mist_remembers"])
 
 
 # ------------------------------------------------------------------
@@ -2503,7 +2503,7 @@ func _end_npc_freezing_field(ff: Dictionary) -> void:
 # Tusk's Tag Team - mirrors battle.gd's own _activate_tag_team()/_tick_
 # tag_team()/_end_tag_team(): a flat bonus_damage added to
 # _npc_roll_damage()/_npc_estimate_damage() for the duration, same spot
-# Arctic Burn's/True Form's own bonus_damage already occupy there.
+# Arctic Burn's/Beast of the Elderwild's own bonus_damage already occupy there.
 # ------------------------------------------------------------------
 
 func _activate_npc_tag_team(tt: Dictionary, level_data: Dictionary) -> void:
@@ -2568,7 +2568,7 @@ func _end_npc_natures_guise(ng: Dictionary) -> void:
 # ------------------------------------------------------------------
 # Treant Protector's Living Armor - mirrors battle.gd's own _activate_
 # living_armor()/_tick_living_armor()/_end_living_armor(): bonus_armor
-# folds into _npc_effective_armor() (the same slot Spirit Link's own
+# folds into _npc_effective_armor() (the same slot Wildbond's own
 # bonus armor already shares there), bonus_hp_regen heals the hero every
 # tick. Unlike the player's own copy, there's no baseline passive regen
 # in this sim to stack on top of (see KNOWN_ACTIVE_SKILL_IDS's own
@@ -2637,8 +2637,8 @@ func _tick_npc_leech_seed_effects(enemies: Array, current_hp: float, effective_m
 # effects()'s own DoT tick (minus its execute check), just against
 # Overgrowth's own dedicated per-enemy fields. The root itself needs no
 # separate tick here - it shares root_turns_left, the same generic
-# per-enemy field Entangle's own root already decrements in _tick_npc_
-# entangle_effects().
+# per-enemy field Thornbind's own root already decrements in _tick_npc_
+# thornbind_effects().
 # ------------------------------------------------------------------
 
 func _tick_npc_overgrowth_effects(enemies: Array) -> void:
@@ -2746,7 +2746,7 @@ func _get_npc_rip_tide_level_data(hero_id: String, hero_static: Dictionary) -> D
 # ------------------------------------------------------------------
 # Naga Siren's Mirror Image - simulated as a pure extra periodic damage
 # source rather than real decoy units (see KNOWN_ACTIVE_SKILL_IDS's own
-# comment above for why), mirroring the Spirit Bear's own "no columns,
+# comment above for why), mirroring the Elderwild Companion's own "no columns,
 # always hit the lowest-HP enemy" sim copy. `damage_pct`/`illusion_count`
 # are stored rather than a pre-multiplied damage figure so the actual hit
 # can still be freshly rolled (_npc_roll_damage()) each time it fires,
@@ -2896,11 +2896,11 @@ func _tick_npc_mortimer_burn_effects(enemies: Array) -> void:
 
 
 # ------------------------------------------------------------------
-# Erynd's Spirit Link - mirrors battle.gd's _activate_spirit_link/
-# _tick_spirit_link/_end_spirit_link/_apply_spirit_link_lifesteal.
+# Erynd's Wildbond - mirrors battle.gd's _activate_wildbond/
+# _tick_wildbond/_end_wildbond/_apply_wildbond_lifesteal.
 # ------------------------------------------------------------------
 
-func _activate_npc_spirit_link(sl: Dictionary, level_data: Dictionary) -> void:
+func _activate_npc_wildbond(sl: Dictionary, level_data: Dictionary) -> void:
 	sl["active"] = true
 	sl["lifesteal_pct"] = float(level_data.get("lifesteal_pct", 0.0))
 	sl["bonus_armor"] = float(level_data.get("bonus_armor", 0))
@@ -2908,7 +2908,7 @@ func _activate_npc_spirit_link(sl: Dictionary, level_data: Dictionary) -> void:
 	sl["duration_pending_start"] = true
 
 
-func _tick_npc_spirit_link(sl: Dictionary) -> void:
+func _tick_npc_wildbond(sl: Dictionary) -> void:
 	if not sl["active"]:
 		return
 	if sl["duration_pending_start"]:
@@ -2916,10 +2916,10 @@ func _tick_npc_spirit_link(sl: Dictionary) -> void:
 		return
 	sl["turns_remaining"] -= 1
 	if sl["turns_remaining"] <= 0:
-		_end_npc_spirit_link(sl)
+		_end_npc_wildbond(sl)
 
 
-func _end_npc_spirit_link(sl: Dictionary) -> void:
+func _end_npc_wildbond(sl: Dictionary) -> void:
 	sl["active"] = false
 	sl["lifesteal_pct"] = 0.0
 	sl["bonus_armor"] = 0.0
@@ -2929,25 +2929,25 @@ func _end_npc_spirit_link(sl: Dictionary) -> void:
 
 ## Only ever called for the plain basic-attack branch of the hero's
 ## turn - like the real fight, skill damage (Abyssal Spasm, Barbed Lunge,
-## Entangle's DoT, the bear's own hits) never triggers lifesteal.
+## Thornbind's DoT, the bear's own hits) never triggers lifesteal.
 ## Returns the HP to heal (already scaled by the damage actually
 ## dealt), 0.0 while inactive.
-func _npc_spirit_link_lifesteal(sl: Dictionary, mitigated_attack_damage: float) -> float:
+func _npc_wildbond_lifesteal(sl: Dictionary, mitigated_attack_damage: float) -> float:
 	if not sl["active"] or mitigated_attack_damage <= 0.0:
 		return 0.0
 	return mitigated_attack_damage * sl["lifesteal_pct"]
 
 
 # ------------------------------------------------------------------
-# Erynd's ultimate, True Form - mirrors battle.gd's
-# _activate_true_form/_tick_true_form/_end_true_form. There's no
+# Erynd's ultimate, Beast of the Elderwild - mirrors battle.gd's
+# _activate_beast_of_the_elderwild/_tick_beast_of_the_elderwild/_end_beast_of_the_elderwild. There's no
 # portrait or forced-melee-range concept in this sim (no columns to
 # force anything onto), so only the bonus hp/damage carry over.
 # ------------------------------------------------------------------
 
-func _activate_npc_true_form(tf: Dictionary, level_data: Dictionary) -> void:
+func _activate_npc_beast_of_the_elderwild(tf: Dictionary, level_data: Dictionary) -> void:
 	if tf["active"]:
-		_end_npc_true_form(tf)
+		_end_npc_beast_of_the_elderwild(tf)
 	tf["active"] = true
 	tf["bonus_hp"] = float(level_data.get("bonus_hp", 0))
 	tf["bonus_damage"] = float(level_data.get("bonus_damage", 0))
@@ -2955,7 +2955,7 @@ func _activate_npc_true_form(tf: Dictionary, level_data: Dictionary) -> void:
 	tf["duration_pending_start"] = true
 
 
-func _tick_npc_true_form(tf: Dictionary) -> void:
+func _tick_npc_beast_of_the_elderwild(tf: Dictionary) -> void:
 	if not tf["active"]:
 		return
 	if tf["duration_pending_start"]:
@@ -2963,10 +2963,10 @@ func _tick_npc_true_form(tf: Dictionary) -> void:
 		return
 	tf["turns_remaining"] -= 1
 	if tf["turns_remaining"] <= 0:
-		_end_npc_true_form(tf)
+		_end_npc_beast_of_the_elderwild(tf)
 
 
-func _end_npc_true_form(tf: Dictionary) -> void:
+func _end_npc_beast_of_the_elderwild(tf: Dictionary) -> void:
 	tf["active"] = false
 	tf["bonus_hp"] = 0.0
 	tf["bonus_damage"] = 0.0
@@ -2975,24 +2975,24 @@ func _end_npc_true_form(tf: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Erynd's Savage Roar (passive) - mirrors battle.gd's
-# _get_savage_roar_level_data/_update_savage_roar_state, hysteresis
+# Erynd's Blood of the Wild (passive) - mirrors battle.gd's
+# _get_blood_of_the_wild_level_data/_update_blood_of_the_wild_state, hysteresis
 # and all: switches on once HP drops below 50%, stays on through the
 # climb back up until HP reaches 80%, same as the player's own copy.
 # ------------------------------------------------------------------
 
-func _get_npc_savage_roar_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
-	var level: int = PlayerManager.get_npc_skill_level(hero_id, "savage_roar")
+func _get_npc_blood_of_the_wild_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "blood_of_the_wild")
 	if level <= 0:
 		return {}
-	var skill: Dictionary = _find_skill(hero_static, "savage_roar")
+	var skill: Dictionary = _find_skill(hero_static, "blood_of_the_wild")
 	if skill.is_empty():
 		return {}
 	return GameManager.get_skill_level_data(skill, level)
 
 
-func _update_npc_savage_roar_state(hero_id: String, hero_static: Dictionary, sr: Dictionary, current_hp: float, effective_max_hp: float) -> void:
-	var level_data: Dictionary = _get_npc_savage_roar_level_data(hero_id, hero_static)
+func _update_npc_blood_of_the_wild_state(hero_id: String, hero_static: Dictionary, sr: Dictionary, current_hp: float, effective_max_hp: float) -> void:
+	var level_data: Dictionary = _get_npc_blood_of_the_wild_level_data(hero_id, hero_static)
 
 	if level_data.is_empty():
 		sr["active"] = false
@@ -3008,17 +3008,17 @@ func _update_npc_savage_roar_state(hero_id: String, hero_static: Dictionary, sr:
 
 
 # ------------------------------------------------------------------
-# Abaddon's Aphotic Shield - mirrors battle.gd's _activate_aphotic_
-# shield/_tick_aphotic_shield/_end_aphotic_shield. Simplification
+# Morvael's Veil of the Forgotten - mirrors battle.gd's _activate_veil_of_the_
+# forgotten/_tick_veil_of_the_forgotten/_end_veil_of_the_forgotten. Simplification
 # versus the real fight: there's no "dispel every negative effect on
 # the hero" step here the way the player's own copy has one - a
 # simulated hero has no per-self debuff fields to dispel in the first
 # place (only the ENEMY side of a fight tracks root/silence/curse
-# fields, via _apply_npc_root()/_apply_npc_curse_of_avernus_stack()),
+# fields, via _apply_npc_root()/_apply_npc_mark_of_the_mist_stack()),
 # so there's nothing for a self-cast shield to clear.
 # ------------------------------------------------------------------
 
-func _activate_npc_aphotic_shield(shield: Dictionary, level_data: Dictionary) -> void:
+func _activate_npc_veil_of_the_forgotten(shield: Dictionary, level_data: Dictionary) -> void:
 	shield["active"] = true
 	shield["hp"] = float(level_data.get("shield_hp", 0))
 	shield["aoe_damage"] = float(level_data.get("aoe_damage", 0))
@@ -3026,7 +3026,7 @@ func _activate_npc_aphotic_shield(shield: Dictionary, level_data: Dictionary) ->
 	shield["duration_pending_start"] = true
 
 
-func _tick_npc_aphotic_shield(shield: Dictionary) -> void:
+func _tick_npc_veil_of_the_forgotten(shield: Dictionary) -> void:
 	if not shield["active"]:
 		return
 	if shield["duration_pending_start"]:
@@ -3034,7 +3034,7 @@ func _tick_npc_aphotic_shield(shield: Dictionary) -> void:
 		return
 	shield["turns_remaining"] -= 1
 	if shield["turns_remaining"] <= 0:
-		_end_npc_aphotic_shield(shield, false, [])
+		_end_npc_veil_of_the_forgotten(shield, false, [])
 
 
 ## Ends the shield, whether its duration simply ran out (`exploded`
@@ -3043,7 +3043,7 @@ func _tick_npc_aphotic_shield(shield: Dictionary) -> void:
 ## own aoe_damage to every living enemy, mirroring Abyssal Spasm's own
 ## "no columns, hit everyone" simplification in this sim (see
 ## _cast_skill()'s "abyssal_spasm" case).
-func _end_npc_aphotic_shield(shield: Dictionary, exploded: bool, living: Array) -> void:
+func _end_npc_veil_of_the_forgotten(shield: Dictionary, exploded: bool, living: Array) -> void:
 	var aoe_damage: float = shield["aoe_damage"]
 
 	shield["active"] = false
@@ -3058,27 +3058,27 @@ func _end_npc_aphotic_shield(shield: Dictionary, exploded: bool, living: Array) 
 
 
 # ------------------------------------------------------------------
-# Abaddon's Curse of Avernus - a passive, so unlike every skill above
+# Morvael's Mark of the Mist - a passive, so unlike every skill above
 # there's no cooldown/mana cost check for it; it just triggers off the
 # hero's own plain Attacks (see _run_stage_fight()'s basic-attack
 # branch). Per-target progress lives directly on each enemy's own
-# Dictionary, the same way Entangle's root/silence/DoT fields do
+# Dictionary, the same way Thornbind's root/silence/DoT fields do
 # (_apply_npc_root()) - mirrors battle.gd's own
-# _apply_curse_of_avernus_stack()/_tick_curse_of_avernus_effects().
+# _apply_mark_of_the_mist_stack()/_tick_mark_of_the_mist_effects().
 # ------------------------------------------------------------------
 
-func _get_npc_curse_of_avernus_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
-	var level: int = PlayerManager.get_npc_skill_level(hero_id, "curse_of_avernus")
+func _get_npc_mark_of_the_mist_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "mark_of_the_mist")
 	if level <= 0:
 		return {}
-	var skill: Dictionary = _find_skill(hero_static, "curse_of_avernus")
+	var skill: Dictionary = _find_skill(hero_static, "mark_of_the_mist")
 	if skill.is_empty():
 		return {}
 	return GameManager.get_skill_level_data(skill, level)
 
 
-func _apply_npc_curse_of_avernus_stack(hero_id: String, hero_static: Dictionary, target: Dictionary, turn_index: int) -> void:
-	var level_data: Dictionary = _get_npc_curse_of_avernus_level_data(hero_id, hero_static)
+func _apply_npc_mark_of_the_mist_stack(hero_id: String, hero_static: Dictionary, target: Dictionary, turn_index: int) -> void:
+	var level_data: Dictionary = _get_npc_mark_of_the_mist_level_data(hero_id, hero_static)
 	if level_data.is_empty() or target.get("current_hp", 0) <= 0 or target.get("curse_active", false):
 		return
 
@@ -3097,7 +3097,7 @@ func _apply_npc_curse_of_avernus_stack(hero_id: String, hero_static: Dictionary,
 	target["curse_dot_turns_left"] = int(level_data.get("dot_duration", 0))
 
 
-func _tick_npc_curse_of_avernus_effects(enemies: Array, turn_index: int) -> void:
+func _tick_npc_mark_of_the_mist_effects(enemies: Array, turn_index: int) -> void:
 	for enemy in enemies:
 		if enemy.get("curse_active", false):
 			if enemy.get("curse_dot_turns_left", 0) > 0:
@@ -3111,12 +3111,12 @@ func _tick_npc_curse_of_avernus_effects(enemies: Array, turn_index: int) -> void
 				enemy["curse_dot_damage"] = 0.0
 		elif enemy.get("curse_stacks", 0) > 0:
 			var last_hit_turn: int = int(enemy.get("curse_last_hit_turn", turn_index))
-			if turn_index - last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
+			if turn_index - last_hit_turn >= MARK_OF_THE_MIST_STACK_DECAY_TURNS:
 				enemy["curse_stacks"] = 0
 
 
 # ------------------------------------------------------------------
-# Kunkka's Tidebringer - a passive, so like Curse of Avernus above (and
+# Kunkka's Tidebringer - a passive, so like Mark of the Mist above (and
 # unlike every skill in KNOWN_ACTIVE_SKILL_IDS) it's never "cast"; it
 # just builds off the hero's own plain Attacks - see this file's own
 # basic-attack branch in _run_stage_fight(). Mirrors battle.gd's
@@ -3189,7 +3189,7 @@ func _maybe_consume_npc_bash_of_the_deep_stack(hero_id: String, hero_static: Dic
 
 ## Tidebringer's cleave, positionless-sim style: no columns here to
 ## measure cleave_columns against `target`'s own, so - same as Dark
-## Pact's and Aphotic Shield's own AoE in this sim - it falls back to
+## Pact's and Veil of the Forgotten's own AoE in this sim - it falls back to
 ## hitting every OTHER living enemy, each for cleave_damage_pct of
 ## `attack_damage` (the same raw, pre-mitigation roll `target` was just
 ## hit with, bonus damage already folded in by the caller), still
@@ -3206,29 +3206,29 @@ func _apply_npc_tidebringer_cleave(target: Dictionary, attack_damage: float, lev
 
 
 # ------------------------------------------------------------------
-# Abaddon's Borrowed Time - mirrors battle.gd's
-# _maybe_auto_activate_borrowed_time()/_tick_borrowed_time()/
-# _end_borrowed_time(). Like the player's own copy, nothing "casts"
+# Morvael's The Mist Remembers - mirrors battle.gd's
+# _maybe_auto_activate_the_mist_remembers()/_tick_the_mist_remembers()/
+# _end_the_mist_remembers(). Like the player's own copy, nothing "casts"
 # this - the only entry point is _apply_reduced_damage_to_npc() below
 # noticing the hero's HP has crossed this level's threshold.
 # ------------------------------------------------------------------
 
-func _get_npc_borrowed_time_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
-	var level: int = PlayerManager.get_npc_skill_level(hero_id, "borrowed_time")
+func _get_npc_the_mist_remembers_level_data(hero_id: String, hero_static: Dictionary) -> Dictionary:
+	var level: int = PlayerManager.get_npc_skill_level(hero_id, "the_mist_remembers")
 	if level <= 0:
 		return {}
-	var skill: Dictionary = _find_skill(hero_static, "borrowed_time")
+	var skill: Dictionary = _find_skill(hero_static, "the_mist_remembers")
 	if skill.is_empty():
 		return {}
 	return GameManager.get_skill_level_data(skill, level)
 
 
-func _maybe_auto_activate_npc_borrowed_time(hero_id: String, hero_static: Dictionary, state: Dictionary, current_hp: float, effective_max_hp: float, cooldowns: Dictionary) -> void:
-	var bt: Dictionary = state["borrowed_time"]
-	if bt["active"] or cooldowns.get("borrowed_time", 0) > 0:
+func _maybe_auto_activate_npc_the_mist_remembers(hero_id: String, hero_static: Dictionary, state: Dictionary, current_hp: float, effective_max_hp: float, cooldowns: Dictionary) -> void:
+	var bt: Dictionary = state["the_mist_remembers"]
+	if bt["active"] or cooldowns.get("the_mist_remembers", 0) > 0:
 		return
 
-	var level_data: Dictionary = _get_npc_borrowed_time_level_data(hero_id, hero_static)
+	var level_data: Dictionary = _get_npc_the_mist_remembers_level_data(hero_id, hero_static)
 	if level_data.is_empty() or effective_max_hp <= 0.0:
 		return
 
@@ -3243,16 +3243,16 @@ func _maybe_auto_activate_npc_borrowed_time(hero_id: String, hero_static: Dictio
 
 	# Rides along in the same generic cooldowns dict every KNOWN_ACTIVE_
 	# SKILL_IDS entry uses (see _run_stage_fight()'s per-turn tick loop
-	# at its top) even though "borrowed_time" itself is never a pick-
+	# at its top) even though "the_mist_remembers" itself is never a pick-
 	# able skill - exactly mirroring how battle.gd's own auto-activate
 	# starts a normal entry in _skill_cooldowns/_enemy_skill_cooldowns.
-	cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
-	# Re-applied in full once it ends (see _tick_npc_borrowed_time()),
-	# matching battle.gd's _end_borrowed_time().
+	cooldowns["the_mist_remembers"] = int(level_data.get("cooldown", 0))
+	# Re-applied in full once it ends (see _tick_npc_the_mist_remembers()),
+	# matching battle.gd's _end_the_mist_remembers().
 	bt["cooldown"] = int(level_data.get("cooldown", 0))
 
 
-func _tick_npc_borrowed_time(bt: Dictionary, cooldowns: Dictionary) -> void:
+func _tick_npc_the_mist_remembers(bt: Dictionary, cooldowns: Dictionary) -> void:
 	if not bt["active"]:
 		return
 	if bt["duration_pending_start"]:
@@ -3260,11 +3260,11 @@ func _tick_npc_borrowed_time(bt: Dictionary, cooldowns: Dictionary) -> void:
 		return
 	bt["turns_remaining"] -= 1
 	if bt["turns_remaining"] <= 0:
-		_end_npc_borrowed_time(bt)
-		cooldowns["borrowed_time"] = int(bt.get("cooldown", 0))
+		_end_npc_the_mist_remembers(bt)
+		cooldowns["the_mist_remembers"] = int(bt.get("cooldown", 0))
 
 
-func _end_npc_borrowed_time(bt: Dictionary) -> void:
+func _end_npc_the_mist_remembers(bt: Dictionary) -> void:
 	bt["active"] = false
 	bt["heal_conversion_pct"] = 0.0
 	bt["turns_remaining"] = 0
@@ -3272,31 +3272,31 @@ func _end_npc_borrowed_time(bt: Dictionary) -> void:
 
 
 ## Applies `reduced` retaliation damage (already mitigated by armor/
-## Savage Roar) to the simulated hero's own current_hp, redirecting it
-## through Borrowed Time (converts to a heal) or Aphotic Shield
+## Blood of the Wild) to the simulated hero's own current_hp, redirecting it
+## through The Mist Remembers (converts to a heal) or Veil of the Forgotten
 ## (absorbs into its own HP pool, exploding onto every living enemy if
 ## that breaks it) first - mirrors battle.gd's own apply_damage(), just
 ## reading/writing `state` instead of instance variables and returning
 ## the hero's updated current_hp instead of mutating it in place.
 func _apply_reduced_damage_to_npc(hero_id: String, hero_static: Dictionary, state: Dictionary, cooldowns: Dictionary, current_hp: float, effective_max_hp: float, reduced: float, living: Array) -> float:
-	var bt: Dictionary = state["borrowed_time"]
+	var bt: Dictionary = state["the_mist_remembers"]
 	if bt["active"]:
 		return minf(effective_max_hp, current_hp + reduced * bt["heal_conversion_pct"])
 
-	var shield: Dictionary = state["aphotic_shield"]
+	var shield: Dictionary = state["veil_of_the_forgotten"]
 	if shield["active"]:
 		var absorbed: float = minf(reduced, shield["hp"])
 		shield["hp"] -= absorbed
 		var new_hp: float = current_hp - (reduced - absorbed)
 		if shield["hp"] <= 0.0:
-			_end_npc_aphotic_shield(shield, true, living)
+			_end_npc_veil_of_the_forgotten(shield, true, living)
 		if new_hp > 0.0:
-			_maybe_auto_activate_npc_borrowed_time(hero_id, hero_static, state, new_hp, effective_max_hp, cooldowns)
+			_maybe_auto_activate_npc_the_mist_remembers(hero_id, hero_static, state, new_hp, effective_max_hp, cooldowns)
 		return new_hp
 
 	var new_hp: float = current_hp - reduced
 	if new_hp > 0.0:
-		_maybe_auto_activate_npc_borrowed_time(hero_id, hero_static, state, new_hp, effective_max_hp, cooldowns)
+		_maybe_auto_activate_npc_the_mist_remembers(hero_id, hero_static, state, new_hp, effective_max_hp, cooldowns)
 	return new_hp
 
 
@@ -3304,20 +3304,20 @@ func _apply_reduced_damage_to_npc(hero_id: String, hero_static: Dictionary, stat
 # Shared combat-math helpers that fold every active buff's bonus in.
 # ------------------------------------------------------------------
 
-## Base max HP plus Leeching Hunger's borrowed hp plus True Form's bonus
+## Base max HP plus Leeching Hunger's borrowed hp plus Beast of the Elderwild's bonus
 ## hp while each is active - mirrors battle.gd's _hero_max_hp().
 func _npc_effective_max_hp(max_hp: float, state: Dictionary) -> float:
-	return max_hp + state["leeching_hunger"]["bonus"].get("hp", 0.0) + state["true_form"]["bonus_hp"]
+	return max_hp + state["leeching_hunger"]["bonus"].get("hp", 0.0) + state["beast_of_the_elderwild"]["bonus_hp"]
 
 
-## Base armor plus Leeching Hunger's borrowed armor plus Spirit Link's
+## Base armor plus Leeching Hunger's borrowed armor plus Wildbond's
 ## flat bonus while each is active - mirrors battle.gd's _hero_armor().
 func _npc_effective_armor(base_armor: float, state: Dictionary) -> float:
-	return base_armor + state["leeching_hunger"]["bonus"].get("armor", 0.0) + state["spirit_link"]["bonus_armor"] + state["living_armor"]["bonus_armor"]
+	return base_armor + state["leeching_hunger"]["bonus"].get("armor", 0.0) + state["wildbond"]["bonus_armor"] + state["living_armor"]["bonus_armor"]
 
 
 ## Rolls damage from `damage_range`, adding Leeching Hunger's ongoing
-## borrowed damage, True Form's bonus damage while active, and (for the
+## borrowed damage, Beast of the Elderwild's bonus damage while active, and (for the
 ## single hit that triggers it) Depthsveil's one-shot `extra_bonus` -
 ## mirrors battle.gd's _roll_hero_damage().
 func _npc_roll_damage(damage_range: String, state: Dictionary, extra_bonus: float = 0.0) -> float:
@@ -3325,7 +3325,7 @@ func _npc_roll_damage(damage_range: String, state: Dictionary, extra_bonus: floa
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	var bonus_damage: float = state["leeching_hunger"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + state["tag_team"]["bonus_damage"] + extra_bonus
+	var bonus_damage: float = state["leeching_hunger"]["bonus"].get("damage", 0.0) + state["beast_of_the_elderwild"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + state["tag_team"]["bonus_damage"] + extra_bonus
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
@@ -3351,7 +3351,7 @@ func _npc_roll_bear_damage(bear: Dictionary) -> float:
 ## array here rather than being removed like battle.gd's _enemies)
 ## and returns the XP/gold it's worth, exactly once per enemy. Called
 ## after every damage-dealing step in a turn (the hero's action, the
-## bear's action, Entangle's DoT tick) so a kill from any of them is
+## bear's action, Thornbind's DoT tick) so a kill from any of them is
 ## credited immediately.
 func _collect_npc_kills(enemies: Array, counted_dead: Dictionary) -> Dictionary:
 	var xp: float = 0.0
@@ -3388,14 +3388,14 @@ func _lowest_hp_enemy(living_enemies: Array) -> Dictionary:
 
 
 ## Returns the mitigated damage actually dealt, so callers that need it
-## (Spirit Link's lifesteal, via the hero's basic-attack branch) don't
+## (Wildbond's lifesteal, via the hero's basic-attack branch) don't
 ## have to re-derive it - mirrors battle.gd's _deal_fixed_damage_to_enemy().
 func _apply_damage_to_enemy(enemy: Dictionary, amount: float) -> float:
 	# Slardar's Corrosive Haze boosts every hit THIS specific marked enemy
 	# takes from the hero's own attacks/skills, mirroring battle.gd's own
 	# _deal_fixed_damage_to_enemy() "is_hero_action" check - every call
 	# site of this function already IS the hero's own action (a plain
-	# Attack, a DoT from the hero's own skill, the Spirit Bear's own
+	# Attack, a DoT from the hero's own skill, the Elderwild Companion's own
 	# attack); enemy retaliation against the hero goes through a separate
 	# path (_apply_reduced_damage_to_npc()), never this one, so no extra
 	# gate is needed here. 0.0 (a no-op) for every enemy nothing has

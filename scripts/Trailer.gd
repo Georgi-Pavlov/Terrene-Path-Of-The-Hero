@@ -40,7 +40,7 @@ const FEATURED_HERO_NAMES: Array[String] = [
 ## hero, the enemies, the skill bar and the hp/mana/xp bars together does.
 const BATTLE_MOCKUP_HERO_NAME := "Veyrik"
 const BATTLE_MOCKUP_ZONE_ID := "the_iron_abyss"
-const BATTLE_MOCKUP_BACKDROP := "res://assets/battle_areas/Dark_Reef_area.png"
+const BATTLE_MOCKUP_BACKDROP := "res://assets/battle_areas/the_iron_abyss_area.png"
 const BATTLE_MOCKUP_CAPTION := "Command Heroes in Turn-Based Tactical Battles"
 
 const SHOP_MOCKUP_BACKDROP := "res://assets/shop_menu.jpg"

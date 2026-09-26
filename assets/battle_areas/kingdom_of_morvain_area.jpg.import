@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ddvhvx8akfngd"
-path="res://.godot/imported/Northern_Pine.png-5ece36b4c29f50aaccfb5afcf64945e7.ctex"
+uid="uid://b42gm6i3wuxc7"
+path="res://.godot/imported/kingdom_of_morvain_area.jpg-f0d76ab427d456845b5ab32b11284edc.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/zones/Northern_Pine.png"
-dest_files=["res://.godot/imported/Northern_Pine.png-5ece36b4c29f50aaccfb5afcf64945e7.ctex"]
+source_file="res://assets/battle_areas/kingdom_of_morvain_area.jpg"
+dest_files=["res://.godot/imported/kingdom_of_morvain_area.jpg-f0d76ab427d456845b5ab32b11284edc.ctex"]
 
 [params]
 

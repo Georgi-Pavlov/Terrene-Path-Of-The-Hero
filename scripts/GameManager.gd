@@ -372,7 +372,7 @@ var zones: Dictionary = {
 			{
 				"id": "the_iron_abyss_melee",
 				"name": "Iron Abyss melee creep",
-				"image": "res://assets/enemies/Dark_Reef_mele.png",
+				"image": "res://assets/enemies/the_iron_abyss_melee.png",
 				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
@@ -387,7 +387,7 @@ var zones: Dictionary = {
 			{
 				"id": "the_iron_abyss_melee_2",
 				"name": "Iron Abyss melee creep",
-				"image": "res://assets/enemies/Dark_Reef_mele.png",
+				"image": "res://assets/enemies/the_iron_abyss_melee.png",
 				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
@@ -402,7 +402,7 @@ var zones: Dictionary = {
 			{
 				"id": "the_iron_abyss_range",
 				"name": "Iron Abyss range creep",
-				"image": "res://assets/enemies/Dark_Reef_range.png",
+				"image": "res://assets/enemies/the_iron_abyss_range.png",
 				"type": "range",
 				"main_stat": "agility",
 				"main_stat_value": 10,
@@ -412,7 +412,8 @@ var zones: Dictionary = {
 				"speed": 1,
 				"armor": 1,
 				"XP": 69,
-				"gold": "43-52"
+				"gold": "43-52",
+				"projectile": "abyss_arrow"
 			}
 		],
 		"unlocked": true,
@@ -430,9 +431,11 @@ var zones: Dictionary = {
 				"id": "erynd",
 				"name": "Erynd",
 				"image": "res://assets/heroes/Erynd.png",
-				"background": "res://assets/zones/Northern_Pine.png",
+				"background": "res://assets/zones/The Elderwild.jpg",
 				"range_type": "Range",
 				"main_stat": "Agility",
+				"attack_effect": "vine_lash",
+				"attack_origin": Vector2(0.85, 0.31),
 				"stats": {
 					"strength": 17,
 					"agility": 24,
@@ -447,10 +450,10 @@ var zones: Dictionary = {
 				},
 				"skills": [
 					{
-						"id": "summon_spirit_bear",
-						"name": "Summon Spirit Bear",
+						"id": "elderwild_companion",
+						"name": "Elderwild Companion",
 						"type": "standard",
-						"description": "Summons a Spirit Bear that fights alongside Sylla until it's killed - it acts automatically every turn, attacking any enemy sharing its column or closing in on the nearest one otherwise. If the bear dies, Sylla loses 20% of his max HP (never enough to knock him out on its own). Recasting replaces the current bear with a fresh one at the skill's current level.",
+						"description": "Erynd calls upon the ancient spirit of the Elderwild, taking shape as a massive spectral bear that fights at his side until slain. The beast acts on its own each turn, attacking enemies in its column or moving toward the nearest foe when none are within reach. When the companion is slain, the bond tears violently, causing Erynd to lose 20% of his maximum HP, though the backlash can never kill him. Calling the spirit again replaces the existing companion with a new one at the skill's current level.",
 						"levels": [
 							{"hp": 300, "damage_min": 25, "damage_max": 30, "armor": 3.0, "speed": 1, "mana_cost": 80, "cooldown": 8},
 							{"hp": 400, "damage_min": 32, "damage_max": 38, "armor": 4.0, "speed": 1, "mana_cost": 90, "cooldown": 7},
@@ -459,10 +462,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "entangle",
-						"name": "Entangle",
+						"id": "thornbind",
+						"name": "Thornbind",
 						"type": "standard",
-						"description": "Roots a targeted enemy in place - it can't move (though it can still attack if something is in range), and it's silenced so it can't cast skills while rooted. Also deals damage over time for the rooted duration.",
+						"description": "Erynd awakens the roots beneath a targeted enemy, binding it to the earth. The victim cannot move and is silenced while bound, though it can still attack if an enemy is within range. Ancient thorns continue to tear into the trapped foe, dealing damage over time for the duration of the binding.",
 						"levels": [
 							{"root_turns": 1, "silence_turns": 1, "dot_damage": 15, "dot_duration": 2, "mana_cost": 50, "cooldown": 3},
 							{"root_turns": 1, "silence_turns": 1, "dot_damage": 25, "dot_duration": 2, "mana_cost": 55, "cooldown": 3},
@@ -471,10 +474,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "spirit_link",
-						"name": "Spirit Link",
+						"id": "wildbond",
+						"name": "Wildbond",
 						"type": "standard",
-						"description": "The druid gains bonus armor and lifesteal for the duration - lifesteal converts a percentage of Attack damage into HP after the target's armor has reduced it. Only Attacks trigger it; skill damage never does.",
+						"description": "Erynd strengthens his bond with the living wilderness, hardening his body and drawing vitality from those he strikes. He gains bonus armor and restores a portion of his health whenever one of his Attacks deals damage. The Wildbond feeds only on physical attacks; skill damage cannot trigger its healing.",
 						"levels": [
 							{"lifesteal_pct": 0.05, "bonus_armor": 2, "duration": 3, "mana_cost": 50, "cooldown": 5},
 							{"lifesteal_pct": 0.08, "bonus_armor": 3, "duration": 3, "mana_cost": 55, "cooldown": 5},
@@ -483,10 +486,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "savage_roar",
-						"name": "Savage Roar",
+						"id": "blood_of_the_wild",
+						"name": "Blood of the Wild",
 						"type": "passive",
-						"description": "Passive: while the druid's HP is below 50%, he and his spirit bear move extra columns and take reduced damage. Wears off once his HP climbs back to 80% or higher.",
+						"description": "Passive: when Erynd is brought below half of his maximum HP, the ancient beast within him awakens. Erynd and his Elderwild Companion move faster and suffer reduced damage while he remains wounded. The effect fades only after Erynd recovers to 80% of his maximum HP or higher.",
 						"levels": [
 							{"bonus_movement": 1, "damage_reduction_pct": 0.05},
 							{"bonus_movement": 1, "damage_reduction_pct": 0.10},
@@ -495,10 +498,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "true_form",
-						"name": "True Form",
+						"id": "beast_of_the_elderwild",
+						"name": "Beast of the Elderwild",
 						"type": "ultimate",
-						"description": "Ultimate: the druid morphs into a raging bear for the duration, gaining bonus HP (added immediately, then taken back off when it ends) and bonus damage - but he fights at melee range for as long as the transformation lasts, whatever his normal range.",
+						"description": "Ultimate: Erynd surrenders himself to the ancient spirit bound within his blood, transforming into a monstrous bear-like beast. The transformation grants bonus HP and increased damage, with the additional HP granted immediately and removed when the transformation ends. While transformed, Erynd fights only at melee range, regardless of his normal attack range.",
 						"levels": [
 							{"bonus_hp": 150, "bonus_damage": 15, "duration": 4, "mana_cost": 100, "cooldown": 10},
 							{"bonus_hp": 250, "bonus_damage": 25, "duration": 5, "mana_cost": 110, "cooldown": 9},
@@ -517,7 +520,7 @@ var zones: Dictionary = {
 			{
 				"id": "the_elderwild_melee",
 				"name": "Elderwild melee creep",
-				"image": "res://assets/enemies/Northern_Pine_mele.png",
+				"image": "res://assets/enemies/the_elderwild_melee.png",
 				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
@@ -532,7 +535,7 @@ var zones: Dictionary = {
 			{
 				"id": "the_elderwild_melee_2",
 				"name": "Elderwild melee creep",
-				"image": "res://assets/enemies/Northern_Pine_mele.png",
+				"image": "res://assets/enemies/the_elderwild_melee.png",
 				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
@@ -547,7 +550,7 @@ var zones: Dictionary = {
 			{
 				"id": "the_elderwild_range",
 				"name": "Elderwild range creep",
-				"image": "res://assets/enemies/Northern_Pine_range.png",
+				"image": "res://assets/enemies/the_elderwild_range.png",
 				"type": "range",
 				"main_stat": "agility",
 				"main_stat_value": 10,
@@ -557,12 +560,13 @@ var zones: Dictionary = {
 				"speed": 1,
 				"armor": 1,
 				"XP": 69,
-				"gold": "43-52"
+				"gold": "43-52",
+				"projectile": "thorn_quill"
 			}
 		],
 		"unlocked": true,
-		"background": "res://assets/zones/Northern_Pine.png",
-		"battle_background": "res://assets/battle_areas/Northern Pine_area.png"
+		"background": "res://assets/zones/The Elderwild.jpg",
+		"battle_background": "res://assets/battle_areas/Elderwild_area.png"
 	},
 
 	"kingdom_of_morvain": {
@@ -570,14 +574,14 @@ var zones: Dictionary = {
 		"description": "The Kingdom of Morvain was once a prosperous realm, hidden beneath a veil of unnatural mist that slowly crept in from the surrounding valleys. As the years passed, the mist grew thicker, and so did the ambitions of the kingdom's rulers.
 		The last king became obsessed with the strange power within the mist, believing it could grant him dominion over life and death. His pursuit of forbidden magic consumed the royal court, leaving the kingdom fractured by madness, betrayal, and bloodshed.
 		Now Morvain is a forsaken kingdom, its ruined halls and forgotten villages swallowed by the mist. Those who still wander its roads speak of figures moving within the fog and voices calling from places where no living soul should remain.
-		Deep within the heart of Morvain, the mist has taken on a will of its own. Some say it remembers the kingdom that created it. Others believe the kingdom was never its master to begin with.",
+		Deep within the heart of Morvain, the mist has taken on a will of its own.",
 		"music": "kingdom_of_morvain",
 		"heroes": [
 			{
-				"id": "аbaddon",
-				"name": "Abaddon",
-				"image": "res://assets/heroes/Abaddon.png",
-				"background": "res://assets/zones/Avarice.png",
+				"id": "morvael",
+				"name": "Morvael, the Mistborn",
+				"image": "res://assets/heroes/Morvael.png",
+				"background": "res://assets/zones/kingdom_of_morvain.jpg",
 				"range_type": "Melee",
 				"main_stat": "Strength",
 				"stats": {
@@ -594,10 +598,10 @@ var zones: Dictionary = {
 				},
 				"skills": [
 					{
-						"id": "mist_coil",
-						"name": "Mist Coil",
+						"id": "whisper_of_the_veil",
+						"name": "Whisper of the Veil",
 						"type": "standard",
-						"description": "Abaddon releases a coil of deathly mist - cast on an enemy it deals damage, cast on Abaddon himself it costs HP but heals him for more.",
+						"description": "Morvael sends a tendril of living mist toward a target. Against an enemy, the mist tears away at its life force, dealing damage. When directed into Morvael himself (double tap the skill button), the mist consumes a portion of his physical essence before knitting his form back together, costing HP but restoring more in return.",
 						"levels": [
 							{"heal": 80, "damage": 80, "hp_cost": 30, "mana_cost": 35, "cooldown": 3},
 							{"heal": 120, "damage": 120, "hp_cost": 40, "mana_cost": 40, "cooldown": 3},
@@ -606,10 +610,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "aphotic_shield",
-						"name": "Aphotic Shield",
+						"id": "veil_of_the_forgotten",
+						"name": "Veil of the Forgotten",
 						"type": "standard",
-						"description": "Creates a shield that absorbs damage in Abaddon's place until it either wears off or is broken, dispelling every negative effect on him. If it's broken by damage, it explodes, damaging nearby enemies.",
+						"description": "Morvael surrounds himself with a dense veil of living mist that absorbs incoming damage and strips away all negative effects upon its formation. If the veil is broken by force, the imprisoned mist erupts outward, lashing nearby enemies with the echoes of those lost within Morvain.",
 						"levels": [
 							{"shield_hp": 100, "aoe_damage": 50, "radius": 0, "duration": 3, "mana_cost": 50, "cooldown": 5},
 							{"shield_hp": 150, "aoe_damage": 75, "radius": 0, "duration": 3, "mana_cost": 55, "cooldown": 5},
@@ -618,27 +622,27 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "curse_of_avernus",
-						"name": "Curse of Avernus",
+						"id": "mark_of_the_mist",
+						"name": "Mark of the Mist",
 						"type": "passive",
-						"description": "Passive: Abaddon's attacks stack a curse onto their target. Once enough stacks land, the target is cursed - silenced and taking damage over time. Stacks are lost if the target goes 3 turns without being hit.",
+						"description": "Passive: every attack leaves a fragment of Morvael's mist clinging to the target. The fragments accumulate with each successive strike. When enough mist has gathered, it consumes the victim's voice and vitality, silencing them and dealing damage over time. The fragments dissipate if the target remains untouched for 3 turns.",
 						"levels": [
-							{"hits_to_activate": 3, "silence_turns": 1, "dot_damage": 5, "dot_duration": 2},
-							{"hits_to_activate": 3, "silence_turns": 1, "dot_damage": 10, "dot_duration": 2},
-							{"hits_to_activate": 2, "silence_turns": 2, "dot_damage": 10, "dot_duration": 3},
-							{"hits_to_activate": 2, "silence_turns": 2, "dot_damage": 15, "dot_duration": 3}
+							{"hits_to_activate": 3, "silence_turns": 1, "dot_damage": 15, "dot_duration": 2},
+							{"hits_to_activate": 3, "silence_turns": 1, "dot_damage": 25, "dot_duration": 2},
+							{"hits_to_activate": 2, "silence_turns": 2, "dot_damage": 30, "dot_duration": 3},
+							{"hits_to_activate": 2, "silence_turns": 2, "dot_damage": 35, "dot_duration": 3}
 						]
 					},
 					{
-						"id": "borrowed_time",
-						"name": "Borrowed Time",
+						"id": "the_mist_remembers",
+						"name": "The Mist Remembers",
 						"type": "ultimate",
 						"auto_activate": true,
-						"description": "Ultimate: Not cast - automatically activates once Abaddon's HP falls to this level's threshold. While active, every attack that would damage him heals him instead.",
+						"description": "Ultimate: Not cast - automatically activates when Morvael's HP falls to this level's threshold. For the duration, the mist refuses to let its creation disperse. Every attack that would harm Morvael is instead consumed by the mist and transformed into healing. While the effect lasts, Morvael cannot be brought closer to death by incoming attacks.",
 						"levels": [
-							{"auto_activate_hp_pct": 0.3, "duration": 3, "heal_conversion_pct": 1.0, "mana_cost": 0, "cooldown": 10},
-							{"auto_activate_hp_pct": 0.3, "duration": 4, "heal_conversion_pct": 1.0, "mana_cost": 0, "cooldown": 9},
-							{"auto_activate_hp_pct": 0.3, "duration": 5, "heal_conversion_pct": 1.0, "mana_cost": 0, "cooldown": 8}
+							{"auto_activate_hp_pct": 0.3, "duration": 3, "heal_conversion_pct": 1.0, "cooldown": 10},
+							{"auto_activate_hp_pct": 0.3, "duration": 4, "heal_conversion_pct": 1.0, "cooldown": 9},
+							{"auto_activate_hp_pct": 0.3, "duration": 5, "heal_conversion_pct": 1.0, "cooldown": 8}
 						]
 					},
 				],
@@ -653,7 +657,7 @@ var zones: Dictionary = {
 			{
 				"id": "kingdom_of_morvain_melee",
 				"name": "Kingdom of Morvain melee creep",
-				"image": "res://assets/enemies/Avarice_mele.png",
+				"image": "res://assets/enemies/kingdom_of_morvain_melee.png",
 				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
@@ -668,7 +672,7 @@ var zones: Dictionary = {
 			{
 				"id": "kingdom_of_morvain_melee_2",
 				"name": "Kingdom of Morvain melee creep",
-				"image": "res://assets/enemies/Avarice_mele.png",
+				"image": "res://assets/enemies/kingdom_of_morvain_melee.png",
 				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
@@ -683,7 +687,7 @@ var zones: Dictionary = {
 			{
 				"id": "kingdom_of_morvain_range",
 				"name": "Kingdom of Morvain range creep",
-				"image": "res://assets/enemies/Avarice_range.png",
+				"image": "res://assets/enemies/kingdom_of_morvain_range.png",
 				"type": "range",
 				"main_stat": "agility",
 				"main_stat_value": 10,
@@ -693,12 +697,13 @@ var zones: Dictionary = {
 				"speed": 1,
 				"armor": 1,
 				"XP": 69,
-				"gold": "43-52"
+				"gold": "43-52",
+				"projectile": "mist_skull"
 			}
 		],
 		"unlocked": true,
-		"background": "res://assets/zones/Avarice.png",
-		"battle_background": "res://assets/battle_areas/Avarice_area.png"
+		"background": "res://assets/zones/kingdom_of_morvain.jpg",
+		"battle_background": "res://assets/battle_areas/kingdom_of_morvain_area.jpg"
 	},
 
 	"the_ironbound_isles": {
@@ -2498,7 +2503,7 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 		# on the enemy side, so it faces the player's hero instead.
 		"is_hero_fight": true,
 		# Distinguishes the actual rival hero from a regular creep (and
-		# from its own summoned Spirit Bear ally, which also sets
+		# from its own summoned Elderwild Companion ally, which also sets
 		# "is_hero_fight" for the same art-flipping reason but isn't
 		# the boss) - see battle.gd's _enemy_turn()/_get_hero_fight_boss().
 		"is_hero_fight_boss": true,
@@ -2557,7 +2562,7 @@ var items: Dictionary = {
 	},
 	"blades_of_attack": {
 		"id": "blades_of_attack",
-		"name": "Blades of аttack",
+		"name": "Blades of Attack",
 		"image": "res://assets/items/Blades_of_Attack.png",
 		"description": "Add +9 damage",
 		"effect": "stat",

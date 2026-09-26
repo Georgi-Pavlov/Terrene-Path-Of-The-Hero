@@ -49,6 +49,42 @@ extends Control
 @onready var skill_choice_desc_cancel_button: Button = $SkillChoiceDescPopup/SkillChoiceDescMargin/SkillChoiceDescVBox/SkillChoiceDescButtons/CancelButton
 @onready var stage_label: Label = $StagePanel/StageMargin/StageLabel
 
+# Heroes/creeps (by their GameManager id) whose static art gets a
+# CreatureAnimator (idle breathing/sway plus attack, hit, cast, move and
+# death reactions), mapped to the animator's tuning profile. Everything
+# not listed here stays a plain static portrait.
+const ANIMATED_CREATURE_PROFILES := {
+	"veyrik": "veyrik",
+	"the_iron_abyss_melee": "iron_abyss_melee",
+	"the_iron_abyss_melee_2": "iron_abyss_melee",
+	"the_iron_abyss_range": "iron_abyss_range",
+	"erynd": "erynd",
+	"the_elderwild_melee": "elderwild_melee",
+	"the_elderwild_melee_2": "elderwild_melee",
+	"the_elderwild_range": "elderwild_range",
+	"morvael": "morvael",
+	"kingdom_of_morvain_melee": "morvain_melee",
+	"kingdom_of_morvain_melee_2": "morvain_melee",
+	"kingdom_of_morvain_range": "morvain_range",
+	# A rival Erynd's own bear; the player's is attached in
+	# _elderwild_companion() (it isn't spawned through _spawn_enemy()).
+	"enemy_spirit_bear": "spirit_bear",
+}
+
+const BATTLE_ATMOSPHERE := preload("res://scripts/BattleAtmosphere.gd")
+
+# Holds CreatureAnimator death dissolves and ProjectileFX shots, just
+# above enemies_layer (so they draw over the creatures but under the UI).
+# Separate because enemies_layer is wiped on every stage change/hero
+# fight - usually right as the last kill's dissolve starts.
+var _fx_layer: Control
+
+# While an attack projectile is in flight, the node it's headed for -
+# the damage lands immediately, but the CreatureAnimator hit reaction
+# is held back until the projectile actually arrives (see
+# _fire_enemy_projectile()).
+var _deferred_hit_node: Control = null
+
 # The battlefield is divided into 10 columns. Movement shifts by one
 # column (1/10 screen width); "same space" for attacks/melee means
 # matching column index.
@@ -87,14 +123,11 @@ const TARGET_HIGHLIGHT_PULSE_COLOR := Color(1.9, 1.7, 0.7, 1)
 # got hit" rather than "something happened to it."
 const BOUNCE_HIT_FLASH_COLOR := Color(1.8, 0.25, 0.25, 1)
 
-# Entangle's own visuals: the one-shot flash on cast (same overbright
-# trick as BOUNCE_HIT_FLASH_COLOR, pushed toward green), and the
-# lingering tint for as long as the root holds (see
-# _refresh_entangle_tints()). The tint is applied through
-# self_modulate rather than modulate, since modulate is already
-# owned by the target highlight, hit flashes and stealth fades.
-const ENTANGLE_FLASH_COLOR := Color(0.5, 1.8, 0.4, 1)
-const ENTANGLE_TINT_COLOR := Color(0.6, 1.0, 0.55, 1)
+# Thornbind's one-shot flash on cast (same overbright trick as
+# BOUNCE_HIT_FLASH_COLOR, pushed toward green). The vines holding the
+# target for as long as the root lasts are ThornbindVines' (see
+# _refresh_thornbind_vines()).
+const THORNBIND_FLASH_COLOR := Color(0.5, 1.8, 0.4, 1)
 
 # The "empowered" enlargement (see _set_hero_enlarged()) - Spirit
 # Link's and Arctic Burn's own visual while either is active: the
@@ -108,14 +141,13 @@ const HERO_ENLARGED_SCALE := 1.1
 const LEECHING_HUNGER_MOTE_COLOR := Color(0.2, 0.9, 0.8, 1.0)
 const LIFESTEAL_MOTE_COLOR := Color(1.0, 0.2, 0.15, 1.0)
 
-# Mist Coil's projectile (see _play_mist_coil_effect()): the ball/trail/
-# impact-burst color, and the overbright flash the target gets on
-# impact (same trick as BOUNCE_HIT_FLASH_COLOR).
-const MIST_COIL_COLOR := Color(0.35, 1.0, 0.45, 1.0)
-const MIST_COIL_FLASH_COLOR := Color(0.6, 1.8, 0.6, 1)
+# Whisper of the Veil (see _play_whisper_of_the_veil_effect()): the
+# overbright teal flash its target gets when the mist tendril strikes
+# (same trick as BOUNCE_HIT_FLASH_COLOR).
+const WHISPER_OF_THE_VEIL_FLASH_COLOR := Color(0.7, 1.8, 1.7, 1)
 
 # Ice Blast's projectile (see _play_ice_blast_effect()): a big pale-ice
-# ball with a white rim, the same projectile Mist Coil uses
+# ball with a white rim - the shared orb projectile
 # (_play_orb_projectile()), just scaled up. Its flash on impact reuses
 # COLD_FEET_FLASH_COLOR, and the lingering frost is the same one Cold
 # Feet/Ice Vortex use (_refresh_cold_feet_frost()).
@@ -128,7 +160,7 @@ const ICE_BLAST_BALL_SIZE := 46.0
 # every unit its splinters hit.
 const SPLINTER_SHARD_COLOR := Color(0.75, 0.92, 1.0, 1.0)
 const SPLINTER_SHARDS_PER_TARGET := 4
-# The explosion on the target (in units of Mist Coil's own impact
+# The explosion on the target (in units of Whisper of the Veil's own impact
 # burst - see _play_orb_impact()) and the flung chunks' size in px.
 const SPLINTER_EXPLOSION_SCALE := 3.0
 const SPLINTER_CHUNK_SIZE := 18.0
@@ -166,33 +198,44 @@ const OVERGROWTH_MOUND_COLOR := Color(0.28, 0.35, 0.14, 0.95)
 const OVERGROWTH_DIRT_COLOR := Color(0.45, 0.32, 0.18, 1.0)
 const OVERGROWTH_ROOTS_NAME := "OvergrowthRoots"
 
-# Aphotic Shield's visuals (see _show_aphotic_shell() and friends): the
-# translucent shell's fill and rim, the cast flash, and the shard/spark
-# color for the cleanse and the shatter. The shell is a child Panel of
-# the shielded sprite, named APHOTIC_SHELL_NAME so its presence can be
-# looked up.
-const APHOTIC_SHELL_FILL_COLOR := Color(0.35, 0.08, 0.55, 0.28)
-const APHOTIC_SHELL_RIM_COLOR := Color(0.62, 0.3, 0.95, 0.95)
-const APHOTIC_FLASH_COLOR := Color(1.3, 0.6, 1.8, 1)
-const APHOTIC_SHARD_COLOR := Color(0.55, 0.2, 0.85, 1.0)
-const APHOTIC_SHELL_NAME := "AphoticShell"
+# Veil of the Forgotten's visuals (see _show_veil_shell() and friends): a
+# shroud of swirling mist (mist_shroud.gdshader) wrapped around the
+# shielded sprite, thinning with every hit it soaks up. The mist's color,
+# the cast flash, and the color of the mist the cleanse lifts off and the
+# break bursts into. The shroud is a child ColorRect of the sprite, named
+# VEIL_SHELL_NAME so its presence can be looked up.
+const VEIL_SHROUD_SHADER := preload("res://shaders/mist_shroud.gdshader")
+const VEIL_MIST_COLOR := Color(0.6, 0.9, 0.88, 1.0)
+const VEIL_FLASH_COLOR := Color(0.8, 1.6, 1.55, 1)
+const VEIL_BURST_COLOR := Color(0.5, 0.95, 0.9, 0.8)
+# How far the shroud reaches past the sprite on each side (fraction of its size).
+const VEIL_SHROUD_MARGIN := 0.18
+const VEIL_SHELL_NAME := "VeilShell"
 
-# Borrowed Time's visual (see _set_borrowed_time_visual()): a pulsing
+# The Mist Remembers's visual (see _set_the_mist_remembers_visual()): a pulsing
 # greenish-teal glow over the sprite for as long as it's active. It's
 # an additive-blended copy of the sprite itself rather than a change to
 # the sprite's own modulate/self_modulate, which the hit flashes,
-# stealth fades and Entangle's tint already own.
-const BORROWED_TIME_GLOW_COLOR := Color(0.25, 1.0, 0.75, 1.0)
-const BORROWED_TIME_GLOW_NAME := "BorrowedTimeGlow"
-const BORROWED_TIME_PULSE_SECONDS := 1.1
+# stealth fades and Thornbind's tint already own.
+const THE_MIST_REMEMBERS_GLOW_COLOR := Color(0.25, 1.0, 0.75, 1.0)
+const THE_MIST_REMEMBERS_GLOW_NAME := "MistRemembersGlow"
+const THE_MIST_REMEMBERS_PULSE_SECONDS := 1.1
+# Alongside the glow: mist rising from the ground and pouring into the
+# sprite (mist_inflow.gdshader) - a surge as it triggers, then a gentler
+# steady flow. It's a child ColorRect reaching past the sprite's sides
+# and a little below its feet.
+const THE_MIST_REMEMBERS_INFLOW_SHADER := preload("res://shaders/mist_inflow.gdshader")
+const THE_MIST_REMEMBERS_INFLOW_NAME := "MistRemembersInflow"
+const THE_MIST_REMEMBERS_SURGE_SECONDS := 1.8
+const THE_MIST_REMEMBERS_STEADY_INTENSITY := 0.45
 
 # Cold Feet's/Ice Vortex's frost on a marked unit (see
 # _set_cold_feet_frost()/_play_ice_vortex_swirl()): the
 # additive icy sheen over the sprite, the snowflakes, and the one-shot
 # flash on cast (same overbright trick as BOUNCE_HIT_FLASH_COLOR). The
-# frost is a child node named COLD_FEET_FROST_NAME, so - like Borrowed
-# Time's glow - it never touches the sprite's own modulate/
-# self_modulate, which the hit flashes and Entangle's tint own.
+# frost is a child node named COLD_FEET_FROST_NAME, so - like The Mist
+# Remembers's glow - it never touches the sprite's own modulate/
+# self_modulate, which the hit flashes and Thornbind's tint own.
 const COLD_FEET_SHEEN_COLOR := Color(0.35, 0.6, 0.95, 1.0)
 const COLD_FEET_FLAKE_COLOR := Color(0.85, 0.95, 1.0, 1.0)
 const COLD_FEET_FLASH_COLOR := Color(0.7, 1.3, 1.9, 1)
@@ -208,20 +251,24 @@ const TORRENT_SPRAY_COLOR := Color(0.55, 0.8, 1.0, 1.0)
 
 # Same pulsing treatment as TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR above,
 # just in green rather than gold - marks the hero's own portrait as a
-# valid target for a skill that can be self-cast (right now, only Mist
-# Coil - see _highlight_hero_self_target()). Deliberately a different
-# hue rather than reusing the gold: for a skill like Mist Coil that can
+# valid target for a skill that can be self-cast (right now, only Whisper of the
+# Veil - see _highlight_hero_self_target()). Deliberately a different
+# hue rather than reusing the gold: for a skill like Whisper of the Veil that can
 # be cast on either an enemy in range OR the hero, both highlights can
 # be lit and pulsing at the same time, so they need to read as two
 # distinct options rather than one ambiguous "the target."
 const HERO_TARGET_HIGHLIGHT_COLOR := Color(0.3, 1.7, 0.5, 1)
 const HERO_TARGET_HIGHLIGHT_PULSE_COLOR := Color(0.6, 2.0, 0.8, 1)
 
-# Erynd's Spirit Bear (summon_spirit_bear) always uses this art,
+# Erynd's Elderwild Companion (elderwild_companion) always uses this art,
 # regardless of skill level.
 const SPIRIT_BEAR_IMAGE_PATH := "res://assets/heroes/Erynd Bear.png"
-# True Form's transformed portrait, likewise fixed regardless of level.
-const TRUE_FORM_IMAGE_PATH := "res://assets/heroes/Erynd Ultimate.png"
+# Beast of the Elderwild's transformed portrait, likewise fixed regardless of level.
+const BEAST_OF_THE_ELDERWILD_IMAGE_PATH := "res://assets/heroes/Erynd Ultimate.png"
+
+# Width/height of the standard creature art (every creep, and most
+# heroes) - see _creature_size().
+const CREATURE_BASE_ASPECT := 1.5
 # How much of the hero's own max HP he loses when the bear dies (see
 # _apply_bear_death_penalty()).
 const BEAR_DEATH_HP_PENALTY_PCT := 0.2
@@ -435,7 +482,7 @@ var _depthsveil_duration_pending_start: bool = false
 # hero" rule in _enemy_turn() already applies here for free - just with
 # a different payoff for the Attack that breaks it: instead of bonus
 # damage, the target gets rooted (root_turns_left, the same shared
-# per-enemy field Entangle's own root uses and _tick_enemy_turn_start_
+# per-enemy field Thornbind's own root uses and _tick_enemy_turn_start_
 # effects() already ticks down - it can still attack/cast/use items while rooted,
 # same as any other rooted enemy) for _natures_guise_root_turns turns.
 # Casting any OTHER skill still just ends it early with no root, same
@@ -470,7 +517,7 @@ var _moonlight_shadow_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
 # Treant Protector's Living Armor: a self-cast that adds a flat
-# bonus_armor (folded into _hero_armor(), same slot Spirit Link's own
+# bonus_armor (folded into _hero_armor(), same slot Wildbond's own
 # bonus armor uses) plus a flat bonus_hp_regen healed every turn on top
 # of the hero's own baseline passive regen (_apply_passive_hero_regen()
 # - same "bonus stacks on top of the baseline" relationship Arcane
@@ -512,7 +559,7 @@ var _guardian_sprint_duration_pending_start: bool = false
 # off individually rather than all at once. Gaining a stack past this
 # level's own max_stacks drops the oldest one first, same as it being
 # replaced. Folds bonus_armor_per_stack * stack count into _hero_armor()
-# (same slot Living Armor's/Spirit Link's own bonus armor use) and
+# (same slot Living Armor's/Wildbond's own bonus armor use) and
 # heals bonus_hp_regen_per_stack * stack count every hero turn
 # (_apply_reactive_armor_regen(), same timing/stacking relationship as
 # Arcane Aura's/the baseline passive regen).
@@ -522,7 +569,7 @@ var _reactive_armor_stack_turns: Array[int] = []
 # ------------------------------------------------------------------
 # Winter Wyvern's Arctic Burn: while active, the hero's plain Attacks
 # get a flat bonus_damage (folded into _roll_hero_damage(), same slot
-# Leeching Hunger's/Depthsveil's/True Form's own bonus damage use) and
+# Leeching Hunger's/Depthsveil's/Beast of the Elderwild's own bonus damage use) and
 # extra reach (folded into _hero_attack_column_range(), so ranged
 # targeting opens further out too), for this level's own `attacks`
 # count of Attacks or `duration` turns - whichever runs out first, same
@@ -593,8 +640,8 @@ var _mortimer_kisses_level_data: Dictionary = {}
 # land on the hero, from any source) rolls `hit_chance_pct` to redirect
 # the ENTIRE hit onto a random living illusion instead - a full
 # redirect, not a split, and completely bypassing the hero's own
-# defensive mechanics (Reactive Armor stacks, Borrowed Time, Aphotic
-# Shield) since nothing actually touched him this time. Every hero turn
+# defensive mechanics (Reactive Armor stacks, The Mist Remembers, Veil of the
+# Forgotten) since nothing actually touched him this time. Every hero turn
 # that isn't the casting one, every surviving illusion also strikes the
 # SAME randomly-picked living enemy within the hero's own attack range
 # for `damage_pct` of a freshly-rolled hero Attack each (see
@@ -714,7 +761,7 @@ var _ice_shards_wall_nodes: Dictionary = {}
 # ------------------------------------------------------------------
 # Tusk's Tag Team: a self-cast that adds a flat bonus_damage to the
 # hero's own Attacks (folded into _roll_hero_damage(), same slot
-# Arctic Burn's/Leeching Hunger's/True Form's own bonus damage use) for
+# Arctic Burn's/Leeching Hunger's/Beast of the Elderwild's own bonus damage use) for
 # the duration - no attack-count cap, unlike Arctic Burn, just a plain
 # turn-based buff. Same "casting turn doesn't count" pattern as every
 # other duration-based buff (see _tick_tag_team()).
@@ -725,7 +772,7 @@ var _tag_team_turns_remaining: int = 0
 var _tag_team_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
-# Erynd's Spirit Bear (summon_spirit_bear): a persistent ally
+# Erynd's Elderwild Companion (elderwild_companion): a persistent ally
 # that fights alongside the hero. {} when no bear is out (see
 # _is_bear_alive()); otherwise {hp, current_hp, damage_min,
 # damage_max, armor, speed, pos_index, node}. It lives outside
@@ -740,7 +787,7 @@ var _tag_team_duration_pending_start: bool = false
 var _bear: Dictionary = {}
 
 # The rival hero's single-target skills that can be aimed at the
-# player's Spirit Bear instead of the player himself - see
+# player's Elderwild Companion instead of the player himself - see
 # _choose_enemy_skill_on_bear() for how the AI picks between the two,
 # and each skill's own _cast_enemy_*_on_bear() for what it does to the
 # bear. Skills left out are either about the player's own position
@@ -749,23 +796,23 @@ var _bear: Dictionary = {}
 # not targeted at all; those still reach the bear through their own
 # AoE collateral, same as before.
 const ENEMY_BEAR_TARGETABLE_SKILLS: Array[String] = [
-	"entangle", "mist_coil", "torrent", "corrosive_haze", "sacred_arrow",
+	"thornbind", "whisper_of_the_veil", "torrent", "corrosive_haze", "sacred_arrow",
 	"lucent_beam", "ensnare", "cold_feet", "ice_vortex", "chilling_touch",
 	"ice_blast", "splinter_blast", "winter's_curse", "frostbite", "snowball",
 	"walrus_punch", "leech_seed", "lil_shredder",
 ]
 
 # Set by _cast_enemy_skill() for the duration of one cast: true when
-# the rival's current skill is aimed at the player's Spirit Bear rather
+# the rival's current skill is aimed at the player's Elderwild Companion rather
 # than the player (see _choose_enemy_skill_on_bear()). Each bear-
 # targetable _cast_enemy_*() checks it first and hands off to its own
 # _cast_enemy_*_on_bear() counterpart.
 var _enemy_skill_on_bear: bool = false
 
 # Set by _cast_enemy_skill() for the duration of one cast: true when the
-# rival's current Mist Coil is aimed at himself (the self-heal - see
-# EnemySkillAI.MIST_COIL_SELF_ID) rather than at the player or his bear.
-var _enemy_mist_coil_self: bool = false
+# rival's current Whisper of the Veil is aimed at himself (the self-heal - see
+# EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID) rather than at the player or his bear.
+var _enemy_whisper_of_the_veil_self: bool = false
 
 # True while the player's current stun came from a rival's Song of the
 # Siren - purely cosmetic, so the lullaby (see _refresh_siren_
@@ -780,51 +827,51 @@ var _player_siren_song_asleep: bool = false
 var _enemy_ai_hero_hidden: bool = false
 
 # ------------------------------------------------------------------
-# Erynd's Spirit Link: while active, the hero gets a flat armor
+# Erynd's Wildbond: while active, the hero gets a flat armor
 # bonus (folded into _hero_armor(), same slot Leeching Hunger's borrowed
 # armor uses) and lifesteal on his Attacks - a % of an Attack's
 # damage, taken AFTER the target's armor has already reduced it, paid
-# back as HP (see _apply_spirit_link_lifesteal(), called only from
+# back as HP (see _apply_wildbond_lifesteal(), called only from
 # _apply_hero_attack() - skill damage never triggers it). Same
 # "casting turn doesn't count" duration pattern as Leeching Hunger/
 # Depthsveil. Recasting simply overwrites the running values with
 # the new cast's - there's nothing to "give back" the way Essence
 # Shift's borrowed stats are, so no need to end the old one first.
 # ------------------------------------------------------------------
-var _spirit_link_active: bool = false
-var _spirit_link_lifesteal_pct: float = 0.0
-var _spirit_link_bonus_armor: float = 0.0
-var _spirit_link_turns_remaining: int = 0
-var _spirit_link_duration_pending_start: bool = false
+var _wildbond_active: bool = false
+var _wildbond_lifesteal_pct: float = 0.0
+var _wildbond_bonus_armor: float = 0.0
+var _wildbond_turns_remaining: int = 0
+var _wildbond_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
-# Erynd's Savage Roar: a passive (no button press, no mana, no
+# Erynd's Blood of the Wild: a passive (no button press, no mana, no
 # cooldown - see _populate_skill_buttons()'s "passive" branch) that
 # turns itself on and off automatically based on the hero's own HP%,
-# recalculated every time the bars refresh (_update_savage_roar_state,
+# recalculated every time the bars refresh (_update_blood_of_the_wild_state,
 # called from _refresh_bars()). Uses hysteresis rather than a single
-# threshold - see _update_savage_roar_state() - so it doesn't flicker
+# threshold - see _update_blood_of_the_wild_state() - so it doesn't flicker
 # on/off turn to turn while HP hovers in the 50-80% band. While
 # active, both _hero_move_distance() and incoming damage on the hero
 # (apply_damage()) AND the bear (_deal_damage_to_bear()) read the
 # bonus movement/damage reduction below; while inactive they're 0, so
 # nothing extra needs to be undone when it turns off.
 # ------------------------------------------------------------------
-var _savage_roar_active: bool = false
-var _savage_roar_bonus_movement: int = 0
-var _savage_roar_damage_reduction_pct: float = 0.0
+var _blood_of_the_wild_active: bool = false
+var _blood_of_the_wild_bonus_movement: int = 0
+var _blood_of_the_wild_damage_reduction_pct: float = 0.0
 # The skill button slot's status label ("Passive"/"Active"/
 # "Inactive"), captured when _populate_skill_buttons() builds it, so
-# _update_savage_roar_state() can keep it current live.
-var _savage_roar_status_label: Label = null
+# _update_blood_of_the_wild_state() can keep it current live.
+var _blood_of_the_wild_status_label: Label = null
 
 # ------------------------------------------------------------------
-# Erynd's ultimate, True Form: transforms the hero into a bear
-# for the duration - swaps his portrait to TRUE_FORM_IMAGE_PATH (and
+# Erynd's ultimate, Beast of the Elderwild: transforms the hero into a bear
+# for the duration - swaps his portrait to BEAST_OF_THE_ELDERWILD_IMAGE_PATH (and
 # back to his normal one on expiry), grants bonus max HP (added to his
 # CURRENT HP too the moment it's granted, then taken back off again on
 # expiry, clamped so it can never do that part below 1 - see
-# _activate_true_form()/_end_true_form()), bonus damage (folded into
+# _activate_beast_of_the_elderwild()/_end_beast_of_the_elderwild()), bonus damage (folded into
 # _roll_hero_damage() the same way Leeching Hunger's/Depthsveil's
 # bonus damage is), and forces melee range for the duration regardless
 # of his own range_type stat (see _is_ranged_hero()) - so if he's
@@ -832,39 +879,39 @@ var _savage_roar_status_label: Label = null
 # shares his own column instead of opening ranged targeting. Same
 # "casting turn doesn't count" duration pattern as the other buffs.
 # ------------------------------------------------------------------
-var _true_form_active: bool = false
-var _true_form_bonus_hp: float = 0.0
-var _true_form_bonus_damage: float = 0.0
-var _true_form_turns_remaining: int = 0
-var _true_form_duration_pending_start: bool = false
+var _beast_of_the_elderwild_active: bool = false
+var _beast_of_the_elderwild_bonus_hp: float = 0.0
+var _beast_of_the_elderwild_bonus_damage: float = 0.0
+var _beast_of_the_elderwild_turns_remaining: int = 0
+var _beast_of_the_elderwild_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
-# Abaddon's Aphotic Shield: a self-cast shield with its own HP pool
+# Morvael's Veil of the Forgotten: a self-cast shield with its own HP pool
 # that absorbs incoming damage in the hero's place (see
 # apply_damage()) until either its duration runs out (fades quietly,
-# see _tick_aphotic_shield()) or enough damage drains it to 0 (see
-# apply_damage()/_end_aphotic_shield()) - in which case it explodes,
-# dealing _aphotic_shield_aoe_damage to every enemy within
-# _aphotic_shield_radius columns of the hero, the same radius-around-
+# see _tick_veil_of_the_forgotten()) or enough damage drains it to 0 (see
+# apply_damage()/_end_veil_of_the_forgotten()) - in which case it explodes,
+# dealing _veil_of_the_forgotten_aoe_damage to every enemy within
+# _veil_of_the_forgotten_radius columns of the hero, the same radius-around-
 # a-position AoE concept Abyssal Spasm uses (_cast_abyssal_spasm()). Casting
 # it also dispels every negative effect currently on the player - root,
-# a hostile Entangle's damage-over-time, Barbed Lunge's stun, and a hostile
-# Leeching Hunger's stat drain (see _activate_aphotic_shield()) - except
+# a hostile Thornbind's damage-over-time, Barbed Lunge's stun, and a hostile
+# Leeching Hunger's stat drain (see _activate_veil_of_the_forgotten()) - except
 # silence, since _on_skill_pressed() already refuses to cast ANY skill
 # while silenced, so that debuff can never still be active by the time
 # this one goes off.
 # ------------------------------------------------------------------
-var _aphotic_shield_active: bool = false
-var _aphotic_shield_hp: float = 0.0
-var _aphotic_shield_aoe_damage: float = 0.0
-var _aphotic_shield_radius: int = 0
-var _aphotic_shield_turns_remaining: int = 0
-var _aphotic_shield_duration_pending_start: bool = false
+var _veil_of_the_forgotten_active: bool = false
+var _veil_of_the_forgotten_hp: float = 0.0
+var _veil_of_the_forgotten_aoe_damage: float = 0.0
+var _veil_of_the_forgotten_radius: int = 0
+var _veil_of_the_forgotten_turns_remaining: int = 0
+var _veil_of_the_forgotten_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
-# Abaddon's Borrowed Time: not cast at all - it auto-activates once
+# Morvael's The Mist Remembers: not cast at all - it auto-activates once
 # the hero's own HP falls to or below a level-based threshold (see
-# apply_damage()/_maybe_auto_activate_borrowed_time()), then for its
+# apply_damage()/_maybe_auto_activate_the_mist_remembers()), then for its
 # duration every attack that would otherwise damage the hero heals him
 # instead (a full reversal, not just a reduction - see apply_damage()
 # again). Its cooldown reuses the same generic _skill_cooldowns/
@@ -872,10 +919,10 @@ var _aphotic_shield_duration_pending_start: bool = false
 # _populate_skill_buttons()'s "auto_activate" branch), started the
 # moment it auto-activates rather than by a button press.
 # ------------------------------------------------------------------
-var _borrowed_time_active: bool = false
-var _borrowed_time_heal_conversion_pct: float = 0.0
-var _borrowed_time_turns_remaining: int = 0
-var _borrowed_time_duration_pending_start: bool = false
+var _the_mist_remembers_active: bool = false
+var _the_mist_remembers_heal_conversion_pct: float = 0.0
+var _the_mist_remembers_turns_remaining: int = 0
+var _the_mist_remembers_duration_pending_start: bool = false
 
 # Kunkka's Tidebringer: a passive counter of plain Attacks landed (see
 # _maybe_consume_tidebringer_stack(), called from _apply_hero_attack())
@@ -949,7 +996,7 @@ var _enemy_leeching_hunger_bonus: Dictionary = {"damage": 0.0, "hp": 0.0, "mana"
 # Veyrik's Depthsveil, cast by the rival: while active the boss can't
 # be targeted by any of the player's attacks or targeted skills (see
 # _is_target_hidden(), checked from _get_enemy_at()/
-# _start_ranged_targeting()/_start_entangle_targeting()/
+# _start_ranged_targeting()/_start_thornbind_targeting()/
 # _cast_abyssal_spasm()) and skips the player's own retaliation-avoidance
 # entirely - rather, HIS retaliation against the player still happens
 # normally (see _enemy_hero_turn()); only being attacked back is
@@ -959,49 +1006,49 @@ var _enemy_depthsveil_bonus_damage: float = 0.0
 var _enemy_depthsveil_turns_remaining: int = 0
 var _enemy_depthsveil_duration_pending_start: bool = false
 
-# Erynd's Spirit Link, cast by the rival on himself.
-var _enemy_spirit_link_active: bool = false
-var _enemy_spirit_link_lifesteal_pct: float = 0.0
-var _enemy_spirit_link_bonus_armor: float = 0.0
-var _enemy_spirit_link_turns_remaining: int = 0
-var _enemy_spirit_link_duration_pending_start: bool = false
+# Erynd's Wildbond, cast by the rival on himself.
+var _enemy_wildbond_active: bool = false
+var _enemy_wildbond_lifesteal_pct: float = 0.0
+var _enemy_wildbond_bonus_armor: float = 0.0
+var _enemy_wildbond_turns_remaining: int = 0
+var _enemy_wildbond_duration_pending_start: bool = false
 
-# Erynd's True Form, cast by the rival on himself. No forced-
+# Erynd's Beast of the Elderwild, cast by the rival on himself. No forced-
 # melee-range or portrait-swap-on-a-dedicated-node concept is needed
-# here the way the player's own copy has one - True Form just swaps
+# here the way the player's own copy has one - Beast of the Elderwild just swaps
 # the boss's existing enemy node's texture (see
-# _activate_enemy_true_form()/_end_enemy_true_form()) and adds bonus
+# _activate_enemy_beast_of_the_elderwild()/_end_enemy_beast_of_the_elderwild()) and adds bonus
 # hp/damage.
-var _enemy_true_form_active: bool = false
-var _enemy_true_form_bonus_hp: float = 0.0
-var _enemy_true_form_bonus_damage: float = 0.0
-var _enemy_true_form_turns_remaining: int = 0
-var _enemy_true_form_duration_pending_start: bool = false
+var _enemy_beast_of_the_elderwild_active: bool = false
+var _enemy_beast_of_the_elderwild_bonus_hp: float = 0.0
+var _enemy_beast_of_the_elderwild_bonus_damage: float = 0.0
+var _enemy_beast_of_the_elderwild_turns_remaining: int = 0
+var _enemy_beast_of_the_elderwild_duration_pending_start: bool = false
 
-# Erynd's Savage Roar, on the rival - same automatic hysteresis
+# Erynd's Blood of the Wild, on the rival - same automatic hysteresis
 # as the player's own copy, just re-evaluated once per rival turn (see
-# _update_enemy_savage_roar_state()) rather than after every HP change,
+# _update_enemy_blood_of_the_wild_state()) rather than after every HP change,
 # since there's no bars UI to keep live for an enemy.
-var _enemy_savage_roar_active: bool = false
-var _enemy_savage_roar_damage_reduction_pct: float = 0.0
+var _enemy_blood_of_the_wild_active: bool = false
+var _enemy_blood_of_the_wild_damage_reduction_pct: float = 0.0
 
-# Abaddon's Aphotic Shield, cast by the rival on himself.
-var _enemy_aphotic_shield_active: bool = false
-var _enemy_aphotic_shield_hp: float = 0.0
-var _enemy_aphotic_shield_aoe_damage: float = 0.0
-var _enemy_aphotic_shield_radius: int = 0
-var _enemy_aphotic_shield_turns_remaining: int = 0
-var _enemy_aphotic_shield_duration_pending_start: bool = false
+# Morvael's Veil of the Forgotten, cast by the rival on himself.
+var _enemy_veil_of_the_forgotten_active: bool = false
+var _enemy_veil_of_the_forgotten_hp: float = 0.0
+var _enemy_veil_of_the_forgotten_aoe_damage: float = 0.0
+var _enemy_veil_of_the_forgotten_radius: int = 0
+var _enemy_veil_of_the_forgotten_turns_remaining: int = 0
+var _enemy_veil_of_the_forgotten_duration_pending_start: bool = false
 
-# Abaddon's Borrowed Time, on the rival - same auto-activate-off-HP%
+# Morvael's The Mist Remembers, on the rival - same auto-activate-off-HP%
 # pattern as the player's own copy: nothing ever "casts" this, it just
 # triggers itself from _deal_fixed_damage_to_enemy() the moment the
 # rival's HP crosses this level's threshold - see
-# _maybe_auto_activate_enemy_borrowed_time().
-var _enemy_borrowed_time_active: bool = false
-var _enemy_borrowed_time_heal_conversion_pct: float = 0.0
-var _enemy_borrowed_time_turns_remaining: int = 0
-var _enemy_borrowed_time_duration_pending_start: bool = false
+# _maybe_auto_activate_enemy_the_mist_remembers().
+var _enemy_the_mist_remembers_active: bool = false
+var _enemy_the_mist_remembers_heal_conversion_pct: float = 0.0
+var _enemy_the_mist_remembers_turns_remaining: int = 0
+var _enemy_the_mist_remembers_duration_pending_start: bool = false
 
 # Kunkka's Tidebringer, on the rival - same plain-Attack counter as the
 # player's own copy, just counting the rival's own Attacks on the
@@ -1049,7 +1096,7 @@ var _enemy_moonlight_shadow_duration_pending_start: bool = false
 # ECLIPSE_BEAMS_PER_TURN beams per End Turn (see _tick_enemy_eclipse()),
 # each independently picking ONE random living, targetable candidate from
 # everything within radius columns of the rival's CURRENT position - the
-# player, one of his own illusions, or his own Spirit Bear, all equally
+# player, one of his own illusions, or his own Elderwild Companion, all equally
 # likely (see _tick_enemy_eclipse()'s own docstring) - with NO cap on how
 # many beams the same candidate can take. Doesn't lock the rival's own
 # actions while it's ticking, same as the player-side copy.
@@ -1061,7 +1108,7 @@ var _enemy_eclipse_duration_pending_start: bool = false
 
 # Kunkka's X Marks the Spot, on the rival - unlike the player's own
 # copy, the target is always the player (the only other participant in
-# a hero fight, same simplification Abyssal Spasm/Mist Coil/Torrent already
+# a hero fight, same simplification Abyssal Spasm/Whisper of the Veil/Torrent already
 # use), so there's nothing to hold onto but a single pending flag - see
 # _cast_enemy_xmarks()/_enemy_hero_turn()'s own teleport check at its
 # very top.
@@ -1149,7 +1196,7 @@ var _enemy_natures_guise_duration_pending_start: bool = false
 # Treant Protector's Living Armor, cast by the rival on himself - mirrors
 # the player's own _activate_living_armor()/_tick_living_armor()/
 # _end_living_armor(): bonus_armor folds into _enemy_hero_bonus_armor()
-# (the same slot Leeching Hunger's/Spirit Link's own bonus armor already
+# (the same slot Leeching Hunger's/Wildbond's own bonus armor already
 # share there), bonus_hp_regen heals the rival on top of his own
 # baseline passive regen (_tick_enemy_passive_regen()) every tick - see
 # _tick_enemy_living_armor().
@@ -1249,15 +1296,15 @@ var _last_enemy_illusion_redirect: Dictionary = {}
 # needs for potentially many enemies.
 var _player_leeching_hunger_penalty: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
-# Entangle's root/silence/damage-over-time, cast by the rival on the
+# Thornbind's root/silence/damage-over-time, cast by the rival on the
 # player - the mirror of _apply_root(), just aimed at the player
 # instead of an enemy. Root blocks _hero_move(); silence blocks
 # _on_skill_pressed(); the DoT ticks at the start of the player's own
 # turn, alongside everything else in _tick_player_turn_start_effects().
 var _player_root_turns_left: int = 0
 var _player_silence_turns_left: int = 0
-var _player_entangle_dot_damage: float = 0.0
-var _player_entangle_dot_turns_left: int = 0
+var _player_thornbind_dot_damage: float = 0.0
+var _player_thornbind_dot_turns_left: int = 0
 
 # Barbed Lunge's stun on the player - counts down once per _end_turn() call
 # while > 0, each time skipping the player's own action entirely and
@@ -1275,13 +1322,13 @@ var _player_stun_turns_left: int = 0
 # (a fresh dispel or the stun's own natural countdown reaching 0).
 var _player_winters_curse_active: bool = false
 
-# Curse of Avernus's stacks/DoT on the player, built by the rival's own
-# plain Attacks - the mirror of the same fields _apply_curse_of_avernus_
+# Mark of the Mist's stacks/DoT on the player, built by the rival's own
+# plain Attacks - the mirror of the same fields _apply_mark_of_the_mist_
 # stack() writes onto an enemy Dictionary, just held as battle-local
 # vars since there's only one player to track them on. Silence isn't
 # among them - it shares the _player_silence_turns_left field above,
 # same as how a cursed enemy shares its own silence_turns_left with
-# Entangle.
+# Thornbind.
 var _player_curse_stacks: int = 0
 var _player_curse_active: bool = false
 var _player_curse_dot_damage: float = 0.0
@@ -1289,8 +1336,8 @@ var _player_curse_dot_turns_left: int = 0
 var _player_curse_last_hit_turn: int = 0
 
 # Ancient Apparition's Cold Feet/Ice Vortex, cast by the rival on the
-# player - both are plain damage-over-time, so both mirror Entangle's
-# own _player_entangle_dot_* fields exactly, just held separately (each
+# player - both are plain damage-over-time, so both mirror Thornbind's
+# own _player_thornbind_dot_* fields exactly, just held separately (each
 # under its own dedicated pair of fields) since a different skill's DoT
 # shouldn't silently share or clobber another's counters, the same
 # reasoning the player-side per-enemy cold_feet_dot_*/ice_vortex_dot_*
@@ -1335,7 +1382,7 @@ var _player_leech_seed_dot_turns_left: int = 0
 # the player-side per-enemy overgrowth_dot_damage/overgrowth_dot_turns_
 # left fields (see _activate_overgrowth()), just held as battle-local
 # vars since there's only one player to track them on. The root shares
-# _player_root_turns_left above, the same field Entangle's own root
+# _player_root_turns_left above, the same field Thornbind's own root
 # already uses - Overgrowth's own "can't move, can still attack/cast/
 # use items" rule is exactly what that field already means everywhere
 # it's checked (_hero_move()), so there's nothing extra to enforce here.
@@ -1377,10 +1424,10 @@ var _player_mortimer_burn_dot_turns_left: int = 0
 # Ranged-hero target selection: when true, the enemies in
 # _valid_targets are highlighted and clickable; clicking one resolves
 # either a plain attack or a targeted skill, depending on
-# _targeting_purpose ("attack" or a skill id like "entangle" or
-# "mist_coil") - see _on_enemy_clicked(). Mist Coil additionally lets
+# _targeting_purpose ("attack" or a skill id like "thornbind" or
+# "whisper_of_the_veil") - see _on_enemy_clicked(). Whisper of the Veil additionally lets
 # the player click the hero's own portrait instead (self-cast) - see
-# _on_hero_image_gui_input()/_resolve_mist_coil_self_cast(). Every
+# _on_hero_image_gui_input()/_resolve_whisper_of_the_veil_self_cast(). Every
 # _start_X_targeting() function marks _valid_targets via the shared
 # _highlight_valid_targets() (see TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR),
 # whose pulsing tweens are tracked here so _cancel_targeting() can kill
@@ -1390,19 +1437,19 @@ var _valid_targets: Array = []
 var _targeting_purpose: String = "attack"
 var _target_highlight_tweens: Array = []
 
-# Entangle's level data, held from the moment its target-picking
-# starts (_start_entangle_targeting) until a target is actually
-# clicked (_resolve_entangle_cast) - mana/cooldown/turn are only spent
+# Thornbind's level data, held from the moment its target-picking
+# starts (_start_thornbind_targeting) until a target is actually
+# clicked (_resolve_thornbind_cast) - mana/cooldown/turn are only spent
 # once that click resolves, same as a normal ranged Attack.
-var _pending_entangle_level_data: Dictionary = {}
+var _pending_thornbind_level_data: Dictionary = {}
 
-# Mist Coil's level data, held the same way as Entangle's above, from
-# the moment _start_mist_coil_targeting() opens targeting until either
+# Whisper of the Veil's level data, held the same way as Thornbind's above, from
+# the moment _start_whisper_of_the_veil_targeting() opens targeting until either
 # an enemy or the hero's own portrait is clicked
-# (_resolve_mist_coil_enemy_cast()/_resolve_mist_coil_self_cast()).
-var _pending_mist_coil_level_data: Dictionary = {}
+# (_resolve_whisper_of_the_veil_enemy_cast()/_resolve_whisper_of_the_veil_self_cast()).
+var _pending_whisper_of_the_veil_level_data: Dictionary = {}
 
-# Kunkka's Torrent, held the same way as Entangle's/Mist Coil's own
+# Kunkka's Torrent, held the same way as Thornbind's/Whisper of the Veil's own
 # pending level data above, from the moment _start_torrent_targeting()
 # opens targeting until a target is actually clicked
 # (_resolve_torrent_cast()).
@@ -1564,19 +1611,19 @@ const RANGE_ENEMY_FLEE_DISTANCE := 1
 # KNOWN_ACTIVE_SKILL_IDS drives for its own background simulation).
 # This is no longer a priority order - see EnemySkillAI.HERO_TIE_BREAK
 # for each hero's own tie-break fallback order, only ever consulted
-# when two skills' scores are too close to call outright. Savage Roar,
-# Curse of Avernus, Borrowed Time, and Tidebringer aren't here - none
-# of them are ever "cast" or scored: Savage Roar and Borrowed Time turn
+# when two skills' scores are too close to call outright. Blood of the Wild,
+# Mark of the Mist, The Mist Remembers, and Tidebringer aren't here - none
+# of them are ever "cast" or scored: Blood of the Wild and The Mist Remembers turn
 # themselves on/off automatically off the rival's own HP% (see
-# _update_enemy_savage_roar_state()/
-# _maybe_auto_activate_enemy_borrowed_time()), and Curse of Avernus/
+# _update_enemy_blood_of_the_wild_state()/
+# _maybe_auto_activate_enemy_the_mist_remembers()), and Mark of the Mist/
 # Tidebringer only ever build off the rival's own plain Attacks (see
-# _apply_enemy_curse_of_avernus_stack()/
+# _apply_enemy_mark_of_the_mist_stack()/
 # _maybe_consume_enemy_tidebringer_stack()).
 const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
 	"abyssal_spasm", "barbed_lunge", "leeching_hunger", "depthsveil",
-	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
-	"mist_coil", "aphotic_shield", "torrent", "x_marks_the_spot", "ghostship",
+	"thornbind", "elderwild_companion", "wildbond", "beast_of_the_elderwild",
+	"whisper_of_the_veil", "veil_of_the_forgotten", "torrent", "x_marks_the_spot", "ghostship",
 	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
 	"arctic_burn", "splinter_blast", "cold_embrace", "winter's_curse",
 	"crystal_nova", "frostbite", "freezing_field",
@@ -1640,6 +1687,10 @@ var _stage_generation: int = 0
 
 
 
+func _process(_delta: float) -> void:
+	_refresh_bear_hp_label()
+
+
 func _ready() -> void:
 	flee_button.pressed.connect(_on_flee_pressed)
 	defeat_ok_button.pressed.connect(func(): get_tree().change_scene_to_file("res://scenes/PostLogin.tscn"))
@@ -1650,6 +1701,11 @@ func _ready() -> void:
 	level_up_ok_button.pressed.connect(_on_level_up_continue_pressed)
 	skill_choice_desc_ok_button.pressed.connect(_on_skill_choice_desc_ok_pressed)
 	skill_choice_desc_cancel_button.pressed.connect(_on_skill_choice_desc_cancel_pressed)
+
+	_fx_layer = Control.new()
+	_fx_layer.name = "FxLayer"
+	_fx_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	enemies_layer.add_sibling(_fx_layer)
 
 	_recruited = PlayerManager.get_recruited_hero()
 	if _recruited.is_empty():
@@ -1697,6 +1753,12 @@ func _load_battle_background() -> void:
 	var battle_bg_path: String = zone_data.get("battle_background", "")
 	if battle_bg_path != "" and ResourceLoader.exists(battle_bg_path):
 		background.texture = load(battle_bg_path)
+		# Per-zone ambient effects (e.g. the Elderwild's blowing leaves),
+		# right over the background and under the hero/creeps.
+		var atmosphere: Control = BATTLE_ATMOSPHERE.new()
+		atmosphere.name = "BattleAtmosphere"
+		background.add_sibling(atmosphere)
+		atmosphere.setup(GameManager.selected_zone)
 	else:
 		print("No battle_background set for the current zone - using fallback color.")
 
@@ -1712,6 +1774,33 @@ func _index_to_x(index: int) -> float:
 func _creature_y() -> float:
 	var target_height: float = get_viewport_rect().size.y / 4.0
 	return (get_viewport_rect().size.y - target_height) / 2.0
+
+
+## On-screen size for a hero's (or hero-fight boss's) art. The standard
+## 3:2 landscape art - which every creep uses - is 1/4 of the screen
+## tall. Narrower art (e.g. Erynd's portrait-shaped standing figure)
+## is scaled up to cover that same area instead, so a tall figure
+## isn't dwarfed by the wide creep art beside it. Wider art is left at
+## the standard height.
+func _creature_size(texture: Texture2D) -> Vector2:
+	var base_height: float = get_viewport_rect().size.y / 4.0
+	var tex_size: Vector2 = texture.get_size()
+	var aspect: float = tex_size.x / tex_size.y
+	var height: float = base_height * maxf(1.0, sqrt(CREATURE_BASE_ASPECT / aspect))
+	return Vector2(height * aspect, height)
+
+
+## Top y for creature art `height` tall, keeping its feet on the same
+## ground line as standard-size art placed at _creature_y().
+func _creature_top_y(height: float) -> float:
+	return _creature_y() + get_viewport_rect().size.y / 4.0 - height
+
+
+## Re-sizes a hero-fight boss's node to its current texture (e.g. after
+## Beast of the Elderwild swaps the art) and re-seats it on the ground line.
+func _refit_creature_node(node: TextureRect, pos_index: int) -> void:
+	node.size = _creature_size(node.texture)
+	node.position = Vector2(_index_to_x(pos_index), _creature_top_y(node.size.y))
 
 
 ## Shortest distance between two columns, accounting for the fact
@@ -1736,39 +1825,39 @@ func _apply_armor_reduction(raw_damage: float, armor: float) -> float:
 
 
 ## Hero's total max HP: base stat plus Leeching Hunger's borrowed hp
-## plus True Form's bonus hp while each is active - the one place
-## that combination is computed, used by the HP bar, Savage Roar's
+## plus Beast of the Elderwild's bonus hp while each is active - the one place
+## that combination is computed, used by the HP bar, Blood of the Wild's
 ## threshold check, and the bear-death HP penalty.
 func _hero_max_hp() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("hp", 0)) + _leeching_hunger_bonus.get("hp", 0.0) + _true_form_bonus_hp - _player_leeching_hunger_penalty.get("hp", 0.0)
+	return float(stats.get("hp", 0)) + _leeching_hunger_bonus.get("hp", 0.0) + _beast_of_the_elderwild_bonus_hp - _player_leeching_hunger_penalty.get("hp", 0.0)
 
 
 ## Hero's total armor: base stat from GameManager plus any permanent
 ## bonus picked up from items (mirrors how damage bonus is combined
 ## in _roll_hero_damage), plus any armor currently borrowed via
-## Leeching Hunger, plus Spirit Link's flat bonus, Living Armor's own
+## Leeching Hunger, plus Wildbond's flat bonus, Living Armor's own
 ## flat bonus, and Reactive Armor's own per-stack bonus, each while
 ## active.
 func _hero_armor() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("armor", 0)) + _leeching_hunger_bonus.get("armor", 0.0) + _spirit_link_bonus_armor + _living_armor_bonus_armor + _reactive_armor_bonus_armor() - _player_leeching_hunger_penalty.get("armor", 0.0) - _player_armor_reduction
+	return float(stats.get("armor", 0)) + _leeching_hunger_bonus.get("armor", 0.0) + _wildbond_bonus_armor + _living_armor_bonus_armor + _reactive_armor_bonus_armor() - _player_leeching_hunger_penalty.get("armor", 0.0) - _player_armor_reduction
 
 
-## Savage Roar's current level data ({} if not learned yet) - looked
+## Blood of the Wild's current level data ({} if not learned yet) - looked
 ## up fresh each time rather than cached, so a mid-battle level-up
 ## (via a banked skill point) is picked up immediately.
-func _get_savage_roar_level_data() -> Dictionary:
-	var level: int = PlayerManager.get_skill_level("savage_roar")
+func _get_blood_of_the_wild_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("blood_of_the_wild")
 	if level <= 0:
 		return {}
 	for skill in _hero_static.get("skills", []):
-		if skill.get("id", "") == "savage_roar":
+		if skill.get("id", "") == "blood_of_the_wild":
 			return GameManager.get_skill_level_data(skill, level)
 	return {}
 
 
-## Recomputes Savage Roar's on/off state and its bonus values, and
+## Recomputes Blood of the Wild's on/off state and its bonus values, and
 ## refreshes its status label to match. Called from _refresh_bars()
 ## (i.e. after every HP change) and right after _populate_skill_
 ## buttons() rebuilds that label, so it's never stale.
@@ -1778,40 +1867,40 @@ func _get_savage_roar_level_data() -> Dictionary:
 ## until HP actually reaches 80%, rather than flicking on and off
 ## every time HP crosses a single line. Between 50% and 80%, whatever
 ## state it was already in just holds.
-func _update_savage_roar_state() -> void:
-	var level_data: Dictionary = _get_savage_roar_level_data()
+func _update_blood_of_the_wild_state() -> void:
+	var level_data: Dictionary = _get_blood_of_the_wild_level_data()
 
 	if level_data.is_empty():
-		_savage_roar_active = false
+		_blood_of_the_wild_active = false
 	else:
 		var max_hp: float = _hero_max_hp()
 		if max_hp > 0.0:
 			var hp_pct: float = float(_recruited.get("current_hp", 0)) / max_hp
-			if _savage_roar_active:
+			if _blood_of_the_wild_active:
 				if hp_pct >= 0.8:
-					_savage_roar_active = false
+					_blood_of_the_wild_active = false
 			elif hp_pct < 0.5:
-				_savage_roar_active = true
+				_blood_of_the_wild_active = true
 
-	if _savage_roar_active:
-		_savage_roar_bonus_movement = int(level_data.get("bonus_movement", 0))
-		_savage_roar_damage_reduction_pct = float(level_data.get("damage_reduction_pct", 0.0))
+	if _blood_of_the_wild_active:
+		_blood_of_the_wild_bonus_movement = int(level_data.get("bonus_movement", 0))
+		_blood_of_the_wild_damage_reduction_pct = float(level_data.get("damage_reduction_pct", 0.0))
 	else:
-		_savage_roar_bonus_movement = 0
-		_savage_roar_damage_reduction_pct = 0.0
+		_blood_of_the_wild_bonus_movement = 0
+		_blood_of_the_wild_damage_reduction_pct = 0.0
 
-	if not is_instance_valid(_savage_roar_status_label):
+	if not is_instance_valid(_blood_of_the_wild_status_label):
 		return
 
 	if level_data.is_empty():
-		_savage_roar_status_label.text = "Passive"
-		_savage_roar_status_label.add_theme_color_override("font_color", Color(0.7, 0.8, 1, 1))
-	elif _savage_roar_active:
-		_savage_roar_status_label.text = "Active"
-		_savage_roar_status_label.add_theme_color_override("font_color", Color(1, 0.65, 0.2, 1))
+		_blood_of_the_wild_status_label.text = "Passive"
+		_blood_of_the_wild_status_label.add_theme_color_override("font_color", Color(0.7, 0.8, 1, 1))
+	elif _blood_of_the_wild_active:
+		_blood_of_the_wild_status_label.text = "Active"
+		_blood_of_the_wild_status_label.add_theme_color_override("font_color", Color(1, 0.65, 0.2, 1))
 	else:
-		_savage_roar_status_label.text = "Inactive"
-		_savage_roar_status_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))
+		_blood_of_the_wild_status_label.text = "Inactive"
+		_blood_of_the_wild_status_label.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6, 1))
 
 
 ## Which direction (+1 or -1) is the shorter path from `from` to `to`,
@@ -1828,13 +1917,16 @@ func _step_toward(from: int, to: int) -> int:
 
 func _load_hero_image() -> void:
 	_set_hero_image(_hero_static.get("image", ""))
+	var profile_id: String = ANIMATED_CREATURE_PROFILES.get(_hero_static.get("id", ""), "")
+	if profile_id != "":
+		CreatureAnimator.attach(hero_image, profile_id)
 
 
 ## Loads `image_path` into hero_image, scaled to a quarter of the
 ## screen's height with its own aspect ratio preserved - shared by the
-## normal hero portrait (_load_hero_image()) and True Form's swap to
-## its bear portrait/back again (see _activate_true_form()/
-## _end_true_form()). No-ops (with a printed warning) if the path is
+## normal hero portrait (_load_hero_image()) and Beast of the Elderwild's swap to
+## its bear portrait/back again (see _activate_beast_of_the_elderwild()/
+## _end_beast_of_the_elderwild()). No-ops (with a printed warning) if the path is
 ## empty or missing, leaving whatever's already showing untouched.
 func _set_hero_image(image_path: String) -> void:
 	if image_path == "" or not ResourceLoader.exists(image_path):
@@ -1844,19 +1936,18 @@ func _set_hero_image(image_path: String) -> void:
 	var texture: Texture2D = load(image_path)
 	hero_image.texture = texture
 
-	# Scale so the hero's height is exactly 1/4 of the screen, keeping
-	# the image's original aspect ratio for the width.
-	var target_height: float = get_viewport_rect().size.y / 4.0
-	var tex_size: Vector2 = texture.get_size()
-	var scale_factor: float = target_height / tex_size.y
-	var target_width: float = tex_size.x * scale_factor
-
-	hero_image.size = Vector2(target_width, target_height)
+	# Standard art is 1/4 of the screen tall; see _creature_size() for
+	# how narrower art is scaled.
+	hero_image.size = _creature_size(texture)
 	_update_hero_position()
 
 
 func _update_hero_position() -> void:
-	hero_image.position = Vector2(_index_to_x(_hero_pos_index), _creature_y())
+	var old_x: float = hero_image.position.x
+	hero_image.position = Vector2(_index_to_x(_hero_pos_index), _creature_top_y(hero_image.size.y))
+	var animator := CreatureAnimator.of(hero_image)
+	if animator != null and not is_equal_approx(old_x, hero_image.position.x):
+		animator.play_move(old_x - hero_image.position.x)
 	
 
 ## Spawns the current stage's enemies: GameManager.STAGE_ENEMY_COUNTS
@@ -1945,19 +2036,15 @@ func _spawn_enemy(enemy_def: Dictionary) -> void:
 		print("No enemy image found at: ", image_path)
 		return
 
-	var target_height: float = get_viewport_rect().size.y / 4.0
-	var y_pos: float = _creature_y()
-
 	var texture: Texture2D = load(image_path)
-	var tex_size: Vector2 = texture.get_size()
-	var scale_factor: float = target_height / tex_size.y
-	var target_width: float = tex_size.x * scale_factor
+	var target_size: Vector2 = _creature_size(texture)
+	var y_pos: float = _creature_top_y(target_size.y)
 
 	var tex_rect := TextureRect.new()
 	tex_rect.texture = texture
 	tex_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tex_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
-	tex_rect.size = Vector2(target_width, target_height)
+	tex_rect.size = target_size
 	tex_rect.mouse_filter = Control.MOUSE_FILTER_STOP
 
 	# Hero art is drawn facing right (toward the enemy side, where the
@@ -2015,6 +2102,10 @@ func _spawn_enemy(enemy_def: Dictionary) -> void:
 	_enemies.append(enemy_data)
 
 	tex_rect.gui_input.connect(_on_enemy_gui_input.bind(enemy_data))
+
+	var profile_id: String = ANIMATED_CREATURE_PROFILES.get(enemy_def.get("id", ""), "")
+	if profile_id != "":
+		CreatureAnimator.attach(tex_rect, profile_id)
 
 	_refresh_enemy_overhead_labels()
 
@@ -2074,34 +2165,34 @@ func _enemy_status_effect_text(enemy: Dictionary) -> String:
 	if enemy.get("stun_turns_left", 0) > 0:
 		effects.append("Stunned")
 
-	# Entangle roots AND silences for the exact same duration - every
+	# Thornbind roots AND silences for the exact same duration - every
 	# level's own data sets root_turns == silence_turns, and both now
 	# tick down together every turn (see _enemy_turn()'s own silence
 	# decrement, added to match root's) - so silence_turns_left > 0 is
-	# a reliable "this root is Entangle's, not Nature's Guise's" signal
+	# a reliable "this root is Thornbind's, not Nature's Guise's" signal
 	# (Nature's Guise only ever sets root_turns_left, never silence -
 	# see _apply_hero_attack()'s own "attacking_from_natures_guise"
-	# branch), without needing entangle_dot_turns_left at all - that
+	# branch), without needing thornbind_dot_turns_left at all - that
 	# field's own duration runs one turn longer than root/silence by
-	# design, but the "Entangled" status itself shouldn't outlive the
+	# design, but the "Thornbound" status itself shouldn't outlive the
 	# root/silence it actually represents, just the residual DoT tick.
-	# An activated Curse of Avernus also silences through that same
+	# An activated Mark of the Mist also silences through that same
 	# silence_turns_left field, so while it's active silence alone no
-	# longer proves Entangle - fall back to Entangle's own DoT counter.
+	# longer proves Thornbind - fall back to Thornbind's own DoT counter.
 	# Only an ACTIVATED curse counts as "Cursed"; stacks still building
 	# toward hits_to_activate aren't a curse yet.
 	var cursed: bool = enemy.get("curse_active", false)
 	var silenced: bool = enemy.get("silence_turns_left", 0) > 0
-	var entangled: bool = silenced and (not cursed or enemy.get("entangle_dot_turns_left", 0) > 0)
+	var thornbound: bool = silenced and (not cursed or enemy.get("thornbind_dot_turns_left", 0) > 0)
 	var rooted: bool = enemy.get("root_turns_left", 0) > 0 or _is_column_ice_shards_blocked(enemy["pos_index"])
 	var overgrown: bool = enemy.get("overgrowth_dot_turns_left", 0) > 0
 
-	if entangled:
-		effects.append("Entangled")
+	if thornbound:
+		effects.append("Thornbound")
 	elif rooted and not overgrown:
 		# Overgrowth's own root already gets its own label below - so
 		# only fall back to plain "Rooted" when nothing more specific
-		# (Entangle, Overgrowth) is already covering it.
+		# (Thornbind, Overgrowth) is already covering it.
 		effects.append("Rooted")
 	if silenced:
 		effects.append("Silenced")
@@ -2363,10 +2454,10 @@ func _refresh_bars() -> void:
 	_recruited = PlayerManager.get_recruited_hero()
 	var stats: Dictionary = _recruited.get("stats", {})
 
-	# Leeching Hunger's borrowed hp/mana, and True Form's bonus hp while
+	# Leeching Hunger's borrowed hp/mana, and Beast of the Elderwild's bonus hp while
 	# it's active, show up as extra max here - a battle-local display
 	# bonus only, never written back to PlayerManager (see
-	# _leeching_hunger_bonus/_true_form_bonus_hp).
+	# _leeching_hunger_bonus/_beast_of_the_elderwild_bonus_hp).
 	hp_bar.max_value = _hero_max_hp()
 	hp_bar.value = _recruited.get("current_hp", 0)
 	hp_value_label.text = str(int(hp_bar.value)) + "/" + str(int(hp_bar.max_value))
@@ -2391,10 +2482,10 @@ func _refresh_bars() -> void:
 
 	# HP just changed (or at least might have) - re-check Savage
 	# Roar's on/off state against the fresh numbers above.
-	_update_savage_roar_state()
+	_update_blood_of_the_wild_state()
 
 	_refresh_status_effects()
-	_refresh_entangle_tints()
+	_refresh_thornbind_vines()
 	_refresh_overgrowth_roots()
 	_refresh_siren_lullabies()
 	_refresh_corrosive_haze()
@@ -2428,7 +2519,7 @@ func _refresh_status_effects() -> void:
 		or _player_winters_curse_active
 	_set_status_icon_visible(frost_status_icon, frost_active)
 
-	var curse_active: bool = _player_curse_active or _player_entangle_dot_turns_left > 0
+	var curse_active: bool = _player_curse_active or _player_thornbind_dot_turns_left > 0
 	_set_status_icon_visible(curse_status_icon, curse_active)
 
 	var root_active: bool = _player_root_turns_left > 0 or _player_silence_turns_left > 0 or _player_stun_turns_left > 0
@@ -2472,7 +2563,7 @@ func _populate_skill_buttons() -> void:
 		child.queue_free()
 	_skill_buttons.clear()
 	_skill_cooldown_labels.clear()
-	_savage_roar_status_label = null
+	_blood_of_the_wild_status_label = null
 
 	var skills: Array = _hero_static.get("skills", [])
 	var learned_skills: Dictionary = _recruited.get("learned_skills", {})
@@ -2481,10 +2572,11 @@ func _populate_skill_buttons() -> void:
 		var skill_id: String = skill.get("id", "")
 		var learned_level: int = learned_skills.get(skill_id, 0)
 		var is_passive: bool = skill.get("type", "") == "passive"
-		# Borrowed Time is the one skill that's neither: a real
-		# ("ultimate") level track and mana cost, but never clicked -
+		# The Mist Remembers is the one skill that's neither: a real
+		# ("ultimate") level track and cooldown, but never clicked and
+		# no mana cost -
 		# it auto-activates off the hero's own HP% (see
-		# _maybe_auto_activate_borrowed_time()) same as a passive would.
+		# _maybe_auto_activate_the_mist_remembers()) same as a passive would.
 		var is_auto_activate: bool = skill.get("auto_activate", false)
 
 		var slot := VBoxContainer.new()
@@ -2509,7 +2601,9 @@ func _populate_skill_buttons() -> void:
 		mana_label.add_theme_constant_override("outline_size", 2)
 		mana_label.add_theme_font_size_override("font_size", 12)
 		mana_label.add_theme_color_override("font_color", Color(0.4, 0.7, 1, 1))
-		if not is_passive and learned_level > 0:
+		# Blank for skills that are never cast (passives, and The Mist
+		# Remembers, which triggers itself) - they have no mana cost.
+		if not is_passive and not is_auto_activate and learned_level > 0:
 			var mana_level_data: Dictionary = GameManager.get_skill_level_data(skill, learned_level)
 			var mana_cost: float = float(mana_level_data.get("mana_cost", skill.get("mana_cost", 0)))
 			mana_label.text = str(int(mana_cost))
@@ -2528,11 +2622,11 @@ func _populate_skill_buttons() -> void:
 			# learned at all.
 			btn.disabled = true
 		elif is_passive:
-			# Passives (currently just Savage Roar and Curse of
-			# Avernus) apply themselves automatically rather than
+			# Passives (currently just Blood of the Wild and Mark of the
+			# Mist) apply themselves automatically rather than
 			# being cast - no click, no mana, no cooldown. The label
 			# instead shows whether its effect is live right now (see
-			# _update_savage_roar_state) or just "Passive" as a
+			# _update_blood_of_the_wild_state) or just "Passive" as a
 			# default for one with no such live state to report.
 			btn.disabled = true
 			status_label.text = "Passive"
@@ -2542,7 +2636,7 @@ func _populate_skill_buttons() -> void:
 			# real cooldown - tracked and ticked exactly like a
 			# manually-cast skill's (see _skill_cooldown_labels/
 			# _skill_cooldowns below), just started by
-			# _maybe_auto_activate_borrowed_time() instead of a button
+			# _maybe_auto_activate_the_mist_remembers() instead of a button
 			# press. _refresh_skill_cooldown_labels() overlays "Active"
 			# on top of the normal Ready/cooldown text while it's
 			# actually in effect.
@@ -2562,8 +2656,8 @@ func _populate_skill_buttons() -> void:
 
 		if learned_level > 0:
 			if is_passive:
-				if skill_id == "savage_roar":
-					_savage_roar_status_label = status_label
+				if skill_id == "blood_of_the_wild":
+					_blood_of_the_wild_status_label = status_label
 			else:
 				_skill_cooldown_labels[skill_id] = status_label
 				# Cooldowns persist across battles (see PlayerManager.
@@ -2571,7 +2665,7 @@ func _populate_skill_buttons() -> void:
 				# near the end of one fight stays locked into the next.
 				_skill_cooldowns[skill_id] = PlayerManager.get_skill_cooldown(skill_id)
 
-				# Borrowed Time is never added to _skill_buttons - that
+				# The Mist Remembers is never added to _skill_buttons - that
 				# dict drives _update_action_buttons()'s per-turn lock,
 				# which would re-enable its button (nothing handles a
 				# click on it) the moment the hero hasn't acted yet.
@@ -2579,12 +2673,12 @@ func _populate_skill_buttons() -> void:
 					_skill_buttons[skill_id] = btn
 
 	_refresh_skill_cooldown_labels()
-	_update_savage_roar_state()
+	_update_blood_of_the_wild_state()
 
 
 ## Splits a skill's name across two lines for its button - the first
 ## word on its own line, every word after it on the second - so a
-## multi-word name (e.g. "Summon Spirit Bear") doesn't get clipped or
+## multi-word name (e.g. "Elderwild Companion") doesn't get clipped or
 ## force its slot wider than its single-word neighbors (e.g. "Barbed Lunge").
 ## A one-word name is returned as-is, with no second line.
 func _skill_name_button_text(skill_name: String) -> String:
@@ -2739,15 +2833,22 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			# above - the mana/cooldown/turn spend happens once the
 			# click resolves (_resolve_chakram_cast), not here.
 			return
-		"mist_coil":
-			_start_mist_coil_targeting(level_data)
-			# Mist Coil needs the player to click a target first - an
+		"whisper_of_the_veil":
+			# Pressing the button again while its own targeting is still
+			# open self-casts - the hero's portrait can be fully covered
+			# by a melee creep sharing his column, leaving no spot to
+			# click it (same double-tap self-cast as Dota's Mist Coil).
+			if _targeting_mode and _targeting_purpose == "whisper_of_the_veil":
+				_resolve_whisper_of_the_veil_self_cast(_pending_whisper_of_the_veil_level_data)
+				return
+			_start_whisper_of_the_veil_targeting(level_data)
+			# Whisper of the Veil needs the player to click a target first - an
 			# enemy to damage, or the hero's own portrait to heal
 			# himself - so the mana/cooldown/turn spend happens once
-			# that click resolves (_resolve_mist_coil_enemy_cast()/
-			# _resolve_mist_coil_self_cast()), not here. Bail out of
+			# that click resolves (_resolve_whisper_of_the_veil_enemy_cast()/
+			# _resolve_whisper_of_the_veil_self_cast()), not here. Bail out of
 			# this function without falling through to the shared
-			# spend logic below, same as Entangle.
+			# spend logic below, same as Thornbind.
 			return
 		"leeching_hunger":
 			_activate_leeching_hunger(level_data)
@@ -2759,29 +2860,29 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			_activate_arctic_burn(level_data)
 		"cold_embrace":
 			_activate_cold_embrace(level_data)
-		"summon_spirit_bear":
-			_summon_spirit_bear(level_data)
-		"spirit_link":
-			_activate_spirit_link(level_data)
-		"true_form":
-			_activate_true_form(level_data)
-		"aphotic_shield":
-			_activate_aphotic_shield(level_data)
-		"entangle":
-			if not _start_entangle_targeting(level_data):
+		"elderwild_companion":
+			_elderwild_companion(level_data)
+		"wildbond":
+			_activate_wildbond(level_data)
+		"beast_of_the_elderwild":
+			_activate_beast_of_the_elderwild(level_data)
+		"veil_of_the_forgotten":
+			_activate_veil_of_the_forgotten(level_data)
+		"thornbind":
+			if not _start_thornbind_targeting(level_data):
 				# No enemy in range - nothing happened, so don't spend
 				# mana, the turn, or start the cooldown, same as above.
 				return
-			# Entangle needs the player to click a target first - the
+			# Thornbind needs the player to click a target first - the
 			# mana/cooldown/turn spend below happens once that click
-			# resolves (_resolve_entangle_cast), not here, so bail out
+			# resolves (_resolve_thornbind_cast), not here, so bail out
 			# of this function without falling through to it.
 			return
 		"torrent":
 			if not _start_torrent_targeting(level_data):
 				# No enemy in range - nothing happened, same as above.
 				return
-			# Same deferred-spend pattern as Entangle/Mist Coil - the
+			# Same deferred-spend pattern as Thornbind/Whisper of the Veil - the
 			# mana/cooldown/turn spend happens once the click resolves
 			# (_resolve_torrent_cast), not here.
 			return
@@ -3251,7 +3352,7 @@ func _cast_scatterblast(level_data: Dictionary) -> bool:
 ## it (the player's own hero_image, or a rival's own node). The damage
 ## above has already fully resolved by the time this plays; it never
 ## gates on this. First particle-based effect in this file - every
-## other one-shot visual (Ghostship's flight, Spirit Bear's summon) is
+## other one-shot visual (Ghostship's flight, Elderwild Companion's summon) is
 ## a plain TextureRect tween instead, since there's no shotgun-pellet
 ## art asset to tween in the same way.
 func _play_scatterblast_effect(origin_node: Control, direction: int, range_columns: int) -> void:
@@ -3277,7 +3378,7 @@ func _play_scatterblast_effect(origin_node: Control, direction: int, range_colum
 	particles.scale_amount_max = 8.0
 	particles.color = Color(1.0, 0.65, 0.15, 1.0)
 	add_child(particles)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(particles, enemies_layer.get_index() + 1)
 	particles.emitting = true
@@ -3345,7 +3446,7 @@ func _activate_leap(level_data: Dictionary) -> void:
 ## helper Abyssal Spasm/Torrent/Ghostship use) plus a root for this level's
 ## own `root_turns` - reusing _apply_root() with no `silence_turns`/
 ## `dot_damage`/`dot_duration` keys in `level_data` (all default to 0
-## there), so unlike Entangle this only ever roots, never silences or
+## there), so unlike Thornbind this only ever roots, never silences or
 ## burns - a rooted enemy can still attack and cast skills, just not
 ## move or jump (see _is_enemy_rooted()'s own call sites in
 ## _enemy_turn()/_enemy_hero_turn(), which only ever gate movement
@@ -3472,29 +3573,29 @@ func _resolve_lucent_beam_cast(target: Dictionary, level_data: Dictionary) -> vo
 	_mark_turn_used()
 
 
-## Resolves an Entangle cast once the player has clicked a target
-## (see _start_entangle_targeting()/_on_enemy_clicked()): roots and
+## Resolves an Thornbind cast once the player has clicked a target
+## (see _start_thornbind_targeting()/_on_enemy_clicked()): roots and
 ## silences `target` for this level's turn counts and arms its
 ## damage-over-time (ticked once per turn, at the start of that enemy's
-## own turn, by _tick_enemy_turn_start_effects()). Then spends mana, starts Entangle's own
+## own turn, by _tick_enemy_turn_start_effects()). Then spends mana, starts Thornbind's own
 ## cooldown, and ends the turn - the same bookkeeping _on_skill_pressed
-## does for every other skill, just deferred to here since Entangle's
+## does for every other skill, just deferred to here since Thornbind's
 ## target isn't known until after that function already returned.
-func _resolve_entangle_cast(target: Dictionary, level_data: Dictionary) -> void:
+func _resolve_thornbind_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
 	_apply_root(target, level_data)
 	if is_instance_valid(target.get("node")):
-		_play_entangle_effect(target["node"])
-	_refresh_entangle_tints()
+		_play_thornbind_effect(target["node"])
+	_refresh_thornbind_vines()
 
 	if _is_hero_hidden():
 		_end_depthsveil()
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
-	_skill_cooldowns["entangle"] = int(level_data.get("cooldown", 0))
-	PlayerManager.set_skill_cooldown("entangle", _skill_cooldowns["entangle"])
+	_skill_cooldowns["thornbind"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("thornbind", _skill_cooldowns["thornbind"])
 	_refresh_skill_cooldown_labels()
 
 	if _battle_over or _stage_generation != generation_before:
@@ -3503,25 +3604,25 @@ func _resolve_entangle_cast(target: Dictionary, level_data: Dictionary) -> void:
 	_mark_turn_used()
 
 
-## Resolves a Mist Coil cast on an enemy: deals `level_data.damage`
+## Resolves a Whisper of the Veil cast on an enemy: deals `level_data.damage`
 ## straight damage (still mitigated by the target's own armor, via
 ## _deal_fixed_damage_to_enemy() - same helper Abyssal Spasm and the bear
-## use), then spends mana, starts Mist Coil's cooldown, and ends the
-## turn - the same bookkeeping _resolve_entangle_cast() does for
-## Entangle, since Mist Coil's target isn't known until after
+## use), then spends mana, starts Whisper of the Veil's cooldown, and ends the
+## turn - the same bookkeeping _resolve_thornbind_cast() does for
+## Thornbind, since Whisper of the Veil's target isn't known until after
 ## _on_skill_pressed() already returned.
-func _resolve_mist_coil_enemy_cast(target: Dictionary, level_data: Dictionary) -> void:
+func _resolve_whisper_of_the_veil_enemy_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
 	var damage: float = float(level_data.get("damage", 0))
 	# Captured before the hit, which may kill (and free) the target.
-	_play_mist_coil_effect(hero_image, target.get("node"))
+	_play_whisper_of_the_veil_effect(hero_image, target.get("node"))
 	_deal_fixed_damage_to_enemy(target, damage)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
-	_skill_cooldowns["mist_coil"] = int(level_data.get("cooldown", 0))
-	PlayerManager.set_skill_cooldown("mist_coil", _skill_cooldowns["mist_coil"])
+	_skill_cooldowns["whisper_of_the_veil"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("whisper_of_the_veil", _skill_cooldowns["whisper_of_the_veil"])
 	_refresh_skill_cooldown_labels()
 
 	if _battle_over or _stage_generation != generation_before:
@@ -3532,7 +3633,7 @@ func _resolve_mist_coil_enemy_cast(target: Dictionary, level_data: Dictionary) -
 
 ## Resolves a Torrent cast on `target`: deals `level_data.damage`
 ## (mitigated by the target's own armor, via _deal_fixed_damage_to_
-## enemy() - same helper Abyssal Spasm/Mist Coil use) and stuns it for
+## enemy() - same helper Abyssal Spasm/Whisper of the Veil use) and stuns it for
 ## `level_data.stun_turns` if it survives, exactly like Barbed Lunge's own
 ## stun. At max level (level_data.radius > 0), also splashes every
 ## OTHER living, targetable enemy within that radius of `target`'s own
@@ -3564,9 +3665,9 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 		_play_torrent_splash_on_illusions(_enemy_illusions, target_pos, radius)
 		_deal_aoe_damage_to_enemy_illusions(target_pos, radius, damage)
 
-	# No Depthsveil check here, unlike Entangle's own resolve - that
+	# No Depthsveil check here, unlike Thornbind's own resolve - that
 	# only ever matters for Veyrik's own kit, and Torrent belongs to
-	# Kunkka (same reasoning as Mist Coil's enemy-cast, Abaddon's own
+	# Kunkka (same reasoning as Whisper of the Veil's enemy-cast, Morvael's own
 	# skill, right above/below this).
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -3600,7 +3701,7 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 ## teleport() (called from _end_turn()) for what actually happens with
 ## it, on the hero's own next turn. Recasting (marking a different
 ## target before the first one ever triggers) simply overwrites the
-## pending mark outright, same as Leeching Hunger/True Form being
+## pending mark outright, same as Leeching Hunger/Beast of the Elderwild being
 ## recast - there's nothing to "give back" from the old one.
 func _resolve_xmarks_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
@@ -3779,7 +3880,7 @@ func _resolve_timber_chain_cast(target: Dictionary, level_data: Dictionary) -> v
 ## there - snapshotting that position now, so it stays fixed even if
 ## `target` (or anything else) moves later. Any chakram already planted
 ## from a previous cast is torn down first, same "recast replaces
-## outright" reasoning as _summon_spirit_bear()'s own _despawn_bear()
+## outright" reasoning as _elderwild_companion()'s own _despawn_bear()
 ## call, since the ultimate's long cooldown makes an overlapping recast
 ## a rare, deliberate choice rather than something worth stacking.
 func _resolve_chakram_cast(target: Dictionary, level_data: Dictionary) -> void:
@@ -3843,7 +3944,7 @@ func _spawn_chakram_marker(pos_index: int) -> Node2D:
 	var marker := Node2D.new()
 	marker.position = Vector2(_index_to_x(pos_index) + _grid_unit() / 2.0, _creature_y() + full_creature_height / 2.0)
 	add_child(marker)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(marker, enemies_layer.get_index() + 1)
 
@@ -3998,7 +4099,7 @@ func _despawn_chakram() -> void:
 
 ## Purely cosmetic: spawns the ship art at `start_pos_index` and tweens
 ## it across to `target_pos_index`'s, fading itself out once it arrives
-## - mirrors _summon_spirit_bear()'s own texture-loading/sizing
+## - mirrors _elderwild_companion()'s own texture-loading/sizing
 ## convention, just as a one-shot flight instead of a persistent ally.
 ## No-op (with a console print, same as a missing bear image) if the
 ## art asset isn't actually there. `start_pos_index` is the player's own
@@ -4027,7 +4128,7 @@ func _play_ghostship_animation(start_pos_index: int, target_pos_index: int) -> v
 	tex_rect.flip_h = target_pos_index < start_pos_index
 	tex_rect.position = Vector2(_index_to_x(start_pos_index), _creature_y())
 	add_child(tex_rect)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(tex_rect, enemies_layer.get_index() + 1)
 
@@ -4059,7 +4160,7 @@ func _play_lucent_beam_impact(target_node: TextureRect) -> void:
 		target_node.position.y - LUCENT_BEAM_FALL_HEIGHT
 	)
 	add_child(beam)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(beam, enemies_layer.get_index() + 1)
 
@@ -4100,7 +4201,7 @@ func _play_sacred_arrow_flight(caster_node: Control, target_node: TextureRect, d
 	arrow.scale = Vector2(direction, 1.0)
 	arrow.position = Vector2(start_x, center_y)
 	add_child(arrow)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(arrow, enemies_layer.get_index() + 1)
 
@@ -4231,7 +4332,7 @@ func _build_music_note(size: float, color: Color) -> Node2D:
 ## _player_siren_song_asleep flag a rival's cast sets), and his Spirit
 ## Bear (the same mark, on _bear). Called from
 ## _refresh_bars() (i.e. constantly), same approach as
-## _refresh_entangle_tints(). A mark only counts while the stun it rode
+## _refresh_thornbind_vines(). A mark only counts while the stun it rode
 ## in on is still running, and is cleared here once that stun is over -
 ## so a later stun from anything else (Torrent, Frostbite...) never
 ## shows a lullaby.
@@ -4252,7 +4353,7 @@ func _refresh_siren_lullabies() -> void:
 ## Purely cosmetic: puts Song of the Siren's lullaby on a sleeping
 ## `node` (or takes it off) - a gentle blue tint over the sprite's own
 ## silhouette (a tinted copy of its texture, the same no-clash overlay
-## approach as the frost/Borrowed Time's glow - it never touches the
+## approach as the frost/The Mist Remembers's glow - it never touches the
 ## sprite's own modulate/self_modulate) that slowly breathes, plus a
 ## music note floating up off its head and fading every ~0.8s. Both
 ## live under one child Control, so they follow the sprite's position/
@@ -4335,7 +4436,7 @@ func _set_siren_lullaby(node: Variant, active: bool) -> void:
 
 ## Purely cosmetic: Corrosive Haze's cast - a glob of murky ooze lobbed
 ## from `from_node` (Slardar) to `to_node` (the marked target), the
-## same orb projectile Mist Coil/Ice Blast use (_play_orb_projectile()),
+## same orb projectile Ice Blast uses (_play_orb_projectile()),
 ## in CORROSIVE_HAZE_OOZE_COLOR with a darker rim, bursting into a
 ## splatter of dark droplets and flashing the target sickly green. The
 ## lingering haze is _set_corrosive_haze()'s.
@@ -4344,13 +4445,13 @@ func _play_corrosive_haze_glob(from_node: Variant, to_node: Variant) -> void:
 
 
 ## Keeps Corrosive Haze's lingering haze in sync with who's currently
-## marked - every enemy and the player's own Spirit Bear carrying a
+## marked - every enemy and the player's own Elderwild Companion carrying a
 ## "corrosive_haze_bonus_pct" > 0, and the player while
 ## _player_corrosive_haze_bonus_pct > 0 (a rival's cast). The mark's
 ## own countdown (armor_reduction_turns_left) already clears those to 0
 ## when it ends, so the haze just follows them. Called from
 ## _refresh_bars() (i.e. constantly), same approach as
-## _refresh_entangle_tints().
+## _refresh_thornbind_vines().
 func _refresh_corrosive_haze() -> void:
 	for enemy in _enemies:
 		_set_corrosive_haze(enemy.get("node"), float(enemy.get("corrosive_haze_bonus_pct", 0.0)) > 0.0)
@@ -4805,13 +4906,13 @@ func _build_sacred_arrow(palette: Dictionary = {}) -> Node2D:
 ## Resolves a Cold Feet cast on `target`: no immediate damage, just
 ## arms this level's own damage/duration onto `target`'s own
 ## Dictionary (dedicated cold_feet_dot_damage/cold_feet_dot_turns_left
-## fields, separate from Entangle's/Curse of Avernus's own DoT fields
+## fields, separate from Thornbind's/Mark of the Mist's own DoT fields
 ## even though the mechanism is identical, since a different skill's
 ## effect shouldn't silently share or clobber another's state) - ticked
 ## once per turn, at the start of that enemy's own turn, by
 ## _tick_enemy_turn_start_effects(). Recasting on an already-frozen target simply
 ## overwrites its counters with this cast's fresh values, same as
-## Entangle's own recast rule.
+## Thornbind's own recast rule.
 func _resolve_cold_feet_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
@@ -4838,7 +4939,7 @@ func _resolve_cold_feet_cast(target: Dictionary, level_data: Dictionary) -> void
 ## this level's own radius of `target`'s column (`target` included -
 ## it's just the center of the AoE, not a special case) via dedicated
 ## ice_vortex_dot_damage/ice_vortex_dot_turns_left fields, kept
-## separate from Cold Feet's/Entangle's/Curse of Avernus's own DoT
+## separate from Cold Feet's/Thornbind's/Mark of the Mist's own DoT
 ## fields for the same reason Cold Feet's are separate from theirs.
 ## Ticked once per turn, at the start of that enemy's own turn, by
 ## _tick_enemy_turn_start_effects(). Recasting overwrites whatever DoT
@@ -4862,7 +4963,7 @@ func _resolve_ice_vortex_cast(target: Dictionary, level_data: Dictionary) -> voi
 				_flash_bounce_hit(enemy["node"], COLD_FEET_FLASH_COLOR)
 	# The rival's own illusions (Naga Siren's Mirror Image) in the same
 	# area get the same DoT - ticked by _tick_enemy_illusions_ice_vortex()
-	# at the start of the enemy turn. The rival's own Spirit Bear needs
+	# at the start of the enemy turn. The rival's own Elderwild Companion needs
 	# nothing extra: it's a regular _enemies entry, already marked above.
 	_mark_illusions_ice_vortex(_enemy_illusions, target_pos, radius, damage, duration)
 
@@ -4887,8 +4988,8 @@ func _resolve_ice_vortex_cast(target: Dictionary, level_data: Dictionary) -> voi
 ## mitigated by the target's own armor via _deal_fixed_damage_to_enemy()
 ## - same helper Abyssal Spasm/Torrent/Ghostship use. This is SKILL damage,
 ## not the plain Attack action itself, so - same as every other skill
-## here - it never triggers Leeching Hunger's steal, Spirit Link's
-## lifesteal, or Curse of Avernus's stacking; those are all scoped
+## here - it never triggers Leeching Hunger's steal, Wildbond's
+## lifesteal, or Mark of the Mist's stacking; those are all scoped
 ## specifically to _apply_hero_attack().
 func _resolve_chilling_touch_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
@@ -4992,7 +5093,7 @@ func _spawn_lil_shredder_impact(target_pos_index: int) -> void:
 	particles.scale_amount_max = 4.0
 	particles.color = Color(1.0, 0.85, 0.3, 1.0)
 	add_child(particles)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(particles, enemies_layer.get_index() + 1)
 	particles.emitting = true
@@ -5162,7 +5263,7 @@ func _play_mortimer_kisses_impact_effect(pos_index: int) -> void:
 	particles.scale_amount_max = 20.0
 	particles.color = Color(1.0, 0.35, 0.05, 1.0)
 	add_child(particles)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(particles, enemies_layer.get_index() + 1)
 	particles.emitting = true
@@ -5244,9 +5345,9 @@ func _spawn_illusion_node(pos_index: int) -> TextureRect:
 	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tex_rect.flip_h = hero_image.flip_h
 	tex_rect.modulate = Color(1, 1, 1, HERO_ILLUSION_ALPHA)
-	tex_rect.position = Vector2(_index_to_x(pos_index), _creature_y())
+	tex_rect.position = Vector2(_index_to_x(pos_index), _creature_top_y(tex_rect.size.y))
 	add_child(tex_rect)
-	# Same reasoning as _summon_spirit_bear()'s own move_child() call -
+	# Same reasoning as _elderwild_companion()'s own move_child() call -
 	# render at the hero/enemy layer, not on top of every UI panel.
 	move_child(tex_rect, enemies_layer.get_index() + 1)
 	return tex_rect
@@ -5661,8 +5762,8 @@ func _resolve_frostbite_cast(target: Dictionary, level_data: Dictionary) -> void
 # Kunkka's Tidebringer - a passive, so unlike Torrent above there's no
 # button/cast/mana/cooldown for it (see _populate_skill_buttons()'s
 # "passive" branch); it just triggers off the hero's own plain Attacks
-# (_apply_hero_attack()), exactly the way Curse of Avernus's stacking
-# does for Abaddon.
+# (_apply_hero_attack()), exactly the way Mark of the Mist's stacking
+# does for Morvael.
 # ------------------------------------------------------------------
 
 ## Tidebringer's level data for whatever level the player has it at
@@ -5758,7 +5859,7 @@ func _apply_cleaver_cleave(target: Dictionary, attack_damage: float) -> void:
 		return
 	# The cleave is melee-only - a ranged hero still gets Cleaver's flat
 	# +10 damage (a plain "stat" bonus, see GameManager's item entry),
-	# just no splash. True Form's forced melee counts as melee here,
+	# just no splash. Beast of the Elderwild's forced melee counts as melee here,
 	# same as everywhere else _is_ranged_hero() is asked.
 	if _is_ranged_hero():
 		return
@@ -5782,10 +5883,10 @@ func _apply_cleaver_cleave(target: Dictionary, attack_damage: float) -> void:
 ## for the second target, same as Cleaver's splash. A full charge with
 ## no second enemy in range stays full for the next Attack instead of
 ## being spent. Rival illusions aren't eligible - they only ever take
-## redirected attacks and AoE damage; the rival's own Spirit Bear, a
+## redirected attacks and AoE damage; the rival's own Elderwild Companion, a
 ## regular enemy, is. Owning several doesn't split more often (the +10
 ## damage still stacks per copy), same as Cleaver. No-op for melee
-## heroes (True Form's forced melee included) and without the item.
+## heroes (Beast of the Elderwild's forced melee included) and without the item.
 func _apply_hunters_bow_split(target: Dictionary, attack_damage: float) -> void:
 	if PlayerManager.get_inventory().get("hunters_bow", 0) <= 0 or not _is_ranged_hero():
 		return
@@ -5872,7 +5973,7 @@ func _apply_rip_tide_cleave(target: Dictionary, attack_damage: float) -> void:
 ## use, so a splashed enemy visibly reads as hit. Every enemy illusion
 ## within that same radius is hit (and flashed) too - illusions are
 ## unconditional collateral on any AoE splash, same rule Moon Glaives
-## follows. The boss's own Spirit Bear needs nothing extra: it's a
+## follows. The boss's own Elderwild Companion needs nothing extra: it's a
 ## regular _enemies entry, so the loop reaches it like any other enemy.
 ##
 ## Shared by Tidebringer, the Cleaver item and Rip Tide - any future
@@ -5931,7 +6032,7 @@ func _get_moon_glaives_level_data() -> Dictionary:
 ## enemy illusion within that same radius is ALSO hit, via
 ## _deal_aoe_damage_to_enemy_illusions() - illusions are unconditional
 ## collateral on any AoE splash, never counted toward the bounce cap
-## (see that function's own comment). The boss's own Spirit Bear needs
+## (see that function's own comment). The boss's own Elderwild Companion needs
 ## no separate call: it's a regular _enemies entry (see
 ## _get_enemy_spirit_bear()), so the loop below already reaches it like
 ## any other enemy. Each bounced enemy also gets _flash_bounce_hit()'s
@@ -6088,7 +6189,7 @@ func _apply_bash_of_the_deep_illusion_knockback(illusion: Dictionary, level_data
 	if pos != illusion["pos_index"]:
 		illusion["pos_index"] = pos
 		if is_instance_valid(illusion.get("node")):
-			illusion["node"].position = Vector2(_index_to_x(pos), _creature_y())
+			illusion["node"].position = Vector2(_index_to_x(pos), _creature_top_y(illusion["node"].size.y))
 
 
 # ------------------------------------------------------------------
@@ -6290,7 +6391,7 @@ func _activate_eclipse(level_data: Dictionary) -> void:
 ## time, so the range follows her if she moves) - a real enemy or, while
 ## the rival has Mirror Image up, one of its illusions, both equally
 ## likely since an illusion is a real occupant of its own column same as
-## the boss's own Spirit Bear already is (it's a regular _enemies entry,
+## the boss's own Elderwild Companion already is (it's a regular _enemies entry,
 ## same reasoning as Moon Glaives' own bounce - see
 ## _apply_moon_glaives_bounces()'s own comment). A beam with nothing in
 ## range still counts against the total, same as a Dota Eclipse beam
@@ -7099,7 +7200,7 @@ func _apply_reactive_armor_regen() -> void:
 ## Activates Overgrowth: every living, targetable enemy within
 ## `level_data.radius` columns of the hero's CURRENT position gets
 ## rooted (target["root_turns_left"], the same shared per-enemy field
-## Entangle's/Nature's Guise's/Ice Shards'/Winter's Curse's own root/
+## Thornbind's/Nature's Guise's/Ice Shards'/Winter's Curse's own root/
 ## freeze effects already use - it can still attack and cast skills
 ## while rooted, same as any other rooted enemy) for `level_data.
 ## root_duration` turns, and armed with that same level's own DoT
@@ -7132,15 +7233,15 @@ func _activate_overgrowth(level_data: Dictionary) -> void:
 	_show_message_over_hero("Overgrowth!")
 
 
-## Resolves a Mist Coil cast on Abaddon himself: pays `level_data.
+## Resolves a Whisper of the Veil cast on Morvael himself: pays `level_data.
 ## hp_cost` straight off current_hp - no armor mitigation, same as the
-## Spirit Bear's death penalty (_apply_bear_death_penalty()) - then
+## Elderwild Companion's death penalty (_apply_bear_death_penalty()) - then
 ## heals for `level_data.heal`, which is always more than the HP cost,
 ## for a net gain. If the hero doesn't have enough HP to cover the
 ## cost, nothing happens at all: no HP lost, no heal, and - like a
-## failed Barbed Lunge/Abyssal Spasm/Entangle target search - no mana, cooldown,
+## failed Barbed Lunge/Abyssal Spasm/Thornbind target search - no mana, cooldown,
 ## or turn spent either, so the player can simply try something else.
-func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
+func _resolve_whisper_of_the_veil_self_cast(level_data: Dictionary) -> void:
 	var hp_cost: float = float(level_data.get("hp_cost", 0))
 	var current_hp: float = float(_recruited.get("current_hp", 0))
 	if current_hp < hp_cost:
@@ -7153,12 +7254,12 @@ func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
 
 	PlayerManager.damage_hero(hp_cost)
 	heal(float(level_data.get("heal", 0)))
-	_play_mist_coil_effect(hero_image, hero_image)
+	_play_whisper_of_the_veil_effect(hero_image, hero_image)
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
-	_skill_cooldowns["mist_coil"] = int(level_data.get("cooldown", 0))
-	PlayerManager.set_skill_cooldown("mist_coil", _skill_cooldowns["mist_coil"])
+	_skill_cooldowns["whisper_of_the_veil"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("whisper_of_the_veil", _skill_cooldowns["whisper_of_the_veil"])
 	_refresh_skill_cooldown_labels()
 
 	if _battle_over or _stage_generation != generation_before:
@@ -7167,35 +7268,35 @@ func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
 	_mark_turn_used()
 
 
-## Puts Entangle's root/silence/damage-over-time state onto `target`:
+## Puts Thornbind's root/silence/damage-over-time state onto `target`:
 ##   - "root_turns_left": can't move while > 0 (checked in
 ##     _enemy_turn()'s movement fallback and flee logic) - it can
 ##     still attack normally if something's already in its range.
 ##   - "silence_turns_left": blocks a hero-fight boss's own skill casts
 ##     while it's > 0 (see _is_enemy_silenced()/_enemy_hero_turn()) -
-##     the same field Curse of Avernus's own silence writes onto this
-##     target (_apply_curse_of_avernus_stack()). Regular creeps never
+##     the same field Mark of the Mist's own silence writes onto this
+##     target (_apply_mark_of_the_mist_stack()). Regular creeps never
 ##     cast skills in the first place, so this only ever matters
 ##     against a hero-fight boss.
-##   - "entangle_dot_damage"/"entangle_dot_turns_left": ticked once per
+##   - "thornbind_dot_damage"/"thornbind_dot_turns_left": ticked once per
 ##     turn by _tick_enemy_turn_start_effects(), dealing that much
 ##     damage (through normal armor mitigation) for that many turns.
-## Recasting Entangle on an already-rooted target simply overwrites
+## Recasting Thornbind on an already-rooted target simply overwrites
 ## its counters with this cast's fresh values rather than stacking.
 func _apply_root(target: Dictionary, level_data: Dictionary) -> void:
 	target["root_turns_left"] = int(level_data.get("root_turns", 0))
 	target["silence_turns_left"] = int(level_data.get("silence_turns", 0))
-	target["entangle_dot_damage"] = float(level_data.get("dot_damage", 0))
-	target["entangle_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	target["thornbind_dot_damage"] = float(level_data.get("dot_damage", 0))
+	target["thornbind_dot_turns_left"] = int(level_data.get("dot_duration", 0))
 
 
 ## Applies every "start of its own turn" damage-over-time currently on
 ## `enemy`, all in one pass, right before anything else about its turn
 ## is decided (stun included - see the call site in _enemy_turn()/
-## _enemy_hero_turn()): Entangle's own DoT, Curse of Avernus's DoT
+## _enemy_hero_turn()): Thornbind's own DoT, Mark of the Mist's DoT
 ## (ending the curse once its own duration runs out - stack decay for a
 ## NOT-yet-activated curse is a separate, turn-count-based check handled
-## by _tick_curse_of_avernus_effects() instead, since it isn't a DoT),
+## by _tick_mark_of_the_mist_effects() instead, since it isn't a DoT),
 ## Cold Feet's/Ice Vortex's/Frostbite's/Leech Seed's own DoTs (Leech
 ## Seed also healing the hero back), Ice Blast's DoT plus its own
 ## execute-threshold check, and Treant Protector's Overgrowth DoT -
@@ -7208,7 +7309,7 @@ func _apply_root(target: Dictionary, level_data: Dictionary) -> void:
 ## this replaces used to need individually. Also stops early (without
 ## ending the battle) the moment `enemy` itself dies partway through,
 ## since there's nothing left on it worth ticking further that turn.
-## Root/silence (Entangle's own counters, also reused by Nature's Guise's
+## Root/silence (Thornbind's own counters, also reused by Nature's Guise's
 ## root) are deliberately NOT decremented here, unlike everything else in
 ## this function - unlike a DoT, they GATE a decision later in this same
 ## turn (_is_enemy_rooted()/_is_enemy_silenced(), checked from _enemy_
@@ -7249,11 +7350,11 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 			if _battle_over or enemy.get("current_hp", 0) <= 0:
 				return
 
-	if enemy.get("entangle_dot_turns_left", 0) > 0:
-		enemy["entangle_dot_turns_left"] -= 1
-		var entangle_dot: float = float(enemy.get("entangle_dot_damage", 0))
-		if entangle_dot > 0.0:
-			_deal_fixed_damage_to_enemy(enemy, entangle_dot, false, false)
+	if enemy.get("thornbind_dot_turns_left", 0) > 0:
+		enemy["thornbind_dot_turns_left"] -= 1
+		var thornbind_dot: float = float(enemy.get("thornbind_dot_damage", 0))
+		if thornbind_dot > 0.0:
+			_deal_fixed_damage_to_enemy(enemy, thornbind_dot, false, false)
 			if _battle_over or enemy.get("current_hp", 0) <= 0:
 				return
 
@@ -7342,8 +7443,8 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 ## "start of the player's own turn" duration counter and damage-over-
 ## time a rival hero could have inflicted on him, ticked in one pass
 ## against the single-player battle-local vars instead of a per-enemy
-## Dictionary - Entangle's root/silence counters and DoT, Curse of
-## Avernus's DoT (stack decay lives in _tick_enemy_curse_of_avernus_
+## Dictionary - Thornbind's root/silence counters and DoT, Mark of the
+## Mist's DoT (stack decay lives in _tick_enemy_mark_of_the_mist_
 ## effects() instead, same "not a DoT" reasoning as the enemy-side
 ## version), Cold Feet's/Ice Vortex's/Frostbite's own DoTs, Ice Blast's
 ## DoT plus its own execute-threshold check, Treant Protector's Leech
@@ -7351,7 +7452,7 @@ func _tick_enemy_turn_start_effects(enemy: Dictionary) -> void:
 ## CASTER - the rival - not the player, so this heals the boss directly
 ## via _get_hero_fight_boss() each tick instead of calling heal()), and
 ## Overgrowth's own DoT (its root shares _player_root_turns_left above,
-## the same field Entangle's own root already ticks down), Snapfire's
+## the same field Thornbind's own root already ticks down), Snapfire's
 ## Lil' Shredder armor reduction (a plain countdown, zeroing the
 ## reduction itself once it runs out - no damage of its own to deal,
 ## just folded into _hero_armor() for as long as it's up), and Mortimer
@@ -7367,10 +7468,10 @@ func _tick_player_turn_start_effects() -> void:
 	if _player_silence_turns_left > 0:
 		_player_silence_turns_left -= 1
 
-	if _player_entangle_dot_turns_left > 0:
-		_player_entangle_dot_turns_left -= 1
-		if _player_entangle_dot_damage > 0.0:
-			apply_damage(_player_entangle_dot_damage)
+	if _player_thornbind_dot_turns_left > 0:
+		_player_thornbind_dot_turns_left -= 1
+		if _player_thornbind_dot_damage > 0.0:
+			apply_damage(_player_thornbind_dot_damage)
 
 	if _player_curse_active:
 		if _player_curse_dot_turns_left > 0:
@@ -7392,7 +7493,7 @@ func _tick_player_turn_start_effects() -> void:
 			apply_damage(_player_ice_vortex_dot_damage)
 	# His illusions caught in the same vortex tick right here too,
 	# independently of whether the hero himself still is - and so does
-	# every DoT a rival has put on his Spirit Bear.
+	# every DoT a rival has put on his Elderwild Companion.
 	_tick_player_allies_ice_vortex()
 	_tick_bear_turn_start_effects()
 
@@ -7448,16 +7549,16 @@ func _tick_player_turn_start_effects() -> void:
 			apply_damage(_player_mortimer_burn_dot_damage)
 
 
-## Whether `enemy` is currently rooted by Entangle and therefore can't
+## Whether `enemy` is currently rooted by Thornbind and therefore can't
 ## move (it can still attack normally if something's already in
 ## range) - checked from _enemy_turn()'s flee/movement-fallback logic.
 func _is_enemy_rooted(enemy: Dictionary) -> bool:
 	return enemy.get("root_turns_left", 0) > 0
 
 
-## Whether `enemy` is currently silenced - by Entangle or Curse of
-## Avernus, both of which write the same `silence_turns_left` field
-## (see _apply_root()/_apply_curse_of_avernus_stack()) - and therefore
+## Whether `enemy` is currently silenced - by Thornbind or Mark of the
+## Mist, both of which write the same `silence_turns_left` field
+## (see _apply_root()/_apply_mark_of_the_mist_stack()) - and therefore
 ## can't cast a skill this turn. Checked from _enemy_hero_turn(), the
 ## only enemy AI that ever casts skills in the first place.
 func _is_enemy_silenced(enemy: Dictionary) -> bool:
@@ -7523,7 +7624,7 @@ func _apply_leeching_hunger_steal(target: Dictionary) -> void:
 ## `from_node` (whoever was just drained) to `to_node` (whoever did the
 ## draining), each along its own slightly-arced path and staggered so
 ## they read as a flow rather than a single blob, in `mote_color`. Used
-## by Leeching Hunger's steal (LEECHING_HUNGER_MOTE_COLOR) and Spirit Link's
+## by Leeching Hunger's steal (LEECHING_HUNGER_MOTE_COLOR) and Wildbond's
 ## lifesteal (LIFESTEAL_MOTE_COLOR, via _play_lifesteal_effect()), each from both the player's side
 ## and the rival's - the stat/HP has already moved by the time this
 ## plays; it never gates on this. Individual tweened ColorRects rather than
@@ -7756,8 +7857,8 @@ func _activate_cold_embrace(level_data: Dictionary) -> void:
 ## ever really Arctic Burn for Winter Wyvern's own kit, since the rest
 ## belong to other heroes, but this stays generic and correct regardless
 ## of whose battle it runs in - plus every debuff a rival hero fight
-## boss could have inflicted (root, silence, Entangle's/Curse of
-## Avernus's/Cold Feet's/Ice Vortex's/Ice Blast's/Frostbite's/Leech
+## boss could have inflicted (root, silence, Thornbind's/Mark of the
+## Mist's/Cold Feet's/Ice Vortex's/Ice Blast's/Frostbite's/Leech
 ## Seed's/Overgrowth's/Mortimer Kisses' burn damage-over-time, Ice
 ## Blast's execute threshold, Barbed Lunge's/Torrent's stun, Lil' Shredder's
 ## own armor reduction, and a hostile Leeching Hunger's stat penalty) -
@@ -7772,20 +7873,20 @@ func _dispel_all_hero_effects() -> void:
 		_end_depthsveil()
 	if _moonlight_shadow_active:
 		_end_moonlight_shadow()
-	if _spirit_link_active:
-		_end_spirit_link()
-	if _true_form_active:
-		_end_true_form()
-	if _aphotic_shield_active:
-		_end_aphotic_shield(false)
-	if _borrowed_time_active:
-		_end_borrowed_time()
+	if _wildbond_active:
+		_end_wildbond()
+	if _beast_of_the_elderwild_active:
+		_end_beast_of_the_elderwild()
+	if _veil_of_the_forgotten_active:
+		_end_veil_of_the_forgotten(false)
+	if _the_mist_remembers_active:
+		_end_the_mist_remembers()
 
 	_player_leeching_hunger_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 	_player_root_turns_left = 0
 	_player_silence_turns_left = 0
-	_player_entangle_dot_damage = 0.0
-	_player_entangle_dot_turns_left = 0
+	_player_thornbind_dot_damage = 0.0
+	_player_thornbind_dot_turns_left = 0
 	_player_stun_turns_left = 0
 	_player_winters_curse_active = false
 	_player_curse_stacks = 0
@@ -8019,45 +8120,45 @@ func _update_hero_visibility() -> void:
 
 
 # ------------------------------------------------------------------
-# Erynd's Spirit Link.
+# Erynd's Wildbond.
 # ------------------------------------------------------------------
 
-## Activates (or refreshes) Spirit Link at `level_data`'s values.
+## Activates (or refreshes) Wildbond at `level_data`'s values.
 ## Nothing needs to be "returned" the way Leeching Hunger's borrowed
 ## stats do on recast, since the bonus armor/lifesteal aren't taken
 ## from anything - overwriting the running values is enough.
-func _activate_spirit_link(level_data: Dictionary) -> void:
-	_spirit_link_active = true
-	_spirit_link_lifesteal_pct = float(level_data.get("lifesteal_pct", 0.0))
-	_spirit_link_bonus_armor = float(level_data.get("bonus_armor", 0))
-	_spirit_link_turns_remaining = int(level_data.get("duration", 0))
-	_spirit_link_duration_pending_start = true
+func _activate_wildbond(level_data: Dictionary) -> void:
+	_wildbond_active = true
+	_wildbond_lifesteal_pct = float(level_data.get("lifesteal_pct", 0.0))
+	_wildbond_bonus_armor = float(level_data.get("bonus_armor", 0))
+	_wildbond_turns_remaining = int(level_data.get("duration", 0))
+	_wildbond_duration_pending_start = true
 	_set_hero_enlarged(hero_image, true)
 
 
-## Ticks Spirit Link's duration down once per End Turn, same timing
+## Ticks Wildbond's duration down once per End Turn, same timing
 ## and "casting turn doesn't count" rule as Leeching Hunger/Depthsveil.
-func _tick_spirit_link() -> void:
-	if not _spirit_link_active:
+func _tick_wildbond() -> void:
+	if not _wildbond_active:
 		return
 
-	if _spirit_link_duration_pending_start:
-		_spirit_link_duration_pending_start = false
+	if _wildbond_duration_pending_start:
+		_wildbond_duration_pending_start = false
 		return
 
-	_spirit_link_turns_remaining -= 1
-	if _spirit_link_turns_remaining <= 0:
-		_end_spirit_link()
+	_wildbond_turns_remaining -= 1
+	if _wildbond_turns_remaining <= 0:
+		_end_wildbond()
 
 
-## Ends Spirit Link, whether from its duration running out or a fresh
-## cast overwriting it outright (see _activate_spirit_link()).
-func _end_spirit_link() -> void:
-	_spirit_link_active = false
-	_spirit_link_lifesteal_pct = 0.0
-	_spirit_link_bonus_armor = 0.0
-	_spirit_link_turns_remaining = 0
-	_spirit_link_duration_pending_start = false
+## Ends Wildbond, whether from its duration running out or a fresh
+## cast overwriting it outright (see _activate_wildbond()).
+func _end_wildbond() -> void:
+	_wildbond_active = false
+	_wildbond_lifesteal_pct = 0.0
+	_wildbond_bonus_armor = 0.0
+	_wildbond_turns_remaining = 0
+	_wildbond_duration_pending_start = false
 	_set_hero_enlarged(hero_image, false)
 
 
@@ -8081,19 +8182,19 @@ func _set_hero_enlarged(node: Variant, active: bool) -> void:
 	scale_tween.tween_property(node, "scale", target_scale, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
-## Spirit Link's lifesteal: converts `_spirit_link_lifesteal_pct` of an
+## Wildbond's lifesteal: converts `_wildbond_lifesteal_pct` of an
 ## Attack's damage - AFTER the target's armor has already reduced it -
 ## into HP for the hero. Only called from _apply_hero_attack() (the
 ## plain Attack action, melee or ranged) - skill damage (Barbed Lunge, Dark
-## Pact, Entangle's DoT, the Spirit Bear's own hits, etc.) never routes
+## Pact, Thornbind's DoT, the Elderwild Companion's own hits, etc.) never routes
 ## through here, matching the skill's own wording. No-op while Spirit
 ## Link isn't active or the hit did no damage (e.g. fully absorbed).
 ## `target` is only used for the lifesteal visual flowing from it back
 ## to the hero (_play_lifesteal_effect()).
-func _apply_spirit_link_lifesteal(mitigated_attack_damage: float, target: Dictionary) -> void:
-	if not _spirit_link_active or mitigated_attack_damage <= 0.0:
+func _apply_wildbond_lifesteal(mitigated_attack_damage: float, target: Dictionary) -> void:
+	if not _wildbond_active or mitigated_attack_damage <= 0.0:
 		return
-	heal(mitigated_attack_damage * _spirit_link_lifesteal_pct)
+	heal(mitigated_attack_damage * _wildbond_lifesteal_pct)
 	_play_lifesteal_effect(target.get("node"), hero_image)
 
 
@@ -8104,7 +8205,7 @@ const MORBID_MASK_LIFESTEAL_PCT := 0.10
 ## Link's own lifesteal just above (same "% of the plain Attack's
 ## damage, after the target's own armor already reduced it" rule,
 ## never skill damage) but a flat, always-on item bonus rather than a
-## temporary skill buff - stacks with Spirit Link if the player has
+## temporary skill buff - stacks with Wildbond if the player has
 ## both active at once. Gated on actually owning one, same as
 ## Cleaver's own item check (see _apply_cleaver_cleave()). `target` is
 ## only used for the lifesteal visual flowing from it back to the hero
@@ -8119,19 +8220,19 @@ func _apply_morbid_mask_lifesteal(mitigated_attack_damage: float, target: Dictio
 ## Purely cosmetic: the standard lifesteal visual - red motes flowing
 ## from `from_node` (whoever was hit) to `to_node` (whoever healed off
 ## the hit), the same drain stream Leeching Hunger uses (_play_drain_
-## effect()), in LIFESTEAL_MOTE_COLOR. Any lifesteal - Spirit Link, the
+## effect()), in LIFESTEAL_MOTE_COLOR. Any lifesteal - Wildbond, the
 ## Morbid Mask item, and future ones - should play it, so they all look
-## the same. Two lifesteals off the same hit (Spirit Link + Morbid Mask)
+## the same. Two lifesteals off the same hit (Wildbond + Morbid Mask)
 ## each play their own stream, reading as a denser flow.
 func _play_lifesteal_effect(from_node: Variant, to_node: Variant) -> void:
 	_play_drain_effect(from_node, to_node, LIFESTEAL_MOTE_COLOR)
 
 
 # ------------------------------------------------------------------
-# Erynd's ultimate, True Form.
+# Erynd's ultimate, Beast of the Elderwild.
 # ------------------------------------------------------------------
 
-## Activates (or, if already active, restarts) True Form at
+## Activates (or, if already active, restarts) Beast of the Elderwild at
 ## `level_data`'s values: swaps the hero's portrait to his bear form,
 ## and arms the bonus HP/damage plus the forced-melee range for the
 ## duration (see _hero_max_hp(), _roll_hero_damage(), _is_ranged_hero()
@@ -8139,68 +8240,73 @@ func _play_lifesteal_effect(from_node: Variant, to_node: Variant) -> void:
 ## HP raises his max HP the same way Leeching Hunger's borrowed HP does
 ## (see _hero_max_hp()) rather than instantly topping him up - it's
 ## extra capacity for the duration, not a free heal.
-func _activate_true_form(level_data: Dictionary) -> void:
-	if _true_form_active:
-		_end_true_form()
+func _activate_beast_of_the_elderwild(level_data: Dictionary) -> void:
+	if _beast_of_the_elderwild_active:
+		_end_beast_of_the_elderwild()
 
-	_true_form_active = true
-	_true_form_bonus_hp = float(level_data.get("bonus_hp", 0))
-	_true_form_bonus_damage = float(level_data.get("bonus_damage", 0))
-	_true_form_turns_remaining = int(level_data.get("duration", 0))
+	_beast_of_the_elderwild_active = true
+	_beast_of_the_elderwild_bonus_hp = float(level_data.get("bonus_hp", 0))
+	_beast_of_the_elderwild_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_beast_of_the_elderwild_turns_remaining = int(level_data.get("duration", 0))
 	# The casting turn itself doesn't count - duration only starts
-	# ticking from the turn after (see _tick_true_form()).
-	_true_form_duration_pending_start = true
+	# ticking from the turn after (see _tick_beast_of_the_elderwild()).
+	_beast_of_the_elderwild_duration_pending_start = true
 
-	_set_hero_image(TRUE_FORM_IMAGE_PATH)
+	_set_hero_image(BEAST_OF_THE_ELDERWILD_IMAGE_PATH)
 	_refresh_bars()
 
 
-## Ticks True Form's duration down once per End Turn, same timing and
+## Ticks Beast of the Elderwild's duration down once per End Turn, same timing and
 ## "casting turn doesn't count" rule as Leeching Hunger/Depthsveil/
-## Spirit Link.
-func _tick_true_form() -> void:
-	if not _true_form_active:
+## Wildbond.
+func _tick_beast_of_the_elderwild() -> void:
+	if not _beast_of_the_elderwild_active:
 		return
 
-	if _true_form_duration_pending_start:
-		_true_form_duration_pending_start = false
+	if _beast_of_the_elderwild_duration_pending_start:
+		_beast_of_the_elderwild_duration_pending_start = false
 		return
 
-	_true_form_turns_remaining -= 1
-	if _true_form_turns_remaining <= 0:
-		_end_true_form()
+	_beast_of_the_elderwild_turns_remaining -= 1
+	if _beast_of_the_elderwild_turns_remaining <= 0:
+		_end_beast_of_the_elderwild()
 
 
-## Ends True Form, whether from its duration running out or a fresh
-## cast restarting it outright (see _activate_true_form()): reverts
+## Ends Beast of the Elderwild, whether from its duration running out or a fresh
+## cast restarting it outright (see _activate_beast_of_the_elderwild()): reverts
 ## the portrait, drops the bonus HP/damage and the forced melee range
 ## back to normal.
-func _end_true_form() -> void:
-	_true_form_active = false
-	_true_form_bonus_hp = 0.0
-	_true_form_bonus_damage = 0.0
-	_true_form_turns_remaining = 0
-	_true_form_duration_pending_start = false
+func _end_beast_of_the_elderwild() -> void:
+	_beast_of_the_elderwild_active = false
+	_beast_of_the_elderwild_bonus_hp = 0.0
+	_beast_of_the_elderwild_bonus_damage = 0.0
+	_beast_of_the_elderwild_turns_remaining = 0
+	_beast_of_the_elderwild_duration_pending_start = false
 
 	_set_hero_image(_hero_static.get("image", ""))
+	# Transforming back gets the same pulse transforming in did (that one
+	# comes from the cast itself, via spend_mana()).
+	var hero_animator := CreatureAnimator.of(hero_image)
+	if hero_animator != null:
+		hero_animator.play_cast()
 	_refresh_bars()
-	_show_message_over_hero("True Form wears off")
+	_show_message_over_hero("Beast of the Elderwild wears off")
 
 
 # ------------------------------------------------------------------
-# Erynd's Spirit Bear.
+# Erynd's Elderwild Companion.
 # ------------------------------------------------------------------
 
 func _is_bear_alive() -> bool:
 	return not _bear.is_empty()
 
 
-## Summons (or re-summons) the Spirit Bear at `level_data`'s stats,
+## Summons (or re-summons) the Elderwild Companion at `level_data`'s stats,
 ## starting on the hero's own column. Any bear already out - even a
 ## stronger one from a previous cast at a higher level, since the
 ## player might recast at the same level just to top it back up to
 ## full HP - is replaced outright, per _despawn_bear().
-func _summon_spirit_bear(level_data: Dictionary) -> void:
+func _elderwild_companion(level_data: Dictionary) -> void:
 	_despawn_bear()
 
 	if not ResourceLoader.exists(SPIRIT_BEAR_IMAGE_PATH):
@@ -8227,6 +8333,21 @@ func _summon_spirit_bear(level_data: Dictionary) -> void:
 	# same visual layer as the hero/enemies and stays behind all UI.
 	move_child(tex_rect, enemies_layer.get_index() + 1)
 
+	# "current / max" over the bear, styled like a creep's own HP label
+	# (see _spawn_enemy()); kept in sync every frame by
+	# _refresh_bear_hp_label().
+	var hp_label := Label.new()
+	hp_label.size = Vector2(ENEMY_HP_LABEL_WIDTH, ENEMY_HP_LABEL_HEIGHT)
+	hp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hp_label.add_theme_color_override("font_color", ENEMY_HP_LABEL_COLOR)
+	hp_label.add_theme_font_size_override("font_size", ENEMY_HP_LABEL_FONT_SIZE)
+	hp_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
+	hp_label.add_theme_constant_override("outline_size", 3)
+	add_child(hp_label)
+	move_child(hp_label, tex_rect.get_index() + 1)
+
 	var hp: float = float(level_data.get("hp", 1))
 	_bear = {
 		"hp": hp,
@@ -8237,12 +8358,43 @@ func _summon_spirit_bear(level_data: Dictionary) -> void:
 		"speed": maxi(1, int(level_data.get("speed", 1))),
 		"pos_index": _hero_pos_index,
 		"node": tex_rect,
+		"hp_label": hp_label,
 	}
+	CreatureAnimator.attach(tex_rect, "spirit_bear")
+	_refresh_bear_hp_label()
+
+
+## Keeps the bear's HP label's text and position current. Run every
+## frame from _process() rather than at each call site, since the bear's
+## HP changes through many generic paths (regen, DoTs, heals) that take
+## it as a plain Dictionary, and its node slides between columns.
+func _refresh_bear_hp_label() -> void:
+	if not _is_bear_alive():
+		return
+	var label: Label = _bear.get("hp_label")
+	var node: Control = _bear.get("node")
+	if not is_instance_valid(label) or not is_instance_valid(node):
+		return
+	label.text = "%d / %d" % [roundi(maxf(0.0, float(_bear.get("current_hp", 0)))), maxi(1, roundi(float(_bear.get("hp", 1))))]
+	label.position = Vector2(
+		node.position.x + node.size.x / 2.0 - ENEMY_HP_LABEL_WIDTH / 2.0,
+		node.position.y - ENEMY_HP_LABEL_GAP - ENEMY_HP_LABEL_HEIGHT)
+
+
+## Puts the bear back beside the hero at the start of a new stage/hero
+## fight - no slide, it simply starts the fresh encounter there.
+func _reset_bear_to_hero_column() -> void:
+	if not _is_bear_alive():
+		return
+	_bear["pos_index"] = _hero_pos_index
+	if is_instance_valid(_bear["node"]):
+		_bear["node"].position = Vector2(_index_to_x(_hero_pos_index), _creature_y())
+	_refresh_bear_hp_label()
 
 
 ## Removes whatever bear is currently out, if any, with no XP/gold and
 ## no message - used both when a fresh bear replaces it (see
-## _summon_spirit_bear()) and when the hero leaves the battle for good
+## _elderwild_companion()) and when the hero leaves the battle for good
 ## (the scene tearing down would free the node either way, but this
 ## keeps _bear itself consistent for as long as the script is alive).
 func _despawn_bear() -> void:
@@ -8250,14 +8402,16 @@ func _despawn_bear() -> void:
 		return
 	if is_instance_valid(_bear["node"]):
 		_bear["node"].queue_free()
+	if is_instance_valid(_bear.get("hp_label")):
+		_bear["hp_label"].queue_free()
 	_bear = {}
 
 
 ## An enemy's hit landed on the bear instead of the hero: mitigated by
 ## the bear's own armor, same formula as any other target's, plus
-## Savage Roar's damage reduction on top while it's active - the
+## Blood of the Wild's damage reduction on top while it's active - the
 ## skill covers the bear as well as the hero (see
-## _update_savage_roar_state()).
+## _update_blood_of_the_wild_state()).
 func _deal_damage_to_bear(amount: float) -> void:
 	if not _is_bear_alive():
 		return
@@ -8268,7 +8422,7 @@ func _deal_damage_to_bear(amount: float) -> void:
 	amount *= (1.0 + float(_bear.get("corrosive_haze_bonus_pct", 0.0)))
 	var bear_armor: float = float(_bear.get("armor", 0)) - float(_bear.get("armor_reduction", 0.0))
 	var mitigated: float = _apply_armor_reduction(amount, bear_armor)
-	mitigated *= (1.0 - _savage_roar_damage_reduction_pct)
+	mitigated *= (1.0 - _blood_of_the_wild_damage_reduction_pct)
 	_bear["current_hp"] -= mitigated
 	_show_damage_number(_bear["node"], mitigated)
 
@@ -8277,7 +8431,7 @@ func _deal_damage_to_bear(amount: float) -> void:
 
 
 ## Any enemy AoE skill that damages the hero over an area should ALSO
-## independently hit the Spirit Bear if it's standing within that same
+## independently hit the Elderwild Companion if it's standing within that same
 ## area - same reasoning as the illusion-side equivalent
 ## (_deal_aoe_damage_to_illusions()), just against the single `_bear`
 ## dict instead of the `_illusions` array. Unlike that helper, `amount`
@@ -8331,6 +8485,7 @@ func _deal_directional_aoe_damage_to_bear(origin_pos_index: int, direction: int,
 ## also costs the hero a chunk of his own HP (see
 ## _apply_bear_death_penalty()).
 func _kill_bear() -> void:
+	CreatureAnimator.spawn_death_ghost(_bear.get("node"), _fx_layer)
 	_despawn_bear()
 	_apply_bear_death_penalty()
 
@@ -8351,7 +8506,7 @@ func _apply_bear_death_penalty() -> void:
 		PlayerManager.damage_hero(actual_damage)
 		_refresh_bars()
 
-	_show_message_over_hero("The Spirit Bear falls - Sylla is weakened!")
+	_show_message_over_hero("The Elderwild Companion falls - Erynd is weakened!")
 
 
 func _roll_bear_damage() -> float:
@@ -8371,7 +8526,7 @@ func _bear_turn() -> void:
 
 	# A rival's stun (Torrent/Sacred Arrow/Lucent Beam/Ice Blast/
 	# Frostbite/Winter's Curse/Snowball/Walrus Punch aimed at the bear)
-	# costs it this whole turn; a root (Entangle/Ensnare) still lets it
+	# costs it this whole turn; a root (Thornbind/Ensnare) still lets it
 	# attack what's already on its column, just not walk. Both are
 	# checked with their CURRENT value before ticking down - the same
 	# "use it, then decrement" order the rival's own root/stun use - so
@@ -8389,6 +8544,10 @@ func _bear_turn() -> void:
 		# The bear's own attack, not the hero's - Corrosive Haze's own
 		# bonus (see _deal_fixed_damage_to_enemy()'s own is_hero_action
 		# param) never applies to it.
+		var bear_animator := CreatureAnimator.of(_bear["node"])
+		if bear_animator != null:
+			# Art faces right natively; flip_h means it's facing left.
+			bear_animator.play_attack(-1.0 if _bear["node"].flip_h else 1.0)
 		_deal_fixed_damage_to_enemy(target, _roll_bear_damage(), false, false)
 		return
 
@@ -8409,7 +8568,18 @@ func _bear_turn() -> void:
 
 	var new_pos: int = _melee_move_target(_bear["pos_index"], direction, int(_bear["speed"]))
 	_bear["pos_index"] = new_pos
-	_bear["node"].position = Vector2(_index_to_x(new_pos), _creature_y())
+	_place_bear_node(new_pos)
+
+
+## Snaps the bear's node onto column `pos`, sliding its art over from
+## where it was if it has a CreatureAnimator (same as _move_enemy()).
+func _place_bear_node(pos: int) -> void:
+	var node: Control = _bear["node"]
+	var old_x: float = node.position.x
+	node.position = Vector2(_index_to_x(pos), _creature_y())
+	var animator := CreatureAnimator.of(node)
+	if animator != null and not is_equal_approx(old_x, node.position.x):
+		animator.play_move(old_x - node.position.x)
 
 
 ## Updates every skill's cooldown label - "Ready" or "N turns left" -
@@ -8427,27 +8597,27 @@ func _refresh_skill_cooldown_labels() -> void:
 			label.text = "%d %s left" % [remaining, noun]
 			label.add_theme_color_override("font_color", Color(1, 0.6, 0.4, 1))
 
-	# Borrowed Time has no button click to show its own "in effect"
+	# The Mist Remembers has no button click to show its own "in effect"
 	# state the way a manually-cast buff's activation message does, so
 	# this overlays "Active" on top of whatever the loop above just
 	# wrote (its cooldown only starts counting down once it ends - see
-	# _end_borrowed_time() - so "Ready"/"N turns left"
+	# _end_the_mist_remembers() - so "Ready"/"N turns left"
 	# would otherwise read as if it wasn't doing anything right now).
-	if _borrowed_time_active and _skill_cooldown_labels.has("borrowed_time"):
-		var borrowed_time_label: Label = _skill_cooldown_labels["borrowed_time"]
-		borrowed_time_label.text = "Active"
-		borrowed_time_label.add_theme_color_override("font_color", Color(1, 0.65, 0.2, 1))
+	if _the_mist_remembers_active and _skill_cooldown_labels.has("the_mist_remembers"):
+		var the_mist_remembers_label: Label = _skill_cooldown_labels["the_mist_remembers"]
+		the_mist_remembers_label.text = "Active"
+		the_mist_remembers_label.add_theme_color_override("font_color", Color(1, 0.65, 0.2, 1))
 
 
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
 ## and ticks Leeching Hunger's, Depthsveil's, Arctic Burn's, Cold
 ## Embrace's, Freezing Field's, Ice Shards', Tag Team's, Nature's
 ## Guise's, Living Armor's, Reactive Armor's (each stack independently),
-## Chakram's, Spirit Link's, True Form's, Aphotic Shield's, and Borrowed
-## Time's durations, plus Curse of Avernus's own (enemy- and player-side)
+## Chakram's, Wildbond's, Beast of the Elderwild's, Veil of the Forgotten's, and The Mist
+## Remembers's durations, plus Mark of the Mist's own (enemy- and player-side)
 ## un-activated-stack decay - not a DoT, so it
 ## stays here rather than moving to turn-start with the rest (see
-## _tick_curse_of_avernus_effects()'s own comment) - and, during a hero
+## _tick_mark_of_the_mist_effects()'s own comment) - and, during a hero
 ## fight, the rival's own mirrored buff/cooldown durations. Every actual
 ## DoT/root/silence/execute effect, on either side, now ticks at the
 ## start of whichever turn it belongs to instead
@@ -8470,11 +8640,11 @@ func _tick_skill_cooldowns() -> void:
 	_tick_ice_shards()
 	_tick_tag_team()
 	_tick_living_armor()
-	_tick_spirit_link()
-	_tick_true_form()
-	_tick_aphotic_shield()
-	_tick_borrowed_time()
-	_tick_curse_of_avernus_effects()
+	_tick_wildbond()
+	_tick_beast_of_the_elderwild()
+	_tick_veil_of_the_forgotten()
+	_tick_the_mist_remembers()
+	_tick_mark_of_the_mist_effects()
 	_tick_reactive_armor_stacks()
 	_tick_chakram()
 	_tick_mirror_image()
@@ -8487,11 +8657,11 @@ func _tick_skill_cooldowns() -> void:
 
 		_tick_enemy_leeching_hunger()
 		_tick_enemy_depthsveil()
-		_tick_enemy_spirit_link()
-		_tick_enemy_true_form()
-		_tick_enemy_aphotic_shield()
-		_tick_enemy_borrowed_time()
-		_tick_enemy_curse_of_avernus_effects()
+		_tick_enemy_wildbond()
+		_tick_enemy_beast_of_the_elderwild()
+		_tick_enemy_veil_of_the_forgotten()
+		_tick_enemy_the_mist_remembers()
+		_tick_enemy_mark_of_the_mist_effects()
 		_tick_enemy_arctic_burn()
 		_tick_enemy_cold_embrace()
 		_tick_enemy_freezing_field()
@@ -8532,7 +8702,7 @@ const PASSIVE_MANA_REGEN_PER_INT := 0.05
 ## The player hero's own passive regen. Reads strength/intelligence
 ## straight off _recruited's own stats - the same raw base values
 ## _hero_armor()/_hero_max_hp() already read for their own bonus terms
-## - since Leeching Hunger/True Form never touch strength/intelligence
+## - since Leeching Hunger/Beast of the Elderwild never touch strength/intelligence
 ## themselves (only derived hp/mana/armor/damage), no extra bonus
 ## terms belong here.
 func _apply_passive_hero_regen() -> void:
@@ -8583,65 +8753,65 @@ func _tick_enemy_passive_regen() -> void:
 
 
 # ------------------------------------------------------------------
-# Abaddon's Aphotic Shield.
+# Morvael's Veil of the Forgotten.
 # ------------------------------------------------------------------
 
 ## Activates (or, if already active, replaces outright - no explosion
-## from the old one, same "silently overwritten" rule True Form uses
-## when recast) Aphotic Shield at `level_data`'s values, and dispels
+## from the old one, same "silently overwritten" rule Beast of the Elderwild uses
+## when recast) Veil of the Forgotten at `level_data`'s values, and dispels
 ## every negative effect currently on the player - see the state-var
 ## block's comment above for exactly which ones and why silence isn't
 ## among them.
-func _activate_aphotic_shield(level_data: Dictionary) -> void:
-	_aphotic_shield_active = true
-	_aphotic_shield_hp = float(level_data.get("shield_hp", 0))
-	_aphotic_shield_aoe_damage = float(level_data.get("aoe_damage", 0))
-	_aphotic_shield_radius = int(level_data.get("radius", 0))
-	_aphotic_shield_turns_remaining = int(level_data.get("duration", 0))
+func _activate_veil_of_the_forgotten(level_data: Dictionary) -> void:
+	_veil_of_the_forgotten_active = true
+	_veil_of_the_forgotten_hp = float(level_data.get("shield_hp", 0))
+	_veil_of_the_forgotten_aoe_damage = float(level_data.get("aoe_damage", 0))
+	_veil_of_the_forgotten_radius = int(level_data.get("radius", 0))
+	_veil_of_the_forgotten_turns_remaining = int(level_data.get("duration", 0))
 	# The casting turn itself doesn't count - duration only starts
-	# ticking from the turn after (see _tick_aphotic_shield()), same as
+	# ticking from the turn after (see _tick_veil_of_the_forgotten()), same as
 	# every other duration-based buff.
-	_aphotic_shield_duration_pending_start = true
+	_veil_of_the_forgotten_duration_pending_start = true
 
 	# Checked before the dispel below clears it all - only drives the
-	# cleanse sparks in _show_aphotic_shell().
-	var cleansed: bool = _player_root_turns_left > 0 or _player_entangle_dot_turns_left > 0 \
+	# cleanse sparks in _show_veil_shell().
+	var cleansed: bool = _player_root_turns_left > 0 or _player_thornbind_dot_turns_left > 0 \
 		or _player_stun_turns_left > 0 or _player_winters_curse_active
 	for penalty in _player_leeching_hunger_penalty.values():
 		if float(penalty) > 0.0:
 			cleansed = true
 
 	_player_root_turns_left = 0
-	_player_entangle_dot_damage = 0.0
-	_player_entangle_dot_turns_left = 0
+	_player_thornbind_dot_damage = 0.0
+	_player_thornbind_dot_turns_left = 0
 	_player_stun_turns_left = 0
 	_player_winters_curse_active = false
 	_player_leeching_hunger_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 	_show_message_over_hero("Shield up!")
-	_show_aphotic_shell(hero_image, _aphotic_shield_hp, cleansed)
+	_show_veil_shell(hero_image, _veil_of_the_forgotten_hp, cleansed)
 	_refresh_bars()
 
 
 ## Ticks the shield's duration down once per End Turn, same "casting
 ## turn doesn't count" pattern as Leeching Hunger/Depthsveil/Spirit
-## Link/True Form. Only reached while the shield is still standing -
+## Link/Beast of the Elderwild. Only reached while the shield is still standing -
 ## see apply_damage() for the other way it can end, mid-turn, from
 ## being drained to 0 instead of outlasting its clock.
-func _tick_aphotic_shield() -> void:
-	if not _aphotic_shield_active:
+func _tick_veil_of_the_forgotten() -> void:
+	if not _veil_of_the_forgotten_active:
 		return
 
-	if _aphotic_shield_duration_pending_start:
-		_aphotic_shield_duration_pending_start = false
+	if _veil_of_the_forgotten_duration_pending_start:
+		_veil_of_the_forgotten_duration_pending_start = false
 		return
 
-	_aphotic_shield_turns_remaining -= 1
-	if _aphotic_shield_turns_remaining <= 0:
-		_end_aphotic_shield(false)
+	_veil_of_the_forgotten_turns_remaining -= 1
+	if _veil_of_the_forgotten_turns_remaining <= 0:
+		_end_veil_of_the_forgotten(false)
 
 
-## Ends Aphotic Shield, whether its duration simply ran out (`exploded`
+## Ends Veil of the Forgotten, whether its duration simply ran out (`exploded`
 ## false - it just fades) or enough damage drained it to 0 HP
 ## (`exploded` true, from apply_damage()) - in which case it deals the
 ## cast's own aoe_damage to every living, targetable enemy within its
@@ -8649,18 +8819,18 @@ func _tick_aphotic_shield() -> void:
 ## a-position AoE (_cast_abyssal_spasm()). Captures the level's aoe_damage/
 ## radius into locals before clearing the state below, since the
 ## explosion still needs them afterward.
-func _end_aphotic_shield(exploded: bool) -> void:
-	var aoe_damage: float = _aphotic_shield_aoe_damage
-	var radius: int = _aphotic_shield_radius
+func _end_veil_of_the_forgotten(exploded: bool) -> void:
+	var aoe_damage: float = _veil_of_the_forgotten_aoe_damage
+	var radius: int = _veil_of_the_forgotten_radius
 
-	_aphotic_shield_active = false
-	_aphotic_shield_hp = 0.0
-	_aphotic_shield_aoe_damage = 0.0
-	_aphotic_shield_radius = 0
-	_aphotic_shield_turns_remaining = 0
-	_aphotic_shield_duration_pending_start = false
+	_veil_of_the_forgotten_active = false
+	_veil_of_the_forgotten_hp = 0.0
+	_veil_of_the_forgotten_aoe_damage = 0.0
+	_veil_of_the_forgotten_radius = 0
+	_veil_of_the_forgotten_turns_remaining = 0
+	_veil_of_the_forgotten_duration_pending_start = false
 
-	_remove_aphotic_shell(hero_image, exploded, radius)
+	_remove_veil_shell(hero_image, exploded, radius)
 
 	if not exploded:
 		_show_message_over_hero("Shield fades")
@@ -8685,101 +8855,90 @@ func _end_aphotic_shield(exploded: bool) -> void:
 	_show_message_over_hero("Shield shattered!")
 
 
-## Purely cosmetic: puts Aphotic Shield's shell on `node` (the
-## player's hero_image, or the rival Abaddon's own node) - a
+## Purely cosmetic: puts Veil of the Forgotten's shell on `node` (the
+## player's hero_image, or the rival Morvael's own node) - a
 ## translucent dark purple bubble, a child Panel so it follows the
 ## sprite's position/scale/fades for free, snapping on from small with
 ## an overshoot, then slowly "breathing" for as long as it's up. Also
 ## flashes the sprite purple and, if the cast actually `cleansed`
 ## anything, lets off a few purple sparks. `shield_hp` is remembered as
-## the shell's full strength so _update_aphotic_shell() can fade it as
+## the shell's full strength so _update_veil_shell() can fade it as
 ## it drains. A recast replaces any existing shell outright, the same
 ## way the shield itself is replaced.
-func _show_aphotic_shell(node: Variant, shield_hp: float, cleansed: bool) -> void:
+func _show_veil_shell(node: Variant, shield_hp: float, cleansed: bool) -> void:
 	if not (node is TextureRect) or not is_instance_valid(node):
 		return
 
-	var old_shell: Node = node.get_node_or_null(APHOTIC_SHELL_NAME)
+	var old_shell: Node = node.get_node_or_null(VEIL_SHELL_NAME)
 	if old_shell != null:
-		old_shell.name = APHOTIC_SHELL_NAME + "Replaced"
+		old_shell.name = VEIL_SHELL_NAME + "Replaced"
 		old_shell.queue_free()
 
-	var shell := Panel.new()
-	shell.name = APHOTIC_SHELL_NAME
+	var shell := ColorRect.new()
+	shell.name = VEIL_SHELL_NAME
 	shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# A circle centered on the sprite, as wide as the sprite is tall.
-	shell.size = Vector2(node.size.y, node.size.y)
+	# Wraps the whole sprite with a margin of mist around it.
+	shell.size = node.size * (1.0 + VEIL_SHROUD_MARGIN * 2.0)
 	shell.position = (node.size - shell.size) / 2.0
 	shell.pivot_offset = shell.size / 2.0
-
-	var style := StyleBoxFlat.new()
-	style.bg_color = APHOTIC_SHELL_FILL_COLOR
-	style.border_color = APHOTIC_SHELL_RIM_COLOR
-	style.set_border_width_all(2)
-	# Corner radius of half the (square) size makes it a full circle.
-	style.set_corner_radius_all(int(ceilf(shell.size.x / 2.0)))
-	# Smooth the curve at this size - StyleBoxFlat's default corner
-	# detail looks faceted on a large circle.
-	style.corner_detail = 32
-	style.shadow_color = Color(APHOTIC_SHARD_COLOR.r, APHOTIC_SHARD_COLOR.g, APHOTIC_SHARD_COLOR.b, 0.45)
-	style.shadow_size = 12
-	shell.add_theme_stylebox_override("panel", style)
+	var mat := ShaderMaterial.new()
+	mat.shader = VEIL_SHROUD_SHADER
+	mat.set_shader_parameter("mist_color", VEIL_MIST_COLOR)
+	mat.set_shader_parameter("aspect", shell.size.x / maxf(1.0, shell.size.y))
+	mat.set_shader_parameter("seed", randf() * 50.0)
+	mat.set_shader_parameter("strength", 1.0)
+	shell.material = mat
 	shell.set_meta("max_hp", maxf(1.0, shield_hp))
-	shell.scale = Vector2(0.3, 0.3)
+	# Gathers in: swells in from wide and faint.
+	shell.scale = Vector2(1.35, 1.35)
+	shell.modulate.a = 0.0
 	node.add_child(shell)
 
-	var snap: Tween = shell.create_tween()
-	snap.tween_property(shell, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var gather: Tween = shell.create_tween().set_parallel()
+	gather.tween_property(shell, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	gather.tween_property(shell, "modulate:a", 1.0, 0.35)
 
-	# Breathing lives on self_modulate, so it multiplies with the
-	# HP-based strength _update_aphotic_shell() keeps on modulate.
-	var breath: Tween = shell.create_tween().set_loops()
-	breath.tween_property(shell, "self_modulate:a", 0.6, 0.9).set_trans(Tween.TRANS_SINE)
-	breath.tween_property(shell, "self_modulate:a", 1.0, 0.9).set_trans(Tween.TRANS_SINE)
-	shell.set_meta("breath_tween", breath)
-
-	_flash_bounce_hit(node, APHOTIC_FLASH_COLOR)
+	_flash_bounce_hit(node, VEIL_FLASH_COLOR)
 
 	if cleansed:
-		_play_aphotic_cleanse_sparks(node)
+		_play_veil_cleanse_sparks(node)
 
 
 ## Called whenever the shield soaks up part of a hit but survives it:
-## fades the shell toward faint as `remaining_hp` drops (full strength
-## when fresh, ~30% just before it breaks) and gives it a quick ripple
-## so the absorbed hit visibly lands on the shield.
-func _update_aphotic_shell(node: Variant, remaining_hp: float) -> void:
+## the mist thins toward a few ragged wisps as `remaining_hp` drops
+## (dense when fresh, barely there just before it breaks), and puffs
+## out and back so the absorbed hit visibly lands in it.
+func _update_veil_shell(node: Variant, remaining_hp: float) -> void:
 	if not (node is Control) or not is_instance_valid(node):
 		return
-	var shell: Panel = node.get_node_or_null(APHOTIC_SHELL_NAME)
+	var shell: ColorRect = node.get_node_or_null(VEIL_SHELL_NAME)
 	if shell == null:
 		return
 
 	var fraction: float = clampf(remaining_hp / float(shell.get_meta("max_hp", 1.0)), 0.0, 1.0)
+	var mat := shell.material as ShaderMaterial
 	var tween: Tween = shell.create_tween()
-	tween.tween_property(shell, "scale", Vector2(1.08, 1.08), 0.08).set_trans(Tween.TRANS_SINE)
-	tween.parallel().tween_property(shell, "modulate:a", lerpf(0.3, 1.0, fraction), 0.2)
-	tween.tween_property(shell, "scale", Vector2.ONE, 0.15).set_trans(Tween.TRANS_SINE)
+	tween.tween_property(shell, "scale", Vector2(1.1, 1.1), 0.08).set_trans(Tween.TRANS_SINE)
+	tween.parallel().tween_property(mat, "shader_parameter/strength", fraction, 0.35)
+	tween.parallel().tween_property(shell, "modulate:a", lerpf(0.55, 1.0, fraction), 0.35)
+	tween.tween_property(shell, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_SINE)
 
 
-## Takes Aphotic Shield's shell off `node`: a quiet ~0.4s dissolve when
-## it just ran out (or was cleared on a reset), or - when `shattered` -
-## a burst of dark purple shards flying out about `radius` columns (the
+## Takes Veil of the Forgotten's shroud off `node`: the mist drifts apart
+## over ~0.4s when it just ran out (or was cleared on a reset), or - when
+## `shattered` - it erupts in a burst of mist rolling out about `radius` columns (the
 ## explosion's own reach) plus a light screen shake. The explosion's
 ## damage and hit flashes are the caller's.
-func _remove_aphotic_shell(node: Variant, shattered: bool, radius: int) -> void:
+func _remove_veil_shell(node: Variant, shattered: bool, radius: int) -> void:
 	if not (node is Control) or not is_instance_valid(node):
 		return
-	var shell: Panel = node.get_node_or_null(APHOTIC_SHELL_NAME)
+	var shell: ColorRect = node.get_node_or_null(VEIL_SHELL_NAME)
 	if shell == null:
 		return
 
 	# Renamed right away so a recast during the fade creates a fresh
-	# shell instead of finding this dying one.
-	shell.name = APHOTIC_SHELL_NAME + "Ending"
-	var breath: Variant = shell.get_meta("breath_tween", null)
-	if breath is Tween and breath.is_valid():
-		breath.kill()
+	# shroud instead of finding this dying one.
+	shell.name = VEIL_SHELL_NAME + "Ending"
 
 	var fade_time: float = 0.15 if shattered else 0.4
 	var tween: Tween = shell.create_tween()
@@ -8790,35 +8949,31 @@ func _remove_aphotic_shell(node: Variant, shattered: bool, radius: int) -> void:
 	if not shattered:
 		return
 
-	_play_aphotic_shatter(node.position + node.size / 2.0, radius)
+	_play_veil_shatter(node.position + node.size / 2.0, radius)
 	_shake_screen()
 
 
-## The shatter's shards: a one-shot radial burst of spinning dark
-## purple pieces, fast enough to reach about `radius` columns before
-## they fade (at least one column, even for a radius-0 shield). Same
+## The eruption when the veil breaks: a one-shot radial burst of mist
+## rolling out fast enough to reach about `radius` columns before it
+## fades (at least one column, even for a radius-0 shield). Same
 ## CPUParticles2D one-shot-burst recipe as _spawn_lil_shredder_impact().
-func _play_aphotic_shatter(pos: Vector2, radius: int) -> void:
-	var lifetime: float = 0.5
+func _play_veil_shatter(pos: Vector2, radius: int) -> void:
+	var lifetime: float = 0.7
 	var reach: float = _grid_unit() * maxf(1.0, float(radius))
 	var particles := CPUParticles2D.new()
 	particles.position = pos
 	particles.emitting = false
 	particles.one_shot = true
-	particles.amount = 48
+	particles.amount = 60
 	particles.lifetime = lifetime
 	particles.explosiveness = 1.0
 	particles.spread = 180.0
 	particles.gravity = Vector2.ZERO
 	particles.initial_velocity_min = reach / lifetime * 0.6
 	particles.initial_velocity_max = reach / lifetime * 1.1
-	particles.angle_min = 0.0
-	particles.angle_max = 360.0
-	particles.angular_velocity_min = -360.0
-	particles.angular_velocity_max = 360.0
-	particles.scale_amount_min = 4.0
-	particles.scale_amount_max = 9.0
-	particles.color = APHOTIC_SHARD_COLOR
+	ProjectileFX._make_misty(particles, VEIL_BURST_COLOR, lifetime)
+	particles.scale_amount_min = 1.2
+	particles.scale_amount_max = 2.4
 	add_child(particles)
 	# Same reasoning as _play_scatterblast_effect()'s own move_child()
 	# call - render at the hero/enemy layer, not on top of every UI panel.
@@ -8828,10 +8983,10 @@ func _play_aphotic_shatter(pos: Vector2, radius: int) -> void:
 	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
 
 
-## The cleanse: a few small purple sparks drifting up off `node`, as if
+## The cleanse: a few wisps of mist drifting up off `node`, as if
 ## the removed debuffs are being lifted away. Only played when the
 ## cast actually dispelled something.
-func _play_aphotic_cleanse_sparks(node: Control) -> void:
+func _play_veil_cleanse_sparks(node: Control) -> void:
 	var lifetime: float = 0.8
 	var particles := CPUParticles2D.new()
 	particles.position = node.position + node.size / 2.0
@@ -8847,9 +9002,7 @@ func _play_aphotic_cleanse_sparks(node: Control) -> void:
 	particles.gravity = Vector2.ZERO
 	particles.initial_velocity_min = 40.0
 	particles.initial_velocity_max = 90.0
-	particles.scale_amount_min = 2.0
-	particles.scale_amount_max = 4.0
-	particles.color = APHOTIC_SHELL_RIM_COLOR
+	ProjectileFX._make_misty(particles, VEIL_BURST_COLOR, lifetime)
 	add_child(particles)
 	move_child(particles, enemies_layer.get_index() + 1)
 	particles.emitting = true
@@ -8858,47 +9011,47 @@ func _play_aphotic_cleanse_sparks(node: Control) -> void:
 
 
 # ------------------------------------------------------------------
-# Abaddon's Curse of Avernus - a passive, so unlike every skill above
+# Morvael's Mark of the Mist - a passive, so unlike every skill above
 # there's no button/cast/mana/cooldown for it (see _populate_skill_
 # buttons()'s "passive" branch); it just triggers off the hero's own
 # plain Attacks (_apply_hero_attack()). Per-target progress (stacks,
 # the active curse's own DoT, and the turn count feeding stack decay)
 # lives directly on each enemy's own Dictionary in _enemies, the same
-# way Entangle's root/silence/DoT fields do (_apply_root()) - it's
+# way Thornbind's root/silence/DoT fields do (_apply_root()) - it's
 # per-enemy state, not per-hero, so it can't live in a single instance
 # variable the way the rest of this hero's kit does.
 # ------------------------------------------------------------------
 
 # How many full turns a target can go without being hit by the hero's
 # Attack before its un-activated stacks are lost (see
-# _tick_curse_of_avernus_effects()) - independent of skill level.
-const CURSE_OF_AVERNUS_STACK_DECAY_TURNS := 3
+# _tick_mark_of_the_mist_effects()) - independent of skill level.
+const MARK_OF_THE_MIST_STACK_DECAY_TURNS := 3
 
 
-## Curse of Avernus's level data for whatever level the player has it
+## Mark of the Mist's level data for whatever level the player has it
 ## at right now - {} if it isn't learned at all (level 0), the same
-## "empty means locked" convention _get_savage_roar_level_data() uses.
-func _get_curse_of_avernus_level_data() -> Dictionary:
-	var level: int = PlayerManager.get_skill_level("curse_of_avernus")
+## "empty means locked" convention _get_blood_of_the_wild_level_data() uses.
+func _get_mark_of_the_mist_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("mark_of_the_mist")
 	if level <= 0:
 		return {}
 	for skill in _hero_static.get("skills", []):
-		if skill.get("id", "") == "curse_of_avernus":
+		if skill.get("id", "") == "mark_of_the_mist":
 			return GameManager.get_skill_level_data(skill, level)
 	return {}
 
 
 ## Called on every plain Attack hit (see _apply_hero_attack()): builds
-## one stack of Curse of Avernus on `target`, or - once this level's
+## one stack of Mark of the Mist on `target`, or - once this level's
 ## hits_to_activate is reached - consumes all of them to activate the
 ## actual curse instead (silence, via the same `silence_turns_left`
-## field Entangle uses; and a damage-over-time - both ticked, at the
+## field Thornbind uses; and a damage-over-time - both ticked, at the
 ## start of that enemy's own turn, by _tick_enemy_turn_start_effects()).
 ## No-ops entirely if the hero doesn't have this skill learned, if the
 ## hit already killed the target, or if it's already cursed - a curse
 ## has nothing left to build toward until it wears off on its own.
-func _apply_curse_of_avernus_stack(target: Dictionary) -> void:
-	var level_data: Dictionary = _get_curse_of_avernus_level_data()
+func _apply_mark_of_the_mist_stack(target: Dictionary) -> void:
+	var level_data: Dictionary = _get_mark_of_the_mist_level_data()
 	if level_data.is_empty() or target.get("current_hp", 0) <= 0 or target.get("curse_active", false):
 		return
 
@@ -8920,46 +9073,46 @@ func _apply_curse_of_avernus_stack(target: Dictionary) -> void:
 	_refresh_enemy_overhead_labels()
 
 
-## Curse of Avernus's own DoT (and the silence sharing Entangle's
+## Mark of the Mist's own DoT (and the silence sharing Thornbind's
 ## `silence_turns_left` field) both moved to _tick_enemy_turn_start_
 ## effects() along with every other DoT - this is only what's left:
 ## decaying a NOT-yet-activated curse's stacks back to 0 once
-## CURSE_OF_AVERNUS_STACK_DECAY_TURNS full ROUNDS (not that enemy's own
+## MARK_OF_THE_MIST_STACK_DECAY_TURNS full ROUNDS (not that enemy's own
 ## turns - _turn_count is a global round counter) have passed since the
 ## last hit that touched it. Not a DoT itself, so it stays here, ticked
 ## once per End Turn same as before.
-func _tick_curse_of_avernus_effects() -> void:
+func _tick_mark_of_the_mist_effects() -> void:
 	for enemy in _enemies.duplicate():
 		if not enemy.get("curse_active", false) and enemy.get("curse_stacks", 0) > 0:
 			var last_hit_turn: int = int(enemy.get("curse_last_hit_turn", _turn_count))
-			if _turn_count - last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
+			if _turn_count - last_hit_turn >= MARK_OF_THE_MIST_STACK_DECAY_TURNS:
 				enemy["curse_stacks"] = 0
 
 
 # ------------------------------------------------------------------
-# Abaddon's Borrowed Time - see the state-var block's own comment
+# Morvael's The Mist Remembers - see the state-var block's own comment
 # above for the general shape of it. Unlike every other skill here,
-# nothing ever calls _maybe_auto_activate_borrowed_time() from a
+# nothing ever calls _maybe_auto_activate_the_mist_remembers() from a
 # button; the only entry point is apply_damage() noticing the hero has
 # crossed this level's HP threshold.
 # ------------------------------------------------------------------
 
-## Borrowed Time's level data for whatever level the player has it at
+## The Mist Remembers's level data for whatever level the player has it at
 ## right now - {} if it isn't learned at all (level 0), the same
-## "empty means locked" convention _get_savage_roar_level_data()/
-## _get_curse_of_avernus_level_data() use.
-func _get_borrowed_time_level_data() -> Dictionary:
-	var level: int = PlayerManager.get_skill_level("borrowed_time")
+## "empty means locked" convention _get_blood_of_the_wild_level_data()/
+## _get_mark_of_the_mist_level_data() use.
+func _get_the_mist_remembers_level_data() -> Dictionary:
+	var level: int = PlayerManager.get_skill_level("the_mist_remembers")
 	if level <= 0:
 		return {}
 	for skill in _hero_static.get("skills", []):
-		if skill.get("id", "") == "borrowed_time":
+		if skill.get("id", "") == "the_mist_remembers":
 			return GameManager.get_skill_level_data(skill, level)
 	return {}
 
 
 ## Checked from apply_damage() every time the hero takes real damage
-## (i.e. NOT while Borrowed Time is already active, since it can't
+## (i.e. NOT while The Mist Remembers is already active, since it can't
 ## retrigger on top of itself): if he's learned it, it isn't already
 ## on cooldown, and his HP is now at or below this level's own
 ## auto_activate_hp_pct, this is the hit that crosses the threshold -
@@ -8968,11 +9121,11 @@ func _get_borrowed_time_level_data() -> Dictionary:
 ## Starts the cooldown immediately, the same way a manually-cast
 ## skill's does the moment it's used, so this can't re-trigger again
 ## the instant it wears off just because HP is still low.
-func _maybe_auto_activate_borrowed_time() -> void:
-	if _borrowed_time_active or _skill_cooldowns.get("borrowed_time", 0) > 0:
+func _maybe_auto_activate_the_mist_remembers() -> void:
+	if _the_mist_remembers_active or _skill_cooldowns.get("the_mist_remembers", 0) > 0:
 		return
 
-	var level_data: Dictionary = _get_borrowed_time_level_data()
+	var level_data: Dictionary = _get_the_mist_remembers_level_data()
 	if level_data.is_empty():
 		return
 
@@ -8984,93 +9137,97 @@ func _maybe_auto_activate_borrowed_time() -> void:
 	if hp_pct > float(level_data.get("auto_activate_hp_pct", 0.3)):
 		return
 
-	_borrowed_time_active = true
-	_borrowed_time_heal_conversion_pct = float(level_data.get("heal_conversion_pct", 1.0))
-	_borrowed_time_turns_remaining = int(level_data.get("duration", 0))
+	_the_mist_remembers_active = true
+	_the_mist_remembers_heal_conversion_pct = float(level_data.get("heal_conversion_pct", 1.0))
+	_the_mist_remembers_turns_remaining = int(level_data.get("duration", 0))
 	# The activating turn itself doesn't count - duration only starts
-	# ticking from the turn after (see _tick_borrowed_time()), same as
+	# ticking from the turn after (see _tick_the_mist_remembers()), same as
 	# every other duration-based buff.
-	_borrowed_time_duration_pending_start = true
+	_the_mist_remembers_duration_pending_start = true
 
-	_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
-	PlayerManager.set_skill_cooldown("borrowed_time", _skill_cooldowns["borrowed_time"])
+	_skill_cooldowns["the_mist_remembers"] = int(level_data.get("cooldown", 0))
+	PlayerManager.set_skill_cooldown("the_mist_remembers", _skill_cooldowns["the_mist_remembers"])
 
-	_show_message_over_hero("Borrowed Time!")
-	_set_borrowed_time_visual(hero_image, true)
+	_show_message_over_hero("The Mist Remembers!")
+	_set_the_mist_remembers_visual(hero_image, true)
 	_refresh_bars()
 	_refresh_skill_cooldown_labels()
 
 
-## Ticks Borrowed Time's duration down once per End Turn, same
+## Ticks The Mist Remembers's duration down once per End Turn, same
 ## "activating turn doesn't count" pattern as every other duration-
 ## based buff here.
-func _tick_borrowed_time() -> void:
-	if not _borrowed_time_active:
+func _tick_the_mist_remembers() -> void:
+	if not _the_mist_remembers_active:
 		return
 
-	if _borrowed_time_duration_pending_start:
-		_borrowed_time_duration_pending_start = false
+	if _the_mist_remembers_duration_pending_start:
+		_the_mist_remembers_duration_pending_start = false
 		return
 
-	_borrowed_time_turns_remaining -= 1
-	if _borrowed_time_turns_remaining <= 0:
-		_end_borrowed_time()
+	_the_mist_remembers_turns_remaining -= 1
+	if _the_mist_remembers_turns_remaining <= 0:
+		_end_the_mist_remembers()
 
 
-## Ends Borrowed Time once its duration runs out (or it's dispelled) and
+## Ends The Mist Remembers once its duration runs out (or it's dispelled) and
 ## restarts its cooldown at the full value from here - the cooldown set
 ## at activation keeps ticking down WHILE the buff is active, so without
 ## this reset the wait after it ends would only be cooldown - duration.
-func _end_borrowed_time() -> void:
-	_borrowed_time_active = false
-	_borrowed_time_heal_conversion_pct = 0.0
-	_borrowed_time_turns_remaining = 0
-	_borrowed_time_duration_pending_start = false
-	_set_borrowed_time_visual(hero_image, false)
+func _end_the_mist_remembers() -> void:
+	_the_mist_remembers_active = false
+	_the_mist_remembers_heal_conversion_pct = 0.0
+	_the_mist_remembers_turns_remaining = 0
+	_the_mist_remembers_duration_pending_start = false
+	_set_the_mist_remembers_visual(hero_image, false)
 
-	var level_data: Dictionary = _get_borrowed_time_level_data()
+	var level_data: Dictionary = _get_the_mist_remembers_level_data()
 	if not level_data.is_empty():
-		_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
-		PlayerManager.set_skill_cooldown("borrowed_time", _skill_cooldowns["borrowed_time"])
+		_skill_cooldowns["the_mist_remembers"] = int(level_data.get("cooldown", 0))
+		PlayerManager.set_skill_cooldown("the_mist_remembers", _skill_cooldowns["the_mist_remembers"])
 
-	_show_message_over_hero("Borrowed Time fades")
+	_show_message_over_hero("The Mist Remembers fades")
 	_refresh_bars()
 	_refresh_skill_cooldown_labels()
 
 
-## Purely cosmetic: turns Borrowed Time's pulsing greenish-teal glow on
-## or off for `node` (the player's hero_image, or the rival Abaddon's
+## Purely cosmetic: turns The Mist Remembers's pulsing greenish-teal glow on
+## or off for `node` (the player's hero_image, or the rival Morvael's
 ## own node). The glow is a child TextureRect showing the same texture,
-## additively blended and tinted BORROWED_TIME_GLOW_COLOR, so it
+## additively blended and tinted THE_MIST_REMEMBERS_GLOW_COLOR, so it
 ## brightens the sprite's own silhouette toward teal and follows its
 ## position/scale/fades for free. Its strength pulses on a loop; the
 ## same per-frame update also keeps its flip_h/texture in sync with the
 ## sprite, since the hero can turn around while it's up. Only does
 ## anything when the state actually changes (the glow child's presence
 ## is the "currently on" marker).
-func _set_borrowed_time_visual(node: Variant, active: bool) -> void:
+##
+## Also starts or stops the mist pouring into it (see
+## _set_the_mist_remembers_inflow()).
+func _set_the_mist_remembers_visual(node: Variant, active: bool) -> void:
 	if not (node is TextureRect) or not is_instance_valid(node):
 		return
-	var glow: TextureRect = node.get_node_or_null(BORROWED_TIME_GLOW_NAME)
+	var glow: TextureRect = node.get_node_or_null(THE_MIST_REMEMBERS_GLOW_NAME)
 	if active == (glow != null):
 		return
 
 	if not active:
 		# Renamed right away so a quick re-activation during the fade
 		# creates a fresh glow instead of finding this dying one.
-		glow.name = BORROWED_TIME_GLOW_NAME + "Fading"
+		glow.name = THE_MIST_REMEMBERS_GLOW_NAME + "Fading"
 		var pulse: Variant = glow.get_meta("pulse_tween", null)
 		if pulse is Tween and pulse.is_valid():
 			pulse.kill()
 		var fade: Tween = glow.create_tween()
 		fade.tween_property(glow, "modulate:a", 0.0, 0.4)
 		fade.tween_callback(glow.queue_free)
+		_set_the_mist_remembers_inflow(node, false)
 		return
 
 	var material := CanvasItemMaterial.new()
 	material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	glow = TextureRect.new()
-	glow.name = BORROWED_TIME_GLOW_NAME
+	glow.name = THE_MIST_REMEMBERS_GLOW_NAME
 	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	glow.material = material
 	glow.texture = node.texture
@@ -9079,7 +9236,7 @@ func _set_borrowed_time_visual(node: Variant, active: bool) -> void:
 	glow.flip_h = node.flip_h
 	glow.flip_v = node.flip_v
 	glow.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	glow.self_modulate = BORROWED_TIME_GLOW_COLOR
+	glow.self_modulate = THE_MIST_REMEMBERS_GLOW_COLOR
 	glow.modulate.a = 0.0
 	node.add_child(glow)
 
@@ -9092,9 +9249,50 @@ func _set_borrowed_time_visual(node: Variant, active: bool) -> void:
 			glow.flip_h = node.flip_h
 			glow.texture = node.texture
 			glow.modulate.a = lerpf(0.15, 0.8, 0.5 - 0.5 * cos(phase * TAU)),
-		0.0, 1.0, BORROWED_TIME_PULSE_SECONDS
+		0.0, 1.0, THE_MIST_REMEMBERS_PULSE_SECONDS
 	)
 	glow.set_meta("pulse_tween", pulse)
+	_set_the_mist_remembers_inflow(node, true)
+
+
+## The Mist Remembers's mist pouring into `node`: on activation it rises
+## out of the ground and floods in (a surge), then settles to a steady,
+## gentler flow for as long as the ultimate lasts; off, it thins away.
+func _set_the_mist_remembers_inflow(node: TextureRect, active: bool) -> void:
+	var inflow: ColorRect = node.get_node_or_null(THE_MIST_REMEMBERS_INFLOW_NAME)
+	if not active:
+		if inflow == null:
+			return
+		inflow.name = THE_MIST_REMEMBERS_INFLOW_NAME + "Fading"
+		var fade: Tween = inflow.create_tween()
+		fade.tween_property(inflow.material, "shader_parameter/intensity", 0.0, 0.6)
+		fade.tween_callback(inflow.queue_free)
+		return
+	if inflow != null:
+		return
+
+	inflow = ColorRect.new()
+	inflow.name = THE_MIST_REMEMBERS_INFLOW_NAME
+	inflow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Wider than the sprite so the streams can rise from either side, and
+	# a little below its feet so the mist comes up out of the ground.
+	inflow.size = node.size * Vector2(1.6, 1.2)
+	inflow.position = Vector2((node.size.x - inflow.size.x) / 2.0, node.size.y * 1.08 - inflow.size.y)
+	var mat := ShaderMaterial.new()
+	mat.shader = THE_MIST_REMEMBERS_INFLOW_SHADER
+	mat.set_shader_parameter("aspect", inflow.size.x / maxf(1.0, inflow.size.y))
+	mat.set_shader_parameter("ground", 0.93)
+	# The chest: halfway across, about 40% down the sprite.
+	mat.set_shader_parameter("target", Vector2(0.5, (inflow.size.y - node.size.y * 1.08 + node.size.y * 0.4) / inflow.size.y))
+	mat.set_shader_parameter("seed", randf() * 20.0)
+	mat.set_shader_parameter("intensity", 0.0)
+	inflow.material = mat
+	node.add_child(inflow)
+
+	var surge: Tween = inflow.create_tween()
+	surge.tween_property(mat, "shader_parameter/intensity", 1.0, 0.35).set_trans(Tween.TRANS_SINE)
+	surge.tween_interval(THE_MIST_REMEMBERS_SURGE_SECONDS - 0.35)
+	surge.tween_property(mat, "shader_parameter/intensity", THE_MIST_REMEMBERS_STEADY_INTENSITY, 1.2).set_trans(Tween.TRANS_SINE)
 
 
 # ------------------------------------------------------------------
@@ -9104,14 +9302,14 @@ func _set_borrowed_time_visual(node: Variant, active: bool) -> void:
 
 ## Returns the mitigated damage actually dealt - the full hit's worth,
 ## even when it ends up somewhere other than the hero's own HP: fully
-## converted into a heal while Borrowed Time is active (see below), or
-## absorbed some/all by Aphotic Shield's own HP pool instead - so
-## callers that need it (a rival hero's own Spirit Link lifesteal, via
+## converted into a heal while The Mist Remembers is active (see below), or
+## absorbed some/all by Veil of the Forgotten's own HP pool instead - so
+## callers that need it (a rival hero's own Wildbond lifesteal, via
 ## _resolve_enemy_hero_attack()) don't have to re-derive it. While
 ## Winter Wyvern's Cold Embrace is active the hero is fully immune -
 ## every hit (a creep's, a rival hero's skill, any ongoing DoT) is
-## discarded outright before armor mitigation, Borrowed Time, or Aphotic
-## Shield ever get a look at it.
+## discarded outright before armor mitigation, The Mist Remembers, or Veil of the
+## Forgotten ever get a look at it.
 func apply_damage(amount: float) -> float:
 	if _cold_embrace_active:
 		return 0.0
@@ -9130,8 +9328,8 @@ func apply_damage(amount: float) -> float:
 	# ANY source, has a chance to be redirected onto a random surviving
 	# illusion instead - a full redirect, not a split, and completely
 	# bypassing every one of the hero's own defensive mechanics below
-	# (Reactive Armor's stack, Savage Roar, Borrowed Time, Aphotic
-	# Shield) since nothing actually touched him this time. Uses the
+	# (Reactive Armor's stack, Blood of the Wild, The Mist Remembers, Veil of the
+	# Forgotten) since nothing actually touched him this time. Uses the
 	# hero's own armor for mitigation, same as if he'd taken it himself -
 	# an illusion is a copy of him, not a separate combatant with its
 	# own defense stat.
@@ -9141,45 +9339,53 @@ func apply_damage(amount: float) -> float:
 		_deal_damage_to_illusion(illusion, illusion_damage)
 		return illusion_damage
 
+	var hero_animator := CreatureAnimator.of(hero_image)
+	if hero_animator != null and hero_image != _deferred_hit_node:
+		hero_animator.play_hit()
+
 	var reduced: float = _apply_armor_reduction(amount, _hero_armor())
 	# Reactive Armor stacks off of this hit landing - added only after
 	# _hero_armor() above already read the stack count, so the stack
 	# this hit just earned reduces the NEXT hit, not this one.
 	_apply_reactive_armor_stack()
-	# Savage Roar's damage reduction stacks on top of armor mitigation
+	# Blood of the Wild's damage reduction stacks on top of armor mitigation
 	# rather than replacing it, and only applies while it's active.
-	reduced *= (1.0 - _savage_roar_damage_reduction_pct)
+	reduced *= (1.0 - _blood_of_the_wild_damage_reduction_pct)
 
-	# Borrowed Time reverses the hit entirely into a heal - there's no
-	# damage left for Aphotic Shield to absorb, so that check is
+	# The Mist Remembers reverses the hit entirely into a heal - there's no
+	# damage left for Veil of the Forgotten to absorb, so that check is
 	# skipped for as long as this is active.
-	if _borrowed_time_active:
-		heal(reduced * _borrowed_time_heal_conversion_pct)
+	if _the_mist_remembers_active:
+		heal(reduced * _the_mist_remembers_heal_conversion_pct)
 		return reduced
 
-	if _aphotic_shield_active:
-		var absorbed: float = minf(reduced, _aphotic_shield_hp)
-		_aphotic_shield_hp -= absorbed
+	if _veil_of_the_forgotten_active:
+		var absorbed: float = minf(reduced, _veil_of_the_forgotten_hp)
+		_veil_of_the_forgotten_hp -= absorbed
 		var overflow: float = reduced - absorbed
 		if overflow > 0.0:
 			PlayerManager.damage_hero(overflow)
-		if _aphotic_shield_hp <= 0.0:
-			_end_aphotic_shield(true)
+		if _veil_of_the_forgotten_hp <= 0.0:
+			_end_veil_of_the_forgotten(true)
 		elif absorbed > 0.0:
-			_update_aphotic_shell(hero_image, _aphotic_shield_hp)
+			_update_veil_shell(hero_image, _veil_of_the_forgotten_hp)
 		_refresh_bars()
-		_maybe_auto_activate_borrowed_time()
+		_maybe_auto_activate_the_mist_remembers()
 		return reduced
 
 	PlayerManager.damage_hero(reduced)
 	_refresh_bars()
-	_maybe_auto_activate_borrowed_time()
+	_maybe_auto_activate_the_mist_remembers()
 	return reduced
 
 
 func spend_mana(amount: float) -> void:
 	PlayerManager.use_mana(amount)
 	_refresh_bars()
+	# Every hero skill cast pays its mana through here.
+	var hero_animator := CreatureAnimator.of(hero_image)
+	if hero_animator != null:
+		hero_animator.play_cast()
 
 
 func heal(amount: float) -> void:
@@ -9403,23 +9609,23 @@ func _on_skill_choice_desc_cancel_pressed() -> void:
 ## Heroes move faster than enemies as part of their stats - a speed
 ## of 1.5-2.7 rounds to 2-3 columns per move, while every enemy
 ## always takes exactly one column per turn (see _enemy_turn()). Adds
-## Savage Roar's bonus columns while it's active (see
-## _update_savage_roar_state()), plus a flat +1 column while Nature's
+## Blood of the Wild's bonus columns while it's active (see
+## _update_blood_of_the_wild_state()), plus a flat +1 column while Nature's
 ## Guise is active - moving unseen covers more ground, same "bonus on
-## top of the normal speed-based distance" shape Savage Roar's own
+## top of the normal speed-based distance" shape Blood of the Wild's own
 ## bonus already has, just gated on _natures_guise_active instead of an
 ## HP threshold.
 func _hero_move_distance() -> int:
 	var speed: float = float(_recruited.get("stats", {}).get("speed", 1.0))
 	var natures_guise_bonus: int = 1 if _natures_guise_active else 0
-	return maxi(1, roundi(speed)) + _savage_roar_bonus_movement + natures_guise_bonus
+	return maxi(1, roundi(speed)) + _blood_of_the_wild_bonus_movement + natures_guise_bonus
 
 
 ## Whether the hero currently fights at range - normally just his
-## range_type stat, but True Form forces melee for its duration
-## regardless of that stat (see _activate_true_form()).
+## range_type stat, but Beast of the Elderwild forces melee for its duration
+## regardless of that stat (see _activate_beast_of_the_elderwild()).
 func _is_ranged_hero() -> bool:
-	if _true_form_active:
+	if _beast_of_the_elderwild_active:
 		return false
 	return _hero_static.get("range_type", "Melee") == "Range"
 
@@ -9680,12 +9886,12 @@ func _start_ranged_targeting() -> void:
 	_highlight_valid_targets()
 
 
-## Entangle's target picking: same column-range/highlight mechanism as
+## Thornbind's target picking: same column-range/highlight mechanism as
 ## a ranged Attack (_start_ranged_targeting), but resolves through
-## _resolve_entangle_cast() on click instead of a plain attack.
+## _resolve_thornbind_cast() on click instead of a plain attack.
 ## Returns false (and shows a message) if nothing is in range - the
 ## caller then knows not to spend mana/cooldown/the turn.
-func _start_entangle_targeting(level_data: Dictionary) -> bool:
+func _start_thornbind_targeting(level_data: Dictionary) -> bool:
 	_cancel_targeting()
 
 	var col_range: int = _hero_attack_column_range()
@@ -9700,33 +9906,33 @@ func _start_entangle_targeting(level_data: Dictionary) -> bool:
 		return false
 
 	_targeting_mode = true
-	_targeting_purpose = "entangle"
-	_pending_entangle_level_data = level_data
+	_targeting_purpose = "thornbind"
+	_pending_thornbind_level_data = level_data
 	_highlight_valid_targets()
 	return true
 
 
-## Mist Coil's own targeting range, in columns - fixed regardless of
-## the hero's Range stat (unlike a plain ranged Attack or Entangle,
+## Whisper of the Veil's own targeting range, in columns - fixed regardless of
+## the hero's Range stat (unlike a plain ranged Attack or Thornbind,
 ## which both scale with it via _hero_attack_column_range()), since
 ## it's a bolt of mist rather than a physical attack.
-const MIST_COIL_RANGE := 2
+const WHISPER_OF_THE_VEIL_RANGE := 2
 
 
-## Mist Coil's target picking: highlights any enemy within
-## MIST_COIL_RANGE columns AND the hero's own portrait, since Mist Coil
+## Whisper of the Veil's target picking: highlights any enemy within
+## WHISPER_OF_THE_VEIL_RANGE columns AND the hero's own portrait, since Whisper of the Veil
 ## can be cast on either - a damaging bolt on an enemy, or a costly-
-## but-net-positive heal on Abaddon himself (see
-## _resolve_mist_coil_enemy_cast()/_resolve_mist_coil_self_cast()).
+## but-net-positive heal on Morvael himself (see
+## _resolve_whisper_of_the_veil_enemy_cast()/_resolve_whisper_of_the_veil_self_cast()).
 ## Self-casting is always available regardless of range, so - unlike
-## Entangle/ranged Attack - this never fails for lack of a target;
+## Thornbind/ranged Attack - this never fails for lack of a target;
 ## it only bails out (returning false) if the player is already stuck
 ## with no enemies AND can't afford the HP cost, in which case there's
 ## nothing legal to click at all.
-func _start_mist_coil_targeting(level_data: Dictionary) -> bool:
+func _start_whisper_of_the_veil_targeting(level_data: Dictionary) -> bool:
 	_cancel_targeting()
 
-	var col_range: int = MIST_COIL_RANGE
+	var col_range: int = WHISPER_OF_THE_VEIL_RANGE
 	for enemy in _enemies:
 		if _is_target_hidden(enemy):
 			continue
@@ -9741,8 +9947,8 @@ func _start_mist_coil_targeting(level_data: Dictionary) -> bool:
 		return false
 
 	_targeting_mode = true
-	_targeting_purpose = "mist_coil"
-	_pending_mist_coil_level_data = level_data
+	_targeting_purpose = "whisper_of_the_veil"
+	_pending_whisper_of_the_veil_level_data = level_data
 	_highlight_valid_targets()
 	if can_self_cast:
 		_highlight_hero_self_target()
@@ -9750,11 +9956,11 @@ func _start_mist_coil_targeting(level_data: Dictionary) -> bool:
 
 
 ## Kunkka's Torrent target picking: same column-range/highlight
-## mechanism as Entangle/ranged Attack, but the range itself comes
+## mechanism as Thornbind/ranged Attack, but the range itself comes
 ## straight from this level's own `range` field (a constant 3 at every
 ## level per the design doc) rather than _hero_attack_column_range() -
 ## Torrent lands where Kunkka calls it down, regardless of his Range
-## stat, the same way Mist Coil's own fixed MIST_COIL_RANGE does.
+## stat, the same way Whisper of the Veil's own fixed WHISPER_OF_THE_VEIL_RANGE does.
 ## Returns false (and shows a message) if nothing is in range.
 func _start_torrent_targeting(level_data: Dictionary) -> bool:
 	_cancel_targeting()
@@ -10046,7 +10252,7 @@ func _start_ice_vortex_targeting(level_data: Dictionary) -> bool:
 ## Ancient Apparition's Chilling Touch target picking: same column-
 ## range/highlight mechanism as every other targeted skill above, but
 ## using the hero's own normal attack range (_hero_attack_column_
-## range(), the same stat-scaled helper a plain ranged Attack/Entangle
+## range(), the same stat-scaled helper a plain ranged Attack/Thornbind
 ## use) rather than a skill-specific field - Chilling Touch is
 ## explicitly "attack range", not its own distance. Returns false (and
 ## shows a message) if nothing is in range.
@@ -10351,7 +10557,7 @@ func _highlight_valid_targets() -> void:
 ## Same bright, pulsing treatment as _highlight_valid_targets(), just on
 ## the hero's own portrait (HERO_TARGET_HIGHLIGHT_COLOR/_PULSE_COLOR's
 ## green, not TARGET_HIGHLIGHT_COLOR's gold) - for a skill that can be
-## self-cast (right now, only Mist Coil's _start_mist_coil_targeting(),
+## self-cast (right now, only Whisper of the Veil's _start_whisper_of_the_veil_targeting(),
 ## when can_self_cast is true). Tracked in the same
 ## _target_highlight_tweens _cancel_targeting() already kills and resets
 ## (via _update_hero_visibility()) - one shared cleanup handles both the
@@ -10367,8 +10573,8 @@ func _highlight_hero_self_target() -> void:
 
 ## Clears any still-highlighted valid-target tint and resets the hero's
 ## own portrait modulate back to whatever it's SUPPOSED to be right now
-## (_update_hero_visibility(), not a hardcoded Color(1,1,1)) - Mist
-## Coil's own self-target highlight tints hero_image the same way a
+## (_update_hero_visibility(), not a hardcoded Color(1,1,1)) - Whisper of the
+## Veil's own self-target highlight tints hero_image the same way a
 ## valid enemy target gets tinted, so this needs to undo that without
 ## also stomping Depthsveil's/Nature's Guise's own invisibility fade
 ## if either is still active. _cancel_targeting() runs constantly -
@@ -10390,8 +10596,8 @@ func _cancel_targeting() -> void:
 	_valid_targets.clear()
 	_targeting_mode = false
 	_targeting_purpose = "attack"
-	_pending_entangle_level_data = {}
-	_pending_mist_coil_level_data = {}
+	_pending_thornbind_level_data = {}
+	_pending_whisper_of_the_veil_level_data = {}
 
 
 func _on_enemy_gui_input(event: InputEvent, enemy: Dictionary) -> void:
@@ -10483,8 +10689,8 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		enemy = resolved
 
 	var purpose: String = _targeting_purpose
-	var entangle_level_data: Dictionary = _pending_entangle_level_data
-	var mist_coil_level_data: Dictionary = _pending_mist_coil_level_data
+	var thornbind_level_data: Dictionary = _pending_thornbind_level_data
+	var whisper_of_the_veil_level_data: Dictionary = _pending_whisper_of_the_veil_level_data
 	var torrent_level_data: Dictionary = _pending_torrent_level_data
 	var xmarks_level_data: Dictionary = _pending_xmarks_level_data
 	var ghostship_level_data: Dictionary = _pending_ghostship_level_data
@@ -10510,10 +10716,10 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 	var leech_seed_level_data: Dictionary = _pending_leech_seed_level_data
 	_cancel_targeting()
 
-	if purpose == "entangle":
-		_resolve_entangle_cast(enemy, entangle_level_data)
-	elif purpose == "mist_coil":
-		_resolve_mist_coil_enemy_cast(enemy, mist_coil_level_data)
+	if purpose == "thornbind":
+		_resolve_thornbind_cast(enemy, thornbind_level_data)
+	elif purpose == "whisper_of_the_veil":
+		_resolve_whisper_of_the_veil_enemy_cast(enemy, whisper_of_the_veil_level_data)
 	elif purpose == "torrent":
 		_resolve_torrent_cast(enemy, torrent_level_data)
 	elif purpose == "x_marks_the_spot":
@@ -10569,21 +10775,40 @@ func _on_hero_image_gui_input(event: InputEvent) -> void:
 		_on_hero_image_clicked()
 
 
-## Only meaningful while Mist Coil's targeting is open - clicking the
+## Only meaningful while Whisper of the Veil's targeting is open - clicking the
 ## hero's own portrait at any other time (or for any other skill) is a
 ## no-op, same as clicking a non-highlighted enemy while targeting.
 func _on_hero_image_clicked() -> void:
 	if not _targeting_mode or _battle_over or _has_acted_this_turn:
 		return
-	if _targeting_purpose != "mist_coil":
+	if _targeting_purpose != "whisper_of_the_veil":
 		return
 
-	var level_data: Dictionary = _pending_mist_coil_level_data
-	_resolve_mist_coil_self_cast(level_data)
+	var level_data: Dictionary = _pending_whisper_of_the_veil_level_data
+	_resolve_whisper_of_the_veil_self_cast(level_data)
 
 
 func _apply_hero_attack(target: Dictionary) -> void:
 	var generation_before: int = _stage_generation
+
+	# A ranged hero turns to face whoever he's shooting (art faces right
+	# natively - same flip convention as _hero_move()). A melee target
+	# shares his column, so his facing is left alone.
+	var target_pos: int = int(target.get("pos_index", _hero_pos_index))
+	if _is_ranged_hero() and target_pos != _hero_pos_index:
+		hero_image.flip_h = target_pos < _hero_pos_index
+
+	var hero_animator := CreatureAnimator.of(hero_image)
+	if hero_animator != null:
+		# Toward the target; a melee target shares his column, so fall
+		# back to the way he's facing.
+		var attack_direction: float = signf(float(target_pos - _hero_pos_index))
+		if attack_direction == 0.0:
+			attack_direction = -1.0 if hero_image.flip_h else 1.0
+		# A ranged hero strikes from where he stands - no dash forward.
+		hero_animator.play_attack(attack_direction, not _is_ranged_hero())
+
+	_play_hero_attack_effect(_hero_static, hero_image, target.get("node"), _beast_of_the_elderwild_active)
 
 	# If Veyrik is hidden, this Attack gets Depthsveil's own bonus
 	# damage folded straight into the roll (added to the min/max range
@@ -10626,22 +10851,23 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	if not bash_level_data.is_empty():
 		attack_damage += attack_damage * float(bash_level_data.get("bonus_damage_pct", 0.0))
 	var mitigated_damage: float = _deal_fixed_damage_to_enemy(target, attack_damage)
+	_deferred_hit_node = null
 	_apply_leeching_hunger_steal(target)
 	# Arctic Burn's bonus_damage is already folded into the roll above
 	# (see _roll_hero_damage()) - this just spends one of its banked
 	# Attacks, ending the effect once the last one is used.
 	_apply_arctic_burn_attack()
 	# Lifesteal only ever applies to this plain Attack action - never
-	# to skill damage (Barbed Lunge, Abyssal Spasm, Entangle's DoT, etc.) - and
+	# to skill damage (Barbed Lunge, Abyssal Spasm, Thornbind's DoT, etc.) - and
 	# uses the damage actually dealt, i.e. after the target's armor
 	# has already reduced it.
-	_apply_spirit_link_lifesteal(mitigated_damage, target)
+	_apply_wildbond_lifesteal(mitigated_damage, target)
 	# Morbid Mask's own lifesteal - independent of and stacks with
-	# Spirit Link's above.
+	# Wildbond's above.
 	_apply_morbid_mask_lifesteal(mitigated_damage, target)
-	# Curse of Avernus stacks the same way - only this plain Attack
+	# Mark of the Mist stacks the same way - only this plain Attack
 	# action builds toward it, never skill damage.
-	_apply_curse_of_avernus_stack(target)
+	_apply_mark_of_the_mist_stack(target)
 
 	if not tidebringer_level_data.is_empty():
 		_apply_tidebringer_cleave(target, attack_damage, tidebringer_level_data)
@@ -10722,12 +10948,12 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## mitigated by that target's own armor) and kills it if that brings
 ## it to 0. Shared by _deal_damage_to_enemy (single rolled hit),
 ## Abyssal Spasm (one rolled amount split across every enemy in range),
-## and Entangle's DoT. Returns the mitigated damage actually dealt, so
-## callers that need it (Spirit Link's lifesteal, via
+## and Thornbind's DoT. Returns the mitigated damage actually dealt, so
+## callers that need it (Wildbond's lifesteal, via
 ## _apply_hero_attack()) don't have to re-derive it.
 ## For a hero-fight boss, this also doubles as the enemy-side mirror of
-## the player's own apply_damage(): Borrowed Time reverses the hit into
-## a heal, and failing that, Aphotic Shield absorbs it into its own HP
+## the player's own apply_damage(): The Mist Remembers reverses the hit into
+## a heal, and failing that, Veil of the Forgotten absorbs it into its own HP
 ## pool first - same redirection order as the player's copy, just
 ## checked here since every source of damage to an enemy (attacks,
 ## Abyssal Spasm, DoTs) already funnels through this one function.
@@ -10738,7 +10964,7 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## own Corrosive Haze bonus (see below) - true for every hero attack/
 ## skill call site (the overwhelming majority, so it defaults true),
 ## false only at the handful of calls that AREN'T the hero's own doing:
-## a DoT tick (_tick_enemy_turn_start_effects()), the Spirit Bear's own
+## a DoT tick (_tick_enemy_turn_start_effects()), the Elderwild Companion's own
 ## attack (_bear_turn()), and another creep piling onto a Winter's
 ## Curse target (_enemy_turn()'s own curse redirect).
 func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical: bool = false, is_hero_action: bool = true) -> float:
@@ -10770,7 +10996,7 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 	# random surviving illusion instead, mirroring the player's own
 	# apply_damage() redirect (see that function's own comment) - a full
 	# redirect, not a split, bypassing Reactive Armor's stack/Savage
-	# Roar/Borrowed Time/Aphotic Shield since nothing actually touched
+	# Roar/The Mist Remembers/Veil of the Forgotten since nothing actually touched
 	# the boss this time. Uses the boss's own armor for mitigation, same
 	# as if it had taken the hit itself.
 	if is_boss and not _enemy_illusions.is_empty() and randf() < _enemy_illusion_hit_chance_pct:
@@ -10790,11 +11016,11 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 	var enemy_armor: float = float(target["static"].get("armor", 0)) + _enemy_hero_bonus_armor(target) - float(target.get("armor_reduction", 0.0))
 	var mitigated: float = _apply_armor_reduction(amount, enemy_armor)
 	if is_boss:
-		mitigated *= (1.0 - _enemy_savage_roar_damage_reduction_pct)
+		mitigated *= (1.0 - _enemy_blood_of_the_wild_damage_reduction_pct)
 
 	if is_boss and _enemy_cold_embrace_active:
 		# Full immunity, same as the player's own apply_damage() check -
-		# no absorption pool to track the way Aphotic Shield has, the
+		# no absorption pool to track the way Veil of the Forgotten has, the
 		# hit just never happens.
 		return mitigated
 
@@ -10807,26 +11033,26 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 		# stack()'s own "not learned" check).
 		_apply_enemy_reactive_armor_stack()
 
-	if is_boss and _enemy_borrowed_time_active:
+	if is_boss and _enemy_the_mist_remembers_active:
 		var max_hp: float = _enemy_hero_effective_max_hp(target)
-		target["current_hp"] = minf(max_hp, target["current_hp"] + mitigated * _enemy_borrowed_time_heal_conversion_pct)
+		target["current_hp"] = minf(max_hp, target["current_hp"] + mitigated * _enemy_the_mist_remembers_heal_conversion_pct)
 		return mitigated
 
-	if is_boss and _enemy_aphotic_shield_active:
-		var absorbed: float = minf(mitigated, _enemy_aphotic_shield_hp)
-		_enemy_aphotic_shield_hp -= absorbed
+	if is_boss and _enemy_veil_of_the_forgotten_active:
+		var absorbed: float = minf(mitigated, _enemy_veil_of_the_forgotten_hp)
+		_enemy_veil_of_the_forgotten_hp -= absorbed
 		var overflow: float = mitigated - absorbed
 		if overflow > 0.0:
 			target["current_hp"] -= overflow
 			_show_damage_number(target["node"], overflow, is_critical)
-		if _enemy_aphotic_shield_hp <= 0.0:
-			_end_enemy_aphotic_shield(true)
+		if _enemy_veil_of_the_forgotten_hp <= 0.0:
+			_end_enemy_veil_of_the_forgotten(true)
 		elif absorbed > 0.0:
-			_update_aphotic_shell(target.get("node"), _enemy_aphotic_shield_hp)
+			_update_veil_shell(target.get("node"), _enemy_veil_of_the_forgotten_hp)
 		if target["current_hp"] <= 0:
 			_kill_enemy(target)
 		else:
-			_maybe_auto_activate_enemy_borrowed_time(target)
+			_maybe_auto_activate_enemy_the_mist_remembers(target)
 		return mitigated
 
 	target["current_hp"] -= mitigated
@@ -10835,20 +11061,20 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 	if target["current_hp"] <= 0:
 		_kill_enemy(target)
 	elif is_boss:
-		_maybe_auto_activate_enemy_borrowed_time(target)
+		_maybe_auto_activate_enemy_the_mist_remembers(target)
 
 	return mitigated
 
 
-## A rival hero's own Leeching Hunger/Spirit Link armor bonuses, folded
+## A rival hero's own Leeching Hunger/Wildbond armor bonuses, folded
 ## into the armor the player's damage has to punch through - the enemy-
 ## side mirror of _hero_armor()'s own borrowed-armor terms. 0 for
 ## anything that isn't the actual boss (a regular creep, or the boss's
-## own summoned Spirit Bear ally).
+## own summoned Elderwild Companion ally).
 func _enemy_hero_bonus_armor(target: Dictionary) -> float:
 	if not target["static"].get("is_hero_fight_boss", false):
 		return 0.0
-	return _enemy_leeching_hunger_bonus.get("armor", 0.0) + _enemy_spirit_link_bonus_armor + _enemy_living_armor_bonus_armor + _enemy_reactive_armor_bonus_armor()
+	return _enemy_leeching_hunger_bonus.get("armor", 0.0) + _enemy_wildbond_bonus_armor + _enemy_living_armor_bonus_armor + _enemy_reactive_armor_bonus_armor()
 
 
 ## The enemy to actually hit for whatever's on `pos_index` - the
@@ -10874,7 +11100,7 @@ func _get_enemy_at(pos_index: int) -> Dictionary:
 ## True for the rival hero currently hidden by their own Depthsveil or
 ## Nature's Guise - the player can't select, attack, or target them with
 ## a skill while this holds (see _get_enemy_at(), _start_ranged_
-## targeting(), _start_entangle_targeting(), _cast_abyssal_spasm()), exactly
+## targeting(), _start_thornbind_targeting(), _cast_abyssal_spasm()), exactly
 ## mirroring what the player's own Depthsveil/Nature's Guise does to
 ## him in _enemy_turn() (both folded into his own _is_hero_hidden()).
 ## Slardar's Corrosive Haze overrides this for whichever enemy it's
@@ -10894,7 +11120,7 @@ func _is_target_hidden(target: Dictionary) -> bool:
 
 
 ## Rolls a hero attack's damage, adding Leeching Hunger's ongoing
-## borrowed damage, True Form's bonus damage, Winter Wyvern's Arctic
+## borrowed damage, Beast of the Elderwild's bonus damage, Winter Wyvern's Arctic
 ## Burn bonus damage, and Tusk's Tag Team bonus damage (while each is
 ## active) plus (for the single hit that triggers it) Depthsveil's
 ## one-shot `extra_bonus`, before mitigation. Luna's Lunar Blessing then
@@ -10907,13 +11133,13 @@ func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	# Leeching Hunger's borrowed damage, True Form's bonus damage, Arctic
+	# Leeching Hunger's borrowed damage, Beast of the Elderwild's bonus damage, Arctic
 	# Burn's bonus damage, and Tag Team's bonus damage (while each is
 	# active) apply on top of both ends of the roll, same as a permanent
 	# damage bonus would - Depthsveil's bonus (passed in by the
 	# caller, only for the specific hit that triggers it) stacks on top
 	# of that the same way.
-	var bonus_damage: float = _leeching_hunger_bonus.get("damage", 0.0) + _true_form_bonus_damage + _arctic_burn_bonus_damage + _tag_team_bonus_damage + extra_bonus - _player_leeching_hunger_penalty.get("damage", 0.0)
+	var bonus_damage: float = _leeching_hunger_bonus.get("damage", 0.0) + _beast_of_the_elderwild_bonus_damage + _arctic_burn_bonus_damage + _tag_team_bonus_damage + extra_bonus - _player_leeching_hunger_penalty.get("damage", 0.0)
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
@@ -10937,6 +11163,10 @@ func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 ## hit" treatment a critical usually gets, layered on top of the plain
 ## damage-number styling below rather than replacing it outright.
 func _show_damage_number(target_node: Control, amount: float, is_critical: bool = false) -> void:
+	var animator := CreatureAnimator.of(target_node)
+	if animator != null and target_node != _deferred_hit_node:
+		animator.play_hit(signf(hero_image.position.x - target_node.position.x))
+
 	var label := Label.new()
 	label.text = str(int(amount)) + ("!" if is_critical else "")
 	label.add_theme_color_override("font_color", Color(1, 0.75, 0.1, 1) if is_critical else Color(1, 0.15, 0.15, 1))
@@ -11010,6 +11240,7 @@ func _kill_enemy(enemy: Dictionary) -> void:
 	_refresh_gold_label()
 	_show_gold_gain(enemy["node"], gold_gain)
 
+	CreatureAnimator.spawn_death_ghost(enemy["node"], _fx_layer)
 	enemy["node"].queue_free()
 	if enemy.get("hp_label") != null:
 		enemy["hp_label"].queue_free()
@@ -11104,6 +11335,9 @@ func _finish_zone_victory() -> void:
 	_battle_over = true
 	_update_action_buttons()
 	PlayerManager.record_high_score()
+	# Let the killing blow's death dissolve finish before leaving.
+	if not get_tree().get_nodes_in_group(CreatureAnimator.DEATH_GHOST_GROUP).is_empty():
+		await get_tree().create_timer(CreatureAnimator.DEATH_DURATION + 0.15).timeout
 	get_tree().change_scene_to_file("res://scenes/Map.tscn")
 
 
@@ -11120,6 +11354,7 @@ func _advance_to_next_stage() -> void:
 	_cancel_targeting()
 	_hero_pos_index = 1
 	_update_hero_position()
+	_reset_bear_to_hero_column()
 
 	_turn_count = 0
 	_next_reinforcement_turn = REINFORCEMENT_INTERVAL
@@ -11198,6 +11433,7 @@ func _start_hero_fight(hero_static: Dictionary) -> void:
 	_cancel_targeting()
 	_hero_pos_index = 1
 	_update_hero_position()
+	_reset_bear_to_hero_column()
 
 	_turn_count = 0
 	_next_reinforcement_turn = REINFORCEMENT_INTERVAL
@@ -11235,35 +11471,35 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_depthsveil_turns_remaining = 0
 	_enemy_depthsveil_duration_pending_start = false
 
-	_enemy_spirit_link_active = false
-	_enemy_spirit_link_lifesteal_pct = 0.0
-	_enemy_spirit_link_bonus_armor = 0.0
-	_enemy_spirit_link_turns_remaining = 0
-	_enemy_spirit_link_duration_pending_start = false
+	_enemy_wildbond_active = false
+	_enemy_wildbond_lifesteal_pct = 0.0
+	_enemy_wildbond_bonus_armor = 0.0
+	_enemy_wildbond_turns_remaining = 0
+	_enemy_wildbond_duration_pending_start = false
 	_set_hero_enlarged(_get_hero_fight_boss().get("node"), false)
 
-	_enemy_true_form_active = false
-	_enemy_true_form_bonus_hp = 0.0
-	_enemy_true_form_bonus_damage = 0.0
-	_enemy_true_form_turns_remaining = 0
-	_enemy_true_form_duration_pending_start = false
+	_enemy_beast_of_the_elderwild_active = false
+	_enemy_beast_of_the_elderwild_bonus_hp = 0.0
+	_enemy_beast_of_the_elderwild_bonus_damage = 0.0
+	_enemy_beast_of_the_elderwild_turns_remaining = 0
+	_enemy_beast_of_the_elderwild_duration_pending_start = false
 
-	_enemy_savage_roar_active = false
-	_enemy_savage_roar_damage_reduction_pct = 0.0
+	_enemy_blood_of_the_wild_active = false
+	_enemy_blood_of_the_wild_damage_reduction_pct = 0.0
 
-	_enemy_aphotic_shield_active = false
-	_enemy_aphotic_shield_hp = 0.0
-	_enemy_aphotic_shield_aoe_damage = 0.0
-	_enemy_aphotic_shield_radius = 0
-	_enemy_aphotic_shield_turns_remaining = 0
-	_enemy_aphotic_shield_duration_pending_start = false
-	_remove_aphotic_shell(_get_hero_fight_boss().get("node"), false, 0)
+	_enemy_veil_of_the_forgotten_active = false
+	_enemy_veil_of_the_forgotten_hp = 0.0
+	_enemy_veil_of_the_forgotten_aoe_damage = 0.0
+	_enemy_veil_of_the_forgotten_radius = 0
+	_enemy_veil_of_the_forgotten_turns_remaining = 0
+	_enemy_veil_of_the_forgotten_duration_pending_start = false
+	_remove_veil_shell(_get_hero_fight_boss().get("node"), false, 0)
 
-	_enemy_borrowed_time_active = false
-	_enemy_borrowed_time_heal_conversion_pct = 0.0
-	_enemy_borrowed_time_turns_remaining = 0
-	_enemy_borrowed_time_duration_pending_start = false
-	_set_borrowed_time_visual(_get_hero_fight_boss().get("node"), false)
+	_enemy_the_mist_remembers_active = false
+	_enemy_the_mist_remembers_heal_conversion_pct = 0.0
+	_enemy_the_mist_remembers_turns_remaining = 0
+	_enemy_the_mist_remembers_duration_pending_start = false
+	_set_the_mist_remembers_visual(_get_hero_fight_boss().get("node"), false)
 
 	_enemy_tidebringer_attack_count = 0
 	_enemy_xmarks_pending = false
@@ -11330,8 +11566,8 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_player_leeching_hunger_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 	_player_root_turns_left = 0
 	_player_silence_turns_left = 0
-	_player_entangle_dot_damage = 0.0
-	_player_entangle_dot_turns_left = 0
+	_player_thornbind_dot_damage = 0.0
+	_player_thornbind_dot_turns_left = 0
 	_player_stun_turns_left = 0
 	_player_winters_curse_active = false
 	_player_curse_stacks = 0
@@ -11521,7 +11757,7 @@ func _end_turn() -> void:
 	# _tick_skill_cooldowns()/_tick_cold_embrace() above, so this just
 	# checks whether it's still active for the turn that was about to
 	# open): the player gets no action at all this "turn" - skip
-	# straight back to another _end_turn() call (Spirit Bear + enemy
+	# straight back to another _end_turn() call (Elderwild Companion + enemy
 	# turn again) after a short pause, the same way a stunned enemy
 	# just loses its own turn to the player's own Barbed Lunge, rather than
 	# opening the action buttons only to lock them again next turn. Name
@@ -11552,14 +11788,14 @@ func _end_turn() -> void:
 ## While Veyrik is hidden by Depthsveil (_is_hero_hidden()), neither
 ## enemy type's attack can land on him, AND enemies stop moving/
 ## chasing him entirely - they hold their ground instead of stepping
-## toward where he was. If the Spirit Bear is out, it's still fair
+## toward where he was. If the Elderwild Companion is out, it's still fair
 ## game: enemies will shoot/swing at it, and will still chase it down,
 ## since only Veyrik himself is untraceable while invisible. The hero
 ## is always the priority target when both he and the bear are in
 ## range at once (while visible); only "too close" flee logic keys
 ## off him specifically, not the bear.
 ##
-## A rooted enemy (root_turns_left > 0, from Entangle - see
+## A rooted enemy (root_turns_left > 0, from Thornbind - see
 ## _apply_root()) never moves either, for the same reason as above:
 ## every movement branch (flee and the "close in" fallback) is
 ## skipped. Its attack is untouched, though - if it's already within
@@ -11632,7 +11868,7 @@ func _enemy_turn() -> void:
 		# comment) overrides this - true sight lets him keep fighting a
 		# hidden player normally, stealth notwithstanding.
 		var hero_hidden: bool = not _can_enemy_see_hero()
-		# Root (Entangle's own, or Nature's Guise's) is checked with its
+		# Root (Thornbind's own, or Nature's Guise's) is checked with its
 		# CURRENT value before ticking it down - same "use it, then
 		# decrement" order stun_turns_left uses just above - so a 1-turn
 		# root actually blocks the one movement it's meant to, instead of
@@ -11645,7 +11881,7 @@ func _enemy_turn() -> void:
 		# before attempting a skill cast - so unlike root above, there's
 		# no "consumed" moment to decrement it at here. Tick it down
 		# unconditionally instead (same as _enemy_hero_turn()'s own copy
-		# does for the boss), or a creep silenced by Entangle would carry
+		# does for the boss), or a creep silenced by Thornbind would carry
 		# it forever - never expiring since nothing ever "uses" it.
 		if enemy.get("silence_turns_left", 0) > 0:
 			enemy["silence_turns_left"] -= 1
@@ -11660,10 +11896,12 @@ func _enemy_turn() -> void:
 			# hero.
 			if enemy_type == "range":
 				if _distance(enemy["pos_index"], curse_target_pos) <= RANGE_ENEMY_ATTACK_RANGE:
-					_play_enemy_attack_lunge(enemy)
+					_play_enemy_attack_lunge(enemy, curse_target_pos)
+					_fire_enemy_projectile(enemy, curse_target.get("node"))
 					# Another creep's own attack, not the hero's - Corrosive
 					# Haze's own bonus never applies to it.
 					_deal_fixed_damage_to_enemy(curse_target, enemy_damage * curse_damage_multiplier, false, false)
+					_deferred_hit_node = null
 				elif not rooted:
 					var step: int = _step_toward(enemy["pos_index"], curse_target_pos)
 					var next_pos: int = enemy["pos_index"] + step
@@ -11701,14 +11939,18 @@ func _enemy_turn() -> void:
 			if hero_distance <= RANGE_ENEMY_ATTACK_RANGE and not hero_hidden:
 				# SAFE RANGE on the hero, and he's a valid target -
 				# always the priority over the bear.
-				_play_enemy_attack_lunge(enemy)
+				_play_enemy_attack_lunge(enemy, _hero_pos_index)
+				_fire_enemy_projectile(enemy, hero_image)
 				apply_damage(enemy_damage)
+				_deferred_hit_node = null
 				attacked = true
 			elif _is_bear_alive() and _distance(enemy["pos_index"], _bear["pos_index"]) <= RANGE_ENEMY_ATTACK_RANGE:
 				# Hero's out of range (or hidden), but the bear is
 				# close enough to shoot instead.
-				_play_enemy_attack_lunge(enemy)
+				_play_enemy_attack_lunge(enemy, _bear["pos_index"])
+				_fire_enemy_projectile(enemy, _bear.get("node"))
 				_deal_damage_to_bear(enemy_damage)
+				_deferred_hit_node = null
 				attacked = true
 
 			if not attacked and not rooted:
@@ -11745,7 +11987,7 @@ func _enemy_turn() -> void:
 						_move_enemy(enemy, next_pos)
 
 
-## Whichever "threat" - the hero, or the Spirit Bear if one is
+## Whichever "threat" - the hero, or the Elderwild Companion if one is
 ## currently summoned - sits closer to `enemy_pos`, ties going to the
 ## hero. Only used to choose a movement target when nothing is in
 ## attack/flee range this turn (see _enemy_turn()).
@@ -11775,7 +12017,7 @@ func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
 #
 # Two simplifications versus a regular creep's own targeting: a rival
 # hero always focuses the player's hero directly rather than ever
-# being drawn to the player's Spirit Bear the way a creep can be, and
+# being drawn to the player's Elderwild Companion the way a creep can be, and
 # (like a creep) always moves exactly one column per turn regardless
 # of the hero's own speed stat - matching how a hero fight boss has
 # always been treated as a single flattened enemy rather than a full
@@ -11816,7 +12058,7 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 		_move_enemy(enemy, _hero_pos_index)
 		_show_message_over_hero("X Marks the Spot!")
 
-	_update_enemy_savage_roar_state(enemy)
+	_update_enemy_blood_of_the_wild_state(enemy)
 
 	var enemy_type: String = enemy["static"].get("type", "")
 	var hero_distance: int = _distance(enemy["pos_index"], _hero_pos_index)
@@ -11850,8 +12092,8 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 		_drink_enemy_health_potion(enemy)
 		return
 
-	# A hidden player can't be targeted, but his Spirit Bear still can,
-	# and a self-cast heal (Mist Coil on himself) needs no target at all
+	# A hidden player can't be targeted, but his Elderwild Companion still can,
+	# and a self-cast heal (Whisper of the Veil on himself) needs no target at all
 	# - so the rival still gets to pick a skill; the picker (via
 	# _enemy_ai_hero_hidden) then only considers the bear-targetable
 	# ones, aimed at the bear, plus that self-heal.
@@ -11939,14 +12181,16 @@ func _drink_enemy_mana_potion() -> void:
 
 
 ## The rival hero's plain Attack against the player: rolls their
-## effective damage (folding in their own Leeching Hunger/True Form
+## effective damage (folding in their own Leeching Hunger/Beast of the Elderwild
 ## bonuses and, once per activation, Depthsveil's one-shot bonus if
 ## they're currently hidden), applies it to the player, then runs
-## Leeching Hunger's steal and Spirit Link's lifesteal - both of which,
+## Leeching Hunger's steal and Wildbond's lifesteal - both of which,
 ## exactly like the player's own copies, only ever trigger off this
 ## plain Attack, never off a skill.
 func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
-	_play_enemy_attack_lunge(enemy)
+	# Always aimed at the player; a ranged rival turns to face him first
+	# (a melee one shares his column, so this leaves its facing alone).
+	_play_enemy_attack_lunge(enemy, _hero_pos_index)
 	var shadow_bonus: float = _enemy_depthsveil_bonus_damage if _enemy_depthsveil_active else 0.0
 	# Same idea for Nature's Guise, just with a root on the player
 	# instead of bonus damage - captured now, before the attack (and
@@ -11975,11 +12219,13 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 		attack_damage += attack_damage * moonlight_shadow_active_bonus_pct
 	if not bash_level_data.is_empty():
 		attack_damage += attack_damage * float(bash_level_data.get("bonus_damage_pct", 0.0))
+	_play_hero_attack_effect(_enemy_hero_static, enemy.get("node"), hero_image, _enemy_beast_of_the_elderwild_active)
 	var mitigated: float = apply_damage(attack_damage)
+	_deferred_hit_node = null
 
 	_apply_enemy_leeching_hunger_steal(enemy)
-	_apply_enemy_spirit_link_lifesteal(enemy, mitigated)
-	_apply_enemy_curse_of_avernus_stack()
+	_apply_enemy_wildbond_lifesteal(enemy, mitigated)
+	_apply_enemy_mark_of_the_mist_stack()
 	_apply_enemy_arctic_burn_attack()
 	# Rip Tide's splash onto the player's illusions/bear near him - a
 	# no-op unless the skill is learned.
@@ -11998,7 +12244,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	_apply_enemy_moon_glaives_bounces(attack_damage)
 
 	# Bash of the Deep's own knockback - after leeching hunger/lifesteal/
-	# curse of avernus above, same "resolve every OTHER effect of the hit
+	# Mark of the Mist above, same "resolve every OTHER effect of the hit
 	# before shoving the target somewhere else" ordering
 	# _apply_hero_attack()'s own player-side copy follows. A no-op unless
 	# this attack is the one that triggered the stack, and only if the
@@ -12026,7 +12272,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 ## range.
 func _roll_enemy_hero_damage(enemy: Dictionary, extra_bonus: float = 0.0) -> float:
 	var base_damage: float = float(enemy["static"].get("damage", 0))
-	var bonus: float = _enemy_leeching_hunger_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + _enemy_arctic_burn_bonus_damage + _enemy_tag_team_bonus_damage + extra_bonus
+	var bonus: float = _enemy_leeching_hunger_bonus.get("damage", 0.0) + _enemy_beast_of_the_elderwild_bonus_damage + _enemy_arctic_burn_bonus_damage + _enemy_tag_team_bonus_damage + extra_bonus
 	var total: float = maxf(0.0, base_damage + bonus)
 
 	# Luna's Lunar Blessing - read fresh off the rival's current level
@@ -12045,10 +12291,10 @@ func _roll_enemy_hero_damage(enemy: Dictionary, extra_bonus: float = 0.0) -> flo
 
 
 ## The rival's current max hp: base + Leeching Hunger's borrowed hp +
-## True Form's bonus hp while each is active - the enemy-side mirror
-## of _hero_max_hp(). Used to clamp Spirit Link's lifesteal.
+## Beast of the Elderwild's bonus hp while each is active - the enemy-side mirror
+## of _hero_max_hp(). Used to clamp Wildbond's lifesteal.
 func _enemy_hero_effective_max_hp(enemy: Dictionary) -> float:
-	return float(enemy["static"].get("hp", 1)) + _enemy_leeching_hunger_bonus.get("hp", 0.0) + _enemy_true_form_bonus_hp
+	return float(enemy["static"].get("hp", 1)) + _enemy_leeching_hunger_bonus.get("hp", 0.0) + _enemy_beast_of_the_elderwild_bonus_hp
 
 
 func _get_hero_fight_boss() -> Dictionary:
@@ -12086,10 +12332,10 @@ func _enemy_skill_mana_cost(skill_id: String) -> float:
 
 ## False for a buff/summon skill that's already active and wouldn't do
 ## anything new right now (recasting Leeching Hunger/Depthsveil/Spirit
-## Link/True Form just restarts their duration from the same values,
-## and a Spirit Bear that's already out doesn't need replacing) - so
+## Link/Beast of the Elderwild just restarts their duration from the same values,
+## and a Elderwild Companion that's already out doesn't need replacing) - so
 ## the rival doesn't burn mana refreshing something with no benefit
-## instead of attacking. Abyssal Spasm/Barbed Lunge/Entangle always report true.
+## instead of attacking. Abyssal Spasm/Barbed Lunge/Thornbind always report true.
 func _enemy_skill_worth_casting(skill_id: String) -> bool:
 	match skill_id:
 		"leeching_hunger":
@@ -12100,14 +12346,14 @@ func _enemy_skill_worth_casting(skill_id: String) -> bool:
 			return not _enemy_moonlight_shadow_active
 		"eclipse":
 			return not _enemy_eclipse_active
-		"spirit_link":
-			return not _enemy_spirit_link_active
-		"true_form":
-			return not _enemy_true_form_active
-		"summon_spirit_bear":
+		"wildbond":
+			return not _enemy_wildbond_active
+		"beast_of_the_elderwild":
+			return not _enemy_beast_of_the_elderwild_active
+		"elderwild_companion":
 			return _get_enemy_spirit_bear().is_empty()
-		"aphotic_shield":
-			return not _enemy_aphotic_shield_active
+		"veil_of_the_forgotten":
+			return not _enemy_veil_of_the_forgotten_active
 		"x_marks_the_spot":
 			# Not worth recasting while a mark is already pending -
 			# there's only ever one possible target anyway (the
@@ -12187,7 +12433,7 @@ func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: 
 	var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 	if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
 		return false
-	# A skill that can be aimed at the player's Spirit Bear is ready as
+	# A skill that can be aimed at the player's Elderwild Companion is ready as
 	# long as EITHER target is reachable and worth hitting - see
 	# _enemy_skill_target_options(). Every other skill still needs the
 	# player himself, visible and in range.
@@ -12217,7 +12463,7 @@ func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: 
 ## the caller's own existing basic-attack fallback takes over unchanged.
 ## `enemy_type`/`hero_distance` still gate skills that actually need to
 ## reach the player - see _enemy_skill_in_range()/EnemySkillRange - so a
-## boss can't land Abyssal Spasm or Entangle from clear across the board; it
+## boss can't land Abyssal Spasm or Thornbind from clear across the board; it
 ## has to close in first, same as it already must for a plain Attack.
 ## This replaces the old "first match in ENEMY_KNOWN_SKILL_IDS wins"
 ## rule - the array is still every skill this AI ever considers, it's
@@ -12232,13 +12478,13 @@ func _pick_enemy_ready_skill(enemy: Dictionary, enemy_type: String, hero_distanc
 		var level_data: Dictionary = _get_enemy_skill_level_data(skill_id)
 		candidates.append({"id": skill_id, "score": EnemySkillAI.evaluate_skill(skill_id, level_data, context)})
 
-	# Mist Coil on himself (the self-heal) competes as its own candidate,
-	# alongside Mist Coil aimed at the player - see
-	# EnemySkillAI.MIST_COIL_SELF_ID. _cast_enemy_skill() maps a win
-	# back onto a self-targeted "mist_coil" cast.
-	if _enemy_mist_coil_self_ready(enemy):
-		var mist_coil_level_data: Dictionary = _get_enemy_skill_level_data("mist_coil")
-		candidates.append({"id": EnemySkillAI.MIST_COIL_SELF_ID, "score": EnemySkillAI.evaluate_skill(EnemySkillAI.MIST_COIL_SELF_ID, mist_coil_level_data, context)})
+	# Whisper of the Veil on himself (the self-heal) competes as its own candidate,
+	# alongside Whisper of the Veil aimed at the player - see
+	# EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID. _cast_enemy_skill() maps a win
+	# back onto a self-targeted "whisper_of_the_veil" cast.
+	if _enemy_whisper_of_the_veil_self_ready(enemy):
+		var whisper_of_the_veil_level_data: Dictionary = _get_enemy_skill_level_data("whisper_of_the_veil")
+		candidates.append({"id": EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID, "score": EnemySkillAI.evaluate_skill(EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID, whisper_of_the_veil_level_data, context)})
 
 	var archetype: String = str(context.get("archetype", ""))
 	if EnemySkillAI.basic_attack_participates(archetype):
@@ -12248,18 +12494,18 @@ func _pick_enemy_ready_skill(enemy: Dictionary, enemy_type: String, hero_distanc
 	return "" if chosen_id == EnemySkillAI.BASIC_ATTACK_ID else chosen_id
 
 
-## Whether the rival could cast Mist Coil on himself right now: learned,
+## Whether the rival could cast Whisper of the Veil on himself right now: learned,
 ## off cooldown, affordable, and with more HP than its hp_cost - paying
 ## it must never kill him. No range or "worth casting" gate (it's a
 ## self-cast heal; EnemySkillAI's own scoring decides whether it's worth
 ## it), and - being self-targeted - it stays available even while the
 ## player is hidden.
-func _enemy_mist_coil_self_ready(enemy: Dictionary) -> bool:
-	if PlayerManager.get_npc_skill_level(_enemy_hero_id, "mist_coil") <= 0:
+func _enemy_whisper_of_the_veil_self_ready(enemy: Dictionary) -> bool:
+	if PlayerManager.get_npc_skill_level(_enemy_hero_id, "whisper_of_the_veil") <= 0:
 		return false
-	if _enemy_skill_cooldowns.get("mist_coil", 0) > 0:
+	if _enemy_skill_cooldowns.get("whisper_of_the_veil", 0) > 0:
 		return false
-	var level_data: Dictionary = _get_enemy_skill_level_data("mist_coil")
+	var level_data: Dictionary = _get_enemy_skill_level_data("whisper_of_the_veil")
 	if _enemy_current_mana < float(level_data.get("mana_cost", 0)):
 		return false
 	return float(enemy.get("current_hp", 0.0)) > float(level_data.get("hp_cost", 0))
@@ -12311,7 +12557,7 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int,
 ##     Tidebringer, and what that's worth - see
 ##     _maybe_consume_enemy_tidebringer_stack() for the real activation
 ##     this only ever previews. cleave_targets counts the player's own
-##     illusions/Spirit Bear within cleave_columns of him - the only
+##     illusions/Elderwild Companion within cleave_columns of him - the only
 ##     things besides the player himself the cleave can reach (see
 ##     _apply_enemy_tidebringer_cleave()).
 ##   - kunkka_torrent_combo_ready/kunkka_ghostship_combo_ready: whether
@@ -12328,7 +12574,7 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int,
 ##     it only scores well when there's a realistic attack coming, not
 ##     just because it's off cooldown.
 ##   - has_harmful_debuff: whether the rival currently has anything the
-##     player inflicted on it (root/silence/a DoT/Curse of Avernus) -
+##     player inflicted on it (root/silence/a DoT/Mark of the Mist) -
 ##     for Winter Wyvern's own Cold Embrace, which dispels it.
 ##   - redirect_candidate_count/avg_enemy_damage: for Winter Wyvern's own
 ##     Winter's Curse. Always 0/0.0 here - a hero fight only ever has
@@ -12440,7 +12686,7 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int,
 ##     off _get_enemy_moon_glaives_level_data() - 0/0.0 while unlearned.
 ##   - moon_glaives_valid_bounce_targets/moon_glaives_bounce_target_hps:
 ##     the ACTUAL bounce targets right now - every one of the player's
-##     own illusions, plus his own Spirit Bear, within bounce_range of
+##     own illusions, plus his own Elderwild Companion, within bounce_range of
 ##     his own column (the only column a rival Attack could ever bounce
 ##     from - see _apply_enemy_moon_glaives_bounces()'s own docstring for
 ##     why there's no second real _enemies-style target here) - never the
@@ -12452,7 +12698,7 @@ func _enemy_has_unaffordable_ready_skill(enemy_type: String, hero_distance: int,
 ##   - eclipse_candidate_count/eclipse_candidate_hps/eclipse_candidate_
 ##     max_hps: every REAL beam candidate within Luna's own Eclipse
 ##     radius right now - the player (if in range), each of his own
-##     illusions in range, and his own Spirit Bear if in range - mirrors
+##     illusions in range, and his own Elderwild Companion if in range - mirrors
 ##     _tick_enemy_eclipse()'s own candidate pool exactly (see
 ##     EnemySkillAI's own _luna_eclipse_modifier()/_luna_eclipse_
 ##     expected_damage() for how this drives the ultimate's own scoring).
@@ -12467,7 +12713,7 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 	var base_attack_range: int = RANGE_ENEMY_ATTACK_RANGE if enemy_type == "range" else 0
 
 	# Luna's Moon Glaives: the ACTUAL bounce targets right now - every one
-	# of the player's own illusions, plus his own Spirit Bear, within
+	# of the player's own illusions, plus his own Elderwild Companion, within
 	# bounce_range of his own column (see _apply_enemy_moon_glaives_
 	# bounces()'s own docstring for why that's the only column a rival
 	# Attack could ever bounce from in a hero fight).
@@ -12482,7 +12728,7 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 
 	# Luna's Eclipse: every REAL beam candidate within radius of the
 	# rival's OWN current position right now - the player himself, each
-	# of his own illusions, and his own Spirit Bear - mirrors
+	# of his own illusions, and his own Elderwild Companion - mirrors
 	# _tick_enemy_eclipse()'s own candidate pool exactly.
 	var eclipse_level_data: Dictionary = _get_enemy_skill_level_data("eclipse")
 	var eclipse_radius: int = int(eclipse_level_data.get("radius", 0))
@@ -12574,8 +12820,8 @@ func _build_enemy_ai_context(enemy: Dictionary, enemy_type: String, hero_distanc
 
 ## Whether `enemy` (a hero-fight boss) currently has anything the player
 ## inflicted on it - root, silence, or any of the DoTs a player skill
-## can apply directly onto an enemy Dictionary (Entangle's, Curse of
-## Avernus's, Cold Feet's, Ice Vortex's, Ice Blast's) - used by Winter
+## can apply directly onto an enemy Dictionary (Thornbind's, Mark of the
+## Mist's, Cold Feet's, Ice Vortex's, Ice Blast's) - used by Winter
 ## Wyvern's own Cold Embrace scoring (see EnemySkillAI's own "winter_
 ## wyvern" modifier), since casting it dispels all of them at once.
 func _enemy_has_harmful_debuff(enemy: Dictionary) -> bool:
@@ -12583,7 +12829,7 @@ func _enemy_has_harmful_debuff(enemy: Dictionary) -> bool:
 		return true
 	if enemy.get("silence_turns_left", 0) > 0:
 		return true
-	if enemy.get("entangle_dot_turns_left", 0) > 0:
+	if enemy.get("thornbind_dot_turns_left", 0) > 0:
 		return true
 	if enemy.get("curse_active", false) or enemy.get("curse_stacks", 0) > 0:
 		return true
@@ -12640,7 +12886,7 @@ func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: 
 
 ## The generic half of _enemy_skill_in_range() - whether `skill_id`
 ## reaches a target `distance` columns away - split out so the same
-## check can be asked about the player's Spirit Bear too (see
+## check can be asked about the player's Elderwild Companion too (see
 ## _enemy_skill_target_options()). Scatterblast's directional check
 ## stays in _enemy_skill_in_range() itself; it's never bear-targetable.
 func _enemy_skill_reaches_distance(skill_id: String, enemy_type: String, distance: int) -> bool:
@@ -12653,21 +12899,21 @@ func _enemy_skill_reaches_distance(skill_id: String, enemy_type: String, distanc
 
 
 func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
-	# The self-heal candidate (EnemySkillAI.MIST_COIL_SELF_ID) is just
-	# Mist Coil aimed at himself - same skill, cooldown and mana.
-	var mist_coil_self: bool = skill_id == EnemySkillAI.MIST_COIL_SELF_ID
-	if mist_coil_self:
-		skill_id = "mist_coil"
+	# The self-heal candidate (EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID) is just
+	# Whisper of the Veil aimed at himself - same skill, cooldown and mana.
+	var whisper_of_the_veil_self: bool = skill_id == EnemySkillAI.WHISPER_OF_THE_VEIL_SELF_ID
+	if whisper_of_the_veil_self:
+		skill_id = "whisper_of_the_veil"
 	var skill: Dictionary = _find_enemy_skill(skill_id)
 	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, skill_id)
 	var level_data: Dictionary = GameManager.get_skill_level_data(skill, level)
 	_enemy_skill_cooldowns[skill_id] = int(level_data.get("cooldown", 0))
 	_enemy_current_mana -= float(level_data.get("mana_cost", 0))
 
-	# Aimed at the player's Spirit Bear instead of the player? Each
+	# Aimed at the player's Elderwild Companion instead of the player? Each
 	# bear-targetable _cast_enemy_*() below reads this first.
-	_enemy_mist_coil_self = mist_coil_self
-	_enemy_skill_on_bear = not mist_coil_self and ENEMY_BEAR_TARGETABLE_SKILLS.has(skill_id) and _choose_enemy_skill_on_bear(enemy, skill_id)
+	_enemy_whisper_of_the_veil_self = whisper_of_the_veil_self
+	_enemy_skill_on_bear = not whisper_of_the_veil_self and ENEMY_BEAR_TARGETABLE_SKILLS.has(skill_id) and _choose_enemy_skill_on_bear(enemy, skill_id)
 
 	match skill_id:
 		"abyssal_spasm":
@@ -12678,18 +12924,18 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 			_activate_enemy_leeching_hunger(level_data)
 		"depthsveil":
 			_activate_enemy_depthsveil(level_data)
-		"entangle":
-			_cast_enemy_entangle(level_data)
-		"summon_spirit_bear":
+		"thornbind":
+			_cast_enemy_thornbind(level_data)
+		"elderwild_companion":
 			_summon_enemy_spirit_bear(level_data)
-		"spirit_link":
-			_activate_enemy_spirit_link(level_data)
-		"true_form":
-			_activate_enemy_true_form(enemy, level_data)
-		"mist_coil":
-			_cast_enemy_mist_coil(enemy, level_data)
-		"aphotic_shield":
-			_activate_enemy_aphotic_shield(enemy, level_data)
+		"wildbond":
+			_activate_enemy_wildbond(level_data)
+		"beast_of_the_elderwild":
+			_activate_enemy_beast_of_the_elderwild(enemy, level_data)
+		"whisper_of_the_veil":
+			_cast_enemy_whisper_of_the_veil(enemy, level_data)
+		"veil_of_the_forgotten":
+			_activate_enemy_veil_of_the_forgotten(enemy, level_data)
 		"torrent":
 			_cast_enemy_torrent(level_data)
 		"x_marks_the_spot":
@@ -12780,7 +13026,7 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 	# once (different heroes' kits), so this just ends whichever one
 	# actually is.
 	_enemy_skill_on_bear = false
-	_enemy_mist_coil_self = false
+	_enemy_whisper_of_the_veil_self = false
 
 	if _enemy_depthsveil_active and skill_id != "depthsveil":
 		_end_enemy_depthsveil()
@@ -12822,6 +13068,9 @@ func _play_enemy_cast_feedback(enemy: Dictionary, skill: Dictionary) -> void:
 	var is_ultimate: bool = skill.get("type", "") == "ultimate"
 
 	_pulse_caster_sprite(node, is_ultimate)
+	var animator := CreatureAnimator.of(node)
+	if animator != null:
+		animator.play_cast()
 	_show_message_over_enemy(node, skill.get("name", ""))
 
 	if skill.get("id", "") in FROST_TINT_SKILL_IDS:
@@ -12855,8 +13104,8 @@ func _pulse_caster_sprite(node: TextureRect, big: bool) -> void:
 ## bounces()) so a bounced enemy visibly flashes red instead of only a
 ## damage number appearing on an enemy that was never the main target.
 ##
-## `flash_color` defaults to that red; Entangle passes
-## ENTANGLE_FLASH_COLOR for the same pop in green.
+## `flash_color` defaults to that red; Thornbind passes
+## THORNBIND_FLASH_COLOR for the same pop in green.
 func _flash_bounce_hit(node: TextureRect, flash_color: Color = BOUNCE_HIT_FLASH_COLOR) -> void:
 	node.pivot_offset = node.size / 2.0
 	var base_scale: Vector2 = node.get_meta("base_scale", Vector2.ONE)
@@ -12869,65 +13118,54 @@ func _flash_bounce_hit(node: TextureRect, flash_color: Color = BOUNCE_HIT_FLASH_
 	tween.parallel().tween_property(node, "modulate", base_modulate, 0.18)
 
 
-## Purely cosmetic: Entangle's cast visual on `node` (an enemy, or the
-## player's own hero_image when a rival casts it) - a burst of green
-## leaves springing up from its feet plus a green version of the hit
-## flash. The root itself has already been applied by the time this
-## plays; the lingering tint afterwards is _refresh_entangle_tints()'s.
-## Same CPUParticles2D one-shot-burst recipe as
-## _spawn_lil_shredder_impact().
-func _play_entangle_effect(node: TextureRect) -> void:
-	_flash_bounce_hit(node, ENTANGLE_FLASH_COLOR)
+## Purely cosmetic: Thornbind's cast visual on `node` (an enemy, the
+## player's own hero_image when a rival casts it, or the bear) - the
+## ground bursts open at its feet in a spray of earth and a few leaves,
+## with a green version of the hit flash, as the vines start climbing
+## (ThornbindVines, via _refresh_thornbind_vines()). The root itself has
+## already been applied by the time this plays.
+func _play_thornbind_effect(node: TextureRect) -> void:
+	_flash_bounce_hit(node, THORNBIND_FLASH_COLOR)
+	_play_overgrowth_dirt(node.position + Vector2(node.size.x / 2.0, node.size.y * ThornbindVines.FEET_Y), node.size.x * ThornbindVines.WRAP_RADIUS * 3.0)
 
 	var lifetime: float = 0.7
-	var particles := CPUParticles2D.new()
-	particles.position = node.position + Vector2(node.size.x / 2.0, node.size.y * 0.85)
-	particles.emitting = false
-	particles.one_shot = true
-	particles.amount = 26
-	particles.lifetime = lifetime
-	particles.explosiveness = 0.9
-	particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
-	particles.emission_rect_extents = Vector2(node.size.x * 0.3, 4.0)
-	particles.direction = Vector2(0, -1)
-	particles.spread = 35.0
-	# Leaves shoot up, then drift back down.
-	particles.gravity = Vector2(0, 260)
-	particles.initial_velocity_min = 110.0
-	particles.initial_velocity_max = 200.0
-	particles.angle_min = 0.0
-	particles.angle_max = 360.0
-	particles.angular_velocity_min = -240.0
-	particles.angular_velocity_max = 240.0
-	particles.scale_amount_min = 4.0
-	particles.scale_amount_max = 7.0
-	particles.color = Color(0.35, 0.85, 0.3, 1.0)
-	particles.hue_variation_min = -0.06
-	particles.hue_variation_max = 0.06
-	add_child(particles)
-	# Same reasoning as _play_scatterblast_effect()'s own move_child()
-	# call - render at the hero/enemy layer, not on top of every UI panel.
-	move_child(particles, enemies_layer.get_index() + 1)
-	particles.emitting = true
-
-	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
+	var leaves := CPUParticles2D.new()
+	leaves.position = node.position + Vector2(node.size.x / 2.0, node.size.y * ThornbindVines.FEET_Y)
+	leaves.emitting = false
+	leaves.one_shot = true
+	leaves.amount = 10
+	leaves.lifetime = lifetime
+	leaves.explosiveness = 0.9
+	leaves.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	leaves.emission_rect_extents = Vector2(node.size.x * 0.25, 4.0)
+	leaves.direction = Vector2(0, -1)
+	leaves.spread = 40.0
+	leaves.gravity = Vector2(0, 260)
+	leaves.initial_velocity_min = 80.0
+	leaves.initial_velocity_max = 150.0
+	leaves.angle_min = 0.0
+	leaves.angle_max = 360.0
+	leaves.angular_velocity_min = -240.0
+	leaves.angular_velocity_max = 240.0
+	leaves.scale_amount_min = 3.0
+	leaves.scale_amount_max = 5.0
+	leaves.color = Color(0.4, 0.6, 0.2, 1.0)
+	leaves.hue_variation_min = -0.08
+	leaves.hue_variation_max = 0.04
+	add_child(leaves)
+	move_child(leaves, enemies_layer.get_index() + 1)
+	leaves.emitting = true
+	get_tree().create_timer(lifetime + 0.2).timeout.connect(leaves.queue_free)
 
 
-## Keeps Entangle's lingering green tint in sync with who's actually
-## entangled right now - called from _refresh_bars() (i.e. constantly),
-## so the tint just follows current state instead of being toggled at
-## every cast/tick/dispel/reset site, same approach as
-## _refresh_status_effects(). "Entangled" = rooted AND still carrying
-## Entangle's own DoT, so Ensnare's/Overgrowth's plain roots (which
-## never set the Entangle DoT) don't pick up the tint.
 ## Keeps Overgrowth's roots in sync with who's currently held by it -
 ## every enemy carrying its DoT, and the player (a rival's cast) - called
 ## from _refresh_bars() (i.e. constantly), same approach as
-## _refresh_entangle_tints(). Overgrowth's DoT runs exactly as long as
+## _refresh_thornbind_vines(). Overgrowth's DoT runs exactly as long as
 ## its root (both armed with the same root_duration) and ticks down
 ## right as the last rooted turn begins, so the vines sink back into
 ## the ground just as the unit is about to be free - and a root from
-## anything else (Entangle, Ensnare) never grows vines.
+## anything else (Thornbind, Ensnare) never grows vines.
 func _refresh_overgrowth_roots() -> void:
 	for enemy in _enemies:
 		_set_overgrowth_roots(enemy.get("node"), enemy.get("overgrowth_dot_turns_left", 0) > 0)
@@ -13081,13 +13319,20 @@ func _play_overgrowth_dirt(pos: Vector2, width: float) -> void:
 	get_tree().create_timer(lifetime + 0.2).timeout.connect(particles.queue_free)
 
 
-func _refresh_entangle_tints() -> void:
+## Keeps Thornbind's vines in sync with who's actually thornbound right
+## now - called from _refresh_bars() (i.e. constantly), so they just
+## follow current state instead of being toggled at every cast/tick/
+## dispel/reset site, same approach as _refresh_status_effects().
+## "Thornbound" = rooted AND still carrying Thornbind's own DoT, so
+## Ensnare's/Overgrowth's plain roots (which never set the Thornbind DoT)
+## don't grow them.
+func _refresh_thornbind_vines() -> void:
 	for enemy in _enemies:
-		var entangled: bool = enemy.get("root_turns_left", 0) > 0 and enemy.get("entangle_dot_turns_left", 0) > 0
-		_set_entangle_tint(enemy.get("node"), entangled)
-	_set_entangle_tint(hero_image, _player_root_turns_left > 0 and _player_entangle_dot_turns_left > 0)
+		var thornbound: bool = enemy.get("root_turns_left", 0) > 0 and enemy.get("thornbind_dot_turns_left", 0) > 0
+		_set_thornbind_vines(enemy.get("node"), thornbound)
+	_set_thornbind_vines(hero_image, _player_root_turns_left > 0 and _player_thornbind_dot_turns_left > 0)
 	if _is_bear_alive():
-		_set_entangle_tint(_bear.get("node"), int(_bear.get("root_turns_left", 0)) > 0 and int(_bear.get("entangle_dot_turns_left", 0)) > 0)
+		_set_thornbind_vines(_bear.get("node"), int(_bear.get("root_turns_left", 0)) > 0 and int(_bear.get("thornbind_dot_turns_left", 0)) > 0)
 
 
 ## Keeps the frost in sync with who's currently frozen by Cold Feet's,
@@ -13100,7 +13345,7 @@ func _refresh_entangle_tints() -> void:
 ## _player_* counters, from a rival's cast). Both skills share the one
 ## frost look, so being marked by both never stacks two. Called from
 ## _refresh_bars() (i.e. constantly), same approach as
-## _refresh_entangle_tints(), so the frost just follows current state
+## _refresh_thornbind_vines(), so the frost just follows current state
 ## instead of being toggled at every cast/tick/dispel site.
 func _refresh_cold_feet_frost() -> void:
 	# Freezing Field's zones: every unit standing inside an active field
@@ -13130,7 +13375,7 @@ func _refresh_cold_feet_frost() -> void:
 	# Illusions (either side) can only ever carry Ice Vortex's DoT,
 	# never Cold Feet's - a single-target cast never lands on one - or
 	# stand inside the opposing side's Freezing Field. The player's own
-	# Spirit Bear can carry either DoT (a rival can aim Cold Feet at it -
+	# Elderwild Companion can carry either DoT (a rival can aim Cold Feet at it -
 	# see _cast_enemy_cold_feet_on_bear()).
 	for illusion in _illusions:
 		var illusion_frozen: bool = illusion.get("ice_vortex_dot_turns_left", 0) > 0 \
@@ -13223,7 +13468,7 @@ func _flash_frost_briefly(node: Variant, seconds: float) -> void:
 ## under one child Control, so they follow the sprite's position/
 ## scale/fades for free and fade in/out together. The shimmer's
 ## per-frame update also keeps the sheen's flip_h/texture in sync with
-## the sprite, the same way Borrowed Time's glow does. Only does
+## the sprite, the same way The Mist Remembers's glow does. Only does
 ## anything when the state actually changes (the child's presence is
 ## the "currently on" marker).
 func _set_cold_feet_frost(node: Variant, active: bool) -> void:
@@ -13312,20 +13557,16 @@ func _set_cold_feet_frost(node: Variant, active: bool) -> void:
 	frost.set_meta("shimmer_tween", shimmer)
 
 
-## Fades `node`'s self_modulate to ENTANGLE_TINT_COLOR (or back to
-## white) - only when the state actually changes, so the constant
-## _refresh_bars() calls don't keep restarting tweens.
-func _set_entangle_tint(node: Variant, entangled: bool) -> void:
-	if not (node is CanvasItem) or not is_instance_valid(node):
+## Grows Thornbind's vines around `node`, or unwinds them - both no-ops
+## when that's already the state, so the constant _refresh_bars() calls
+## don't keep restarting them.
+func _set_thornbind_vines(node: Variant, thornbound: bool) -> void:
+	if not (node is Control) or not is_instance_valid(node):
 		return
-	var target_color: Color = ENTANGLE_TINT_COLOR if entangled else Color(1, 1, 1, 1)
-	if node.self_modulate.is_equal_approx(target_color):
-		return
-	if bool(node.get_meta("entangle_tint_target", false)) == entangled and node.has_meta("entangle_tint_target"):
-		return
-	node.set_meta("entangle_tint_target", entangled)
-	var tween: Tween = node.create_tween()
-	tween.tween_property(node, "self_modulate", target_color, 0.3)
+	if thornbound:
+		ThornbindVines.attach(node)
+	else:
+		ThornbindVines.release(node)
 
 
 ## Same floating/fading style as _show_message_over_hero(), just over
@@ -13532,7 +13773,7 @@ func _end_enemy_leeching_hunger() -> void:
 # _end_depthsveil(). "Hidden" here means the player's attacks and
 # targeted skills can't select them at all (_is_target_hidden(),
 # checked from _get_enemy_at()/_start_ranged_targeting()/
-# _start_entangle_targeting()/_cast_abyssal_spasm()) - their own turn
+# _start_thornbind_targeting()/_cast_abyssal_spasm()) - their own turn
 # proceeds completely normally while hidden.
 # ------------------------------------------------------------------
 
@@ -13577,29 +13818,29 @@ func _update_enemy_hero_visibility() -> void:
 
 
 # ------------------------------------------------------------------
-# Erynd's Entangle, cast by the rival on the player - mirrors
+# Erynd's Thornbind, cast by the rival on the player - mirrors
 # _apply_root(), just aimed at the player instead of an enemy. There's
 # only one possible target (the player),
-# so no targeting step is needed the way the player's own Entangle
-# needs _start_entangle_targeting()/_resolve_entangle_cast().
+# so no targeting step is needed the way the player's own Thornbind
+# needs _start_thornbind_targeting()/_resolve_thornbind_cast().
 # ------------------------------------------------------------------
 
-func _cast_enemy_entangle(level_data: Dictionary) -> void:
+func _cast_enemy_thornbind(level_data: Dictionary) -> void:
 	if _enemy_skill_on_bear:
-		_cast_enemy_entangle_on_bear(level_data)
+		_cast_enemy_thornbind_on_bear(level_data)
 		return
 	_player_root_turns_left = int(level_data.get("root_turns", 0))
 	_player_silence_turns_left = int(level_data.get("silence_turns", 0))
-	_player_entangle_dot_damage = float(level_data.get("dot_damage", 0))
-	_player_entangle_dot_turns_left = int(level_data.get("dot_duration", 0))
-	_show_message_over_hero("Entangled!")
-	_play_entangle_effect(hero_image)
-	_refresh_entangle_tints()
+	_player_thornbind_dot_damage = float(level_data.get("dot_damage", 0))
+	_player_thornbind_dot_turns_left = int(level_data.get("dot_duration", 0))
+	_show_message_over_hero("Thornbound!")
+	_play_thornbind_effect(hero_image)
+	_refresh_thornbind_vines()
 
 
 
 # ------------------------------------------------------------------
-# Erynd's Summon Spirit Bear, cast by the rival - spawned as a
+# Erynd's Elderwild Companion, cast by the rival - spawned as a
 # genuine extra entry in _enemies via the normal _spawn_enemy() path,
 # so it automatically gets real movement/attack behavior, a real
 # position on the board, and can be fought and killed by the player
@@ -13607,7 +13848,7 @@ func _cast_enemy_entangle(level_data: Dictionary) -> void:
 # it doesn't reward anything beyond clearing it out of the way - only
 # the rival hero itself is worth a bounty.
 #
-# Simplification versus the player's own Spirit Bear: defeating the
+# Simplification versus the player's own Elderwild Companion: defeating the
 # boss requires _enemies to be empty (see _handle_victory()), so as
 # long as this bear is alive the fight isn't over even after the
 # rival hero itself has been reduced to 0 HP and removed - the same
@@ -13622,7 +13863,7 @@ func _summon_enemy_spirit_bear(level_data: Dictionary) -> void:
 
 	_spawn_enemy({
 		"id": "enemy_spirit_bear",
-		"name": "Spirit Bear",
+		"name": "Elderwild Companion",
 		"image": SPIRIT_BEAR_IMAGE_PATH,
 		"type": "melee",
 		"hp": float(level_data.get("hp", 1)),
@@ -13630,7 +13871,7 @@ func _summon_enemy_spirit_bear(level_data: Dictionary) -> void:
 		"armor": float(level_data.get("armor", 0)),
 		"XP": 0,
 		"gold": "0-0",
-		# Same art the player's own Spirit Bear uses is drawn facing
+		# Same art the player's own Elderwild Companion uses is drawn facing
 		# right (toward wherever it's an ally of); placed on the enemy
 		# side here, it needs the same left-facing flip hero portraits
 		# get - see _spawn_enemy()'s use of this flag.
@@ -13653,92 +13894,93 @@ func _despawn_enemy_spirit_bear() -> void:
 
 
 # ------------------------------------------------------------------
-# Erynd's Spirit Link, cast by the rival on themselves - mirrors
-# _activate_spirit_link()/_tick_spirit_link()/_end_spirit_link()/
-# _apply_spirit_link_lifesteal().
+# Erynd's Wildbond, cast by the rival on themselves - mirrors
+# _activate_wildbond()/_tick_wildbond()/_end_wildbond()/
+# _apply_wildbond_lifesteal().
 # ------------------------------------------------------------------
 
-func _activate_enemy_spirit_link(level_data: Dictionary) -> void:
-	_enemy_spirit_link_active = true
-	_enemy_spirit_link_lifesteal_pct = float(level_data.get("lifesteal_pct", 0.0))
-	_enemy_spirit_link_bonus_armor = float(level_data.get("bonus_armor", 0))
-	_enemy_spirit_link_turns_remaining = int(level_data.get("duration", 0))
-	_enemy_spirit_link_duration_pending_start = true
+func _activate_enemy_wildbond(level_data: Dictionary) -> void:
+	_enemy_wildbond_active = true
+	_enemy_wildbond_lifesteal_pct = float(level_data.get("lifesteal_pct", 0.0))
+	_enemy_wildbond_bonus_armor = float(level_data.get("bonus_armor", 0))
+	_enemy_wildbond_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_wildbond_duration_pending_start = true
 	_set_hero_enlarged(_get_hero_fight_boss().get("node"), true)
 
 
-func _tick_enemy_spirit_link() -> void:
-	if not _enemy_spirit_link_active:
+func _tick_enemy_wildbond() -> void:
+	if not _enemy_wildbond_active:
 		return
-	if _enemy_spirit_link_duration_pending_start:
-		_enemy_spirit_link_duration_pending_start = false
+	if _enemy_wildbond_duration_pending_start:
+		_enemy_wildbond_duration_pending_start = false
 		return
-	_enemy_spirit_link_turns_remaining -= 1
-	if _enemy_spirit_link_turns_remaining <= 0:
-		_end_enemy_spirit_link()
+	_enemy_wildbond_turns_remaining -= 1
+	if _enemy_wildbond_turns_remaining <= 0:
+		_end_enemy_wildbond()
 
 
-func _end_enemy_spirit_link() -> void:
-	_enemy_spirit_link_active = false
-	_enemy_spirit_link_lifesteal_pct = 0.0
-	_enemy_spirit_link_bonus_armor = 0.0
-	_enemy_spirit_link_turns_remaining = 0
-	_enemy_spirit_link_duration_pending_start = false
+func _end_enemy_wildbond() -> void:
+	_enemy_wildbond_active = false
+	_enemy_wildbond_lifesteal_pct = 0.0
+	_enemy_wildbond_bonus_armor = 0.0
+	_enemy_wildbond_turns_remaining = 0
+	_enemy_wildbond_duration_pending_start = false
 	_set_hero_enlarged(_get_hero_fight_boss().get("node"), false)
 
 
 ## Only ever called for the plain basic-attack branch of the rival's
 ## turn - like the player's own copy, skill damage (Abyssal Spasm, Barbed Lunge,
-## Entangle's DoT) never triggers this. Heals the boss directly,
+## Thornbind's DoT) never triggers this. Heals the boss directly,
 ## clamped to their current effective max hp.
-func _apply_enemy_spirit_link_lifesteal(enemy: Dictionary, mitigated_attack_damage: float) -> void:
-	if not _enemy_spirit_link_active or mitigated_attack_damage <= 0.0:
+func _apply_enemy_wildbond_lifesteal(enemy: Dictionary, mitigated_attack_damage: float) -> void:
+	if not _enemy_wildbond_active or mitigated_attack_damage <= 0.0:
 		return
-	var heal_amount: float = mitigated_attack_damage * _enemy_spirit_link_lifesteal_pct
+	var heal_amount: float = mitigated_attack_damage * _enemy_wildbond_lifesteal_pct
 	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 	enemy["current_hp"] = minf(max_hp, enemy["current_hp"] + heal_amount)
 	_play_lifesteal_effect(hero_image, enemy.get("node"))
 
 
 # ------------------------------------------------------------------
-# Erynd's True Form (ultimate), cast by the rival on themselves -
-# mirrors _activate_true_form()/_tick_true_form()/_end_true_form().
+# Erynd's Beast of the Elderwild (ultimate), cast by the rival on themselves -
+# mirrors _activate_beast_of_the_elderwild()/_tick_beast_of_the_elderwild()/_end_beast_of_the_elderwild().
 # No forced-melee-range concept here (a hero-fight boss is already
 # always attacking in melee or at range per its own "type", same as
 # any other enemy) - just the bonus hp/damage, plus swapping the
 # boss's own node texture the same way the player's portrait swaps.
 # ------------------------------------------------------------------
 
-func _activate_enemy_true_form(enemy: Dictionary, level_data: Dictionary) -> void:
-	if _enemy_true_form_active:
-		_end_enemy_true_form()
-	_enemy_true_form_active = true
-	_enemy_true_form_bonus_hp = float(level_data.get("bonus_hp", 0))
-	_enemy_true_form_bonus_damage = float(level_data.get("bonus_damage", 0))
-	_enemy_true_form_turns_remaining = int(level_data.get("duration", 0))
-	_enemy_true_form_duration_pending_start = true
+func _activate_enemy_beast_of_the_elderwild(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_beast_of_the_elderwild_active:
+		_end_enemy_beast_of_the_elderwild()
+	_enemy_beast_of_the_elderwild_active = true
+	_enemy_beast_of_the_elderwild_bonus_hp = float(level_data.get("bonus_hp", 0))
+	_enemy_beast_of_the_elderwild_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_enemy_beast_of_the_elderwild_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_beast_of_the_elderwild_duration_pending_start = true
 
-	if ResourceLoader.exists(TRUE_FORM_IMAGE_PATH) and is_instance_valid(enemy["node"]):
-		enemy["node"].texture = load(TRUE_FORM_IMAGE_PATH)
+	if ResourceLoader.exists(BEAST_OF_THE_ELDERWILD_IMAGE_PATH) and is_instance_valid(enemy["node"]):
+		enemy["node"].texture = load(BEAST_OF_THE_ELDERWILD_IMAGE_PATH)
+		_refit_creature_node(enemy["node"], enemy["pos_index"])
 
 
-func _tick_enemy_true_form() -> void:
-	if not _enemy_true_form_active:
+func _tick_enemy_beast_of_the_elderwild() -> void:
+	if not _enemy_beast_of_the_elderwild_active:
 		return
-	if _enemy_true_form_duration_pending_start:
-		_enemy_true_form_duration_pending_start = false
+	if _enemy_beast_of_the_elderwild_duration_pending_start:
+		_enemy_beast_of_the_elderwild_duration_pending_start = false
 		return
-	_enemy_true_form_turns_remaining -= 1
-	if _enemy_true_form_turns_remaining <= 0:
-		_end_enemy_true_form()
+	_enemy_beast_of_the_elderwild_turns_remaining -= 1
+	if _enemy_beast_of_the_elderwild_turns_remaining <= 0:
+		_end_enemy_beast_of_the_elderwild()
 
 
-func _end_enemy_true_form() -> void:
-	_enemy_true_form_active = false
-	_enemy_true_form_bonus_hp = 0.0
-	_enemy_true_form_bonus_damage = 0.0
-	_enemy_true_form_turns_remaining = 0
-	_enemy_true_form_duration_pending_start = false
+func _end_enemy_beast_of_the_elderwild() -> void:
+	_enemy_beast_of_the_elderwild_active = false
+	_enemy_beast_of_the_elderwild_bonus_hp = 0.0
+	_enemy_beast_of_the_elderwild_bonus_damage = 0.0
+	_enemy_beast_of_the_elderwild_turns_remaining = 0
+	_enemy_beast_of_the_elderwild_duration_pending_start = false
 
 	var boss: Dictionary = _get_hero_fight_boss()
 	if boss.is_empty() or not is_instance_valid(boss["node"]):
@@ -13746,11 +13988,15 @@ func _end_enemy_true_form() -> void:
 	var original_image: String = str(boss["static"].get("image", ""))
 	if original_image != "" and ResourceLoader.exists(original_image):
 		boss["node"].texture = load(original_image)
+		_refit_creature_node(boss["node"], boss["pos_index"])
+		var animator := CreatureAnimator.of(boss["node"])
+		if animator != null:
+			animator.play_cast()
 
 
 # ------------------------------------------------------------------
-# Erynd's Savage Roar (passive), on the rival - mirrors
-# _get_savage_roar_level_data()/_update_savage_roar_state(), same
+# Erynd's Blood of the Wild (passive), on the rival - mirrors
+# _get_blood_of_the_wild_level_data()/_update_blood_of_the_wild_state(), same
 # hysteresis: switches on once HP drops below 50%, stays on through
 # the climb back up until HP reaches 80%. Re-evaluated once at the
 # start of the rival's own turn (see _enemy_hero_turn()) rather than
@@ -13758,76 +14004,91 @@ func _end_enemy_true_form() -> void:
 # enemy the way _refresh_bars() does for the player.
 # ------------------------------------------------------------------
 
-func _get_enemy_savage_roar_level_data() -> Dictionary:
+func _get_enemy_blood_of_the_wild_level_data() -> Dictionary:
 	if _enemy_hero_id == "":
 		return {}
-	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "savage_roar")
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "blood_of_the_wild")
 	if level <= 0:
 		return {}
-	var skill: Dictionary = _find_enemy_skill("savage_roar")
+	var skill: Dictionary = _find_enemy_skill("blood_of_the_wild")
 	if skill.is_empty():
 		return {}
 	return GameManager.get_skill_level_data(skill, level)
 
 
-func _update_enemy_savage_roar_state(enemy: Dictionary) -> void:
-	var level_data: Dictionary = _get_enemy_savage_roar_level_data()
+func _update_enemy_blood_of_the_wild_state(enemy: Dictionary) -> void:
+	var level_data: Dictionary = _get_enemy_blood_of_the_wild_level_data()
 
 	if level_data.is_empty():
-		_enemy_savage_roar_active = false
+		_enemy_blood_of_the_wild_active = false
 	else:
 		var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 		var hp_pct: float = float(enemy.get("current_hp", 0)) / max_hp if max_hp > 0.0 else 0.0
-		if _enemy_savage_roar_active:
+		if _enemy_blood_of_the_wild_active:
 			if hp_pct >= 0.8:
-				_enemy_savage_roar_active = false
+				_enemy_blood_of_the_wild_active = false
 		elif hp_pct < 0.5:
-			_enemy_savage_roar_active = true
+			_enemy_blood_of_the_wild_active = true
 
-	_enemy_savage_roar_damage_reduction_pct = float(level_data.get("damage_reduction_pct", 0.0)) if _enemy_savage_roar_active else 0.0
+	_enemy_blood_of_the_wild_damage_reduction_pct = float(level_data.get("damage_reduction_pct", 0.0)) if _enemy_blood_of_the_wild_active else 0.0
 
 
 # ------------------------------------------------------------------
-# Abaddon's Mist Coil and Aphotic Shield, cast by the rival at (or on
+# Morvael's Whisper of the Veil and Veil of the Forgotten, cast by the rival at (or on
 # behalf of) himself - mirrors the player's own
-# _resolve_mist_coil_enemy_cast()/_activate_aphotic_shield()/
-# _tick_aphotic_shield()/_end_aphotic_shield(). Mist Coil goes either
+# _resolve_whisper_of_the_veil_enemy_cast()/_activate_veil_of_the_forgotten()/
+# _tick_veil_of_the_forgotten()/_end_veil_of_the_forgotten(). Whisper of the Veil goes either
 # way, same as the player's own copy: a hit on the player (or his
-# bear), or - picked by EnemySkillAI as its own "mist_coil_self"
-# candidate when he's hurt - a self-heal (_cast_enemy_mist_coil_on_
+# bear), or - picked by EnemySkillAI as its own "whisper_of_the_veil_self"
+# candidate when he's hurt - a self-heal (_cast_enemy_whisper_of_the_veil_on_
 # self()).
 # ------------------------------------------------------------------
 
-func _cast_enemy_mist_coil(enemy: Dictionary, level_data: Dictionary) -> void:
-	if _enemy_mist_coil_self:
-		_cast_enemy_mist_coil_on_self(enemy, level_data)
+func _cast_enemy_whisper_of_the_veil(enemy: Dictionary, level_data: Dictionary) -> void:
+	if _enemy_whisper_of_the_veil_self:
+		_cast_enemy_whisper_of_the_veil_on_self(enemy, level_data)
 		return
 	if _enemy_skill_on_bear:
-		_cast_enemy_mist_coil_on_bear(enemy, level_data)
+		_cast_enemy_whisper_of_the_veil_on_bear(enemy, level_data)
 		return
-	_play_mist_coil_effect(enemy.get("node"), hero_image)
+	_play_whisper_of_the_veil_effect(enemy.get("node"), hero_image)
 	apply_damage(float(level_data.get("damage", 0)))
 
 
-## Purely cosmetic: Mist Coil's glowing green ball, flying on a slight
-## arc from `from_node` (the caster) to `to_node` (the target), trailing
-## green sparks, then bursting in green and flashing the target on
-## arrival. When both are the same node (Abaddon's self-cast heal) the
-## ball drops onto him from above his head instead. The damage/heal has
-## already been applied by the time this plays; it never gates on it.
-## Start/end points are captured up front, so a target killed by the
-## hit still gets its ball and burst, just no flash.
-func _play_mist_coil_effect(from_node: Variant, to_node: Variant) -> void:
-	_play_orb_projectile(from_node, to_node, MIST_COIL_COLOR, MIST_COIL_COLOR, MIST_COIL_FLASH_COLOR, 22.0)
+## Purely cosmetic: Whisper of the Veil - a tendril of living mist
+## (MistTendrilFX) reaching from the front of `from_node` - the side
+## facing its target - to `to_node`'s middle, which flashes teal as it
+## strikes. On a self-cast (both nodes the same) it curls down from
+## above and sinks into him.
+## Positions are captured up front, so a target killed by the hit still
+## gets its tendril, just no flash. The damage/heal has already been
+## applied by the time this plays; it never gates on it.
+func _play_whisper_of_the_veil_effect(from_node: Variant, to_node: Variant) -> void:
+	if not (from_node is Control) or not (to_node is Control):
+		return
+	if not is_instance_valid(from_node) or not is_instance_valid(to_node) or not is_instance_valid(_fx_layer):
+		return
+	var end: Vector2 = to_node.global_position + to_node.size * Vector2(0.5, 0.45)
+	var start: Vector2
+	if from_node == to_node:
+		start = end + Vector2(-to_node.size.x * 0.35, -to_node.size.y * 0.85)
+	else:
+		var center: Vector2 = from_node.global_position + from_node.size * 0.5
+		var facing: float = signf(end.x - center.x) if absf(end.x - center.x) > 1.0 else 1.0
+		start = center + Vector2(facing * from_node.size.x * 0.25, -from_node.size.y * 0.1)
+	MistTendrilFX.play(_fx_layer, start, end, func() -> void:
+		if is_instance_valid(to_node) and to_node is TextureRect:
+			_flash_bounce_hit(to_node, WHISPER_OF_THE_VEIL_FLASH_COLOR)
+	)
 
 
-## The shared glowing-ball projectile behind Mist Coil's and Ice
-## Blast's own visuals: a ball of `color` (rimmed in `rim_color`) flies
+## The shared glowing-ball projectile behind Ice Blast's and Corrosive
+## Haze's own visuals: a ball of `color` (rimmed in `rim_color`) flies
 ## on a slight upward arc from `from_node` to `to_node`, trailing sparks,
 ## then bursts (_play_orb_impact()) and flashes the target in
 ## `flash_color`. Everything scales off `ball_size` - its glow, trail
 ## and burst - so a bigger ball reads as a heavier hit. When both nodes
-## are the same (Mist Coil's self-cast) it drops from above instead.
+## are the same it drops from above instead.
 ## Start/end points are captured up front, so a target killed by the
 ## hit still gets its ball and burst, just no flash.
 func _play_orb_projectile(from_node: Variant, to_node: Variant, color: Color, rim_color: Color, flash_color: Color, ball_size: float) -> void:
@@ -13911,7 +14172,7 @@ func _play_orb_projectile(from_node: Variant, to_node: Variant, color: Color, ri
 
 ## The orb projectile's impact (see _play_orb_projectile()): a one-shot
 ## ring of `color` sparks at `pos`, scaled by `size_scale` (1.0 =
-## Mist Coil's own size). Same CPUParticles2D one-shot-burst recipe as
+## Whisper of the Veil's own size). Same CPUParticles2D one-shot-burst recipe as
 ## _spawn_lil_shredder_impact().
 func _play_orb_impact(pos: Vector2, color: Color, size_scale: float) -> void:
 	var lifetime: float = 0.45 * sqrt(size_scale)
@@ -14005,7 +14266,7 @@ func _play_splinter_shards(from_node: Variant, to_nodes: Array) -> void:
 
 
 ## Purely cosmetic: Ice Blast's big ice ball, flying from the caster to
-## the blast's target - the same orb projectile as Mist Coil
+## the blast's target - the shared orb projectile
 ## (_play_orb_projectile()), scaled up to ICE_BLAST_BALL_SIZE in pale
 ## ice with a white rim, bursting into ice shards and flashing the
 ## target icy-blue on impact. The frost left on everyone the blast's
@@ -14015,71 +14276,71 @@ func _play_ice_blast_effect(from_node: Variant, to_node: Variant) -> void:
 
 
 ## Activates (or, if already active, replaces outright, same as the
-## player's own copy) Aphotic Shield on the rival, and dispels every
+## player's own copy) Veil of the Forgotten on the rival, and dispels every
 ## negative effect currently on him - here that's whatever the
-## player's own Entangle/Barbed Lunge/Curse of Avernus wrote directly onto
-## this enemy Dictionary (see _apply_root()/_apply_curse_of_avernus_
+## player's own Thornbind/Barbed Lunge/Mark of the Mist wrote directly onto
+## this enemy Dictionary (see _apply_root()/_apply_mark_of_the_mist_
 ## stack()), since a hero-fight boss is otherwise a completely ordinary
 ## entry in _enemies.
-func _activate_enemy_aphotic_shield(enemy: Dictionary, level_data: Dictionary) -> void:
-	_enemy_aphotic_shield_active = true
-	_enemy_aphotic_shield_hp = float(level_data.get("shield_hp", 0))
-	_enemy_aphotic_shield_aoe_damage = float(level_data.get("aoe_damage", 0))
-	_enemy_aphotic_shield_radius = int(level_data.get("radius", 0))
-	_enemy_aphotic_shield_turns_remaining = int(level_data.get("duration", 0))
-	_enemy_aphotic_shield_duration_pending_start = true
+func _activate_enemy_veil_of_the_forgotten(enemy: Dictionary, level_data: Dictionary) -> void:
+	_enemy_veil_of_the_forgotten_active = true
+	_enemy_veil_of_the_forgotten_hp = float(level_data.get("shield_hp", 0))
+	_enemy_veil_of_the_forgotten_aoe_damage = float(level_data.get("aoe_damage", 0))
+	_enemy_veil_of_the_forgotten_radius = int(level_data.get("radius", 0))
+	_enemy_veil_of_the_forgotten_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_veil_of_the_forgotten_duration_pending_start = true
 
 	# Checked before the dispel below clears it all - only drives the
-	# cleanse sparks in _show_aphotic_shell().
+	# cleanse sparks in _show_veil_shell().
 	var cleansed: bool = bool(enemy.get("curse_active", false))
-	for field in ["root_turns_left", "silence_turns_left", "entangle_dot_turns_left", "stun_turns_left", "curse_stacks", "curse_dot_turns_left"]:
+	for field in ["root_turns_left", "silence_turns_left", "thornbind_dot_turns_left", "stun_turns_left", "curse_stacks", "curse_dot_turns_left"]:
 		if int(enemy.get(field, 0)) > 0:
 			cleansed = true
 
 	enemy["root_turns_left"] = 0
 	enemy["silence_turns_left"] = 0
-	enemy["entangle_dot_damage"] = 0.0
-	enemy["entangle_dot_turns_left"] = 0
+	enemy["thornbind_dot_damage"] = 0.0
+	enemy["thornbind_dot_turns_left"] = 0
 	enemy["stun_turns_left"] = 0
 	enemy["curse_stacks"] = 0
 	enemy["curse_active"] = false
 	enemy["curse_dot_damage"] = 0.0
 	enemy["curse_dot_turns_left"] = 0
 
-	_show_aphotic_shell(enemy.get("node"), _enemy_aphotic_shield_hp, cleansed)
+	_show_veil_shell(enemy.get("node"), _enemy_veil_of_the_forgotten_hp, cleansed)
 
 
-func _tick_enemy_aphotic_shield() -> void:
-	if not _enemy_aphotic_shield_active:
+func _tick_enemy_veil_of_the_forgotten() -> void:
+	if not _enemy_veil_of_the_forgotten_active:
 		return
-	if _enemy_aphotic_shield_duration_pending_start:
-		_enemy_aphotic_shield_duration_pending_start = false
+	if _enemy_veil_of_the_forgotten_duration_pending_start:
+		_enemy_veil_of_the_forgotten_duration_pending_start = false
 		return
-	_enemy_aphotic_shield_turns_remaining -= 1
-	if _enemy_aphotic_shield_turns_remaining <= 0:
-		_end_enemy_aphotic_shield(false)
+	_enemy_veil_of_the_forgotten_turns_remaining -= 1
+	if _enemy_veil_of_the_forgotten_turns_remaining <= 0:
+		_end_enemy_veil_of_the_forgotten(false)
 
 
-## Ends the rival's Aphotic Shield, whether its duration simply ran out
+## Ends the rival's Veil of the Forgotten, whether its duration simply ran out
 ## (`exploded` false) or enough damage drained it to 0 HP (`exploded`
 ## true, from _deal_fixed_damage_to_enemy()) - in which case it deals
 ## the cast's own aoe_damage to the player, his illusions and his bear,
 ## each only if within the shield's own radius columns of the boss -
 ## the same radius-around-the-caster rule the player's own explosion
-## uses (see _end_aphotic_shield()).
-func _end_enemy_aphotic_shield(exploded: bool) -> void:
-	var aoe_damage: float = _enemy_aphotic_shield_aoe_damage
-	var radius: int = _enemy_aphotic_shield_radius
+## uses (see _end_veil_of_the_forgotten()).
+func _end_enemy_veil_of_the_forgotten(exploded: bool) -> void:
+	var aoe_damage: float = _enemy_veil_of_the_forgotten_aoe_damage
+	var radius: int = _enemy_veil_of_the_forgotten_radius
 	var boss: Dictionary = _get_hero_fight_boss()
 
-	_enemy_aphotic_shield_active = false
-	_enemy_aphotic_shield_hp = 0.0
-	_enemy_aphotic_shield_aoe_damage = 0.0
-	_enemy_aphotic_shield_radius = 0
-	_enemy_aphotic_shield_turns_remaining = 0
-	_enemy_aphotic_shield_duration_pending_start = false
+	_enemy_veil_of_the_forgotten_active = false
+	_enemy_veil_of_the_forgotten_hp = 0.0
+	_enemy_veil_of_the_forgotten_aoe_damage = 0.0
+	_enemy_veil_of_the_forgotten_radius = 0
+	_enemy_veil_of_the_forgotten_turns_remaining = 0
+	_enemy_veil_of_the_forgotten_duration_pending_start = false
 
-	_remove_aphotic_shell(boss.get("node"), exploded, radius)
+	_remove_veil_shell(boss.get("node"), exploded, radius)
 
 	if not exploded:
 		return
@@ -14103,7 +14364,7 @@ func _end_enemy_aphotic_shield(exploded: bool) -> void:
 # ------------------------------------------------------------------
 # Kunkka's Torrent, cast by the rival on the player - mirrors the
 # player's own _resolve_torrent_cast(). Simplification versus that
-# player-facing copy: like Abyssal Spasm/Mist Coil, there's only one
+# player-facing copy: like Abyssal Spasm/Whisper of the Veil, there's only one
 # possible target in a hero fight (no other enemy, and no bear/column
 # concept to splash onto), so the level-4 AoE radius has nothing extra
 # to reach here - this always resolves as a single hit.
@@ -14235,7 +14496,7 @@ func _cast_enemy_xmarks() -> void:
 # _resolve_ghostship_cast(). Simplification versus that player-facing
 # copy: the ship's whole path-of-enemies concept collapses to a single
 # hit here, same "only one possible target" simplification Abyssal Spasm/
-# Mist Coil/Torrent already use - there's no bear-on-the-path concept
+# Whisper of the Veil/Torrent already use - there's no bear-on-the-path concept
 # for the rival AI to consider either, matching how it never targets
 # the bear in the first place (see _enemy_hero_turn()'s own doc
 # comment). Still plays the same _play_ghostship_animation() visual
@@ -14257,21 +14518,21 @@ func _cast_enemy_ghostship(enemy: Dictionary, level_data: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Abaddon's Curse of Avernus, cast by the rival - mirrors
-# _apply_curse_of_avernus_stack()/_tick_curse_of_avernus_effects(),
+# Morvael's Mark of the Mist, cast by the rival - mirrors
+# _apply_mark_of_the_mist_stack()/_tick_mark_of_the_mist_effects(),
 # just building stacks on the player (via the _player_curse_* battle-
 # local vars, since there's only one player to track state on) instead
-# of on an enemy Dictionary, the same way Entangle's own root/silence/
-# DoT is mirrored by the _player_root_*/_player_entangle_* vars above.
+# of on an enemy Dictionary, the same way Thornbind's own root/silence/
+# DoT is mirrored by the _player_root_*/_player_thornbind_* vars above.
 # ------------------------------------------------------------------
 
-func _get_enemy_curse_of_avernus_level_data() -> Dictionary:
+func _get_enemy_mark_of_the_mist_level_data() -> Dictionary:
 	if _enemy_hero_id == "":
 		return {}
-	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "curse_of_avernus")
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "mark_of_the_mist")
 	if level <= 0:
 		return {}
-	var skill: Dictionary = _find_enemy_skill("curse_of_avernus")
+	var skill: Dictionary = _find_enemy_skill("mark_of_the_mist")
 	if skill.is_empty():
 		return {}
 	return GameManager.get_skill_level_data(skill, level)
@@ -14281,12 +14542,12 @@ func _get_enemy_curse_of_avernus_level_data() -> Dictionary:
 ## _resolve_enemy_hero_attack()): builds one stack, or - once this
 ## level's hits_to_activate is reached - consumes them all to actually
 ## curse the player (silence, sharing the same _player_silence_turns_
-## left field Entangle uses; and a damage-over-time, ticked by
-## _tick_enemy_curse_of_avernus_effects() below). No-ops entirely if
+## left field Thornbind uses; and a damage-over-time, ticked by
+## _tick_enemy_mark_of_the_mist_effects() below). No-ops entirely if
 ## the rival doesn't have this skill learned or the player is already
 ## cursed, same as the player's own copy.
-func _apply_enemy_curse_of_avernus_stack() -> void:
-	var level_data: Dictionary = _get_enemy_curse_of_avernus_level_data()
+func _apply_enemy_mark_of_the_mist_stack() -> void:
+	var level_data: Dictionary = _get_enemy_mark_of_the_mist_level_data()
 	if level_data.is_empty() or _player_curse_active:
 		return
 
@@ -14306,42 +14567,42 @@ func _apply_enemy_curse_of_avernus_stack() -> void:
 	_refresh_status_effects()
 
 
-## The player-side mirror of _tick_curse_of_avernus_effects(): the
+## The player-side mirror of _tick_mark_of_the_mist_effects(): the
 ## curse's own DoT moved to _tick_player_turn_start_effects() along with
 ## every other DoT - this is only the leftover, turn-count-based decay
 ## for a not-yet-cursed player still carrying stacks, same rules as the
 ## enemy-side version.
-func _tick_enemy_curse_of_avernus_effects() -> void:
+func _tick_enemy_mark_of_the_mist_effects() -> void:
 	if not _player_curse_active and _player_curse_stacks > 0:
-		if _turn_count - _player_curse_last_hit_turn >= CURSE_OF_AVERNUS_STACK_DECAY_TURNS:
+		if _turn_count - _player_curse_last_hit_turn >= MARK_OF_THE_MIST_STACK_DECAY_TURNS:
 			_player_curse_stacks = 0
 
 
 # ------------------------------------------------------------------
-# Abaddon's Borrowed Time, on the rival - mirrors
-# _maybe_auto_activate_borrowed_time()/_tick_borrowed_time()/
-# _end_borrowed_time(). Like the player's own copy, nothing "casts"
+# Morvael's The Mist Remembers, on the rival - mirrors
+# _maybe_auto_activate_the_mist_remembers()/_tick_the_mist_remembers()/
+# _end_the_mist_remembers(). Like the player's own copy, nothing "casts"
 # this - the only entry point is _deal_fixed_damage_to_enemy() noticing
 # the rival's HP has crossed this level's threshold.
 # ------------------------------------------------------------------
 
-func _get_enemy_borrowed_time_level_data() -> Dictionary:
+func _get_enemy_the_mist_remembers_level_data() -> Dictionary:
 	if _enemy_hero_id == "":
 		return {}
-	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "borrowed_time")
+	var level: int = PlayerManager.get_npc_skill_level(_enemy_hero_id, "the_mist_remembers")
 	if level <= 0:
 		return {}
-	var skill: Dictionary = _find_enemy_skill("borrowed_time")
+	var skill: Dictionary = _find_enemy_skill("the_mist_remembers")
 	if skill.is_empty():
 		return {}
 	return GameManager.get_skill_level_data(skill, level)
 
 
-func _maybe_auto_activate_enemy_borrowed_time(enemy: Dictionary) -> void:
-	if _enemy_borrowed_time_active or _enemy_skill_cooldowns.get("borrowed_time", 0) > 0:
+func _maybe_auto_activate_enemy_the_mist_remembers(enemy: Dictionary) -> void:
+	if _enemy_the_mist_remembers_active or _enemy_skill_cooldowns.get("the_mist_remembers", 0) > 0:
 		return
 
-	var level_data: Dictionary = _get_enemy_borrowed_time_level_data()
+	var level_data: Dictionary = _get_enemy_the_mist_remembers_level_data()
 	if level_data.is_empty():
 		return
 
@@ -14353,37 +14614,37 @@ func _maybe_auto_activate_enemy_borrowed_time(enemy: Dictionary) -> void:
 	if hp_pct > float(level_data.get("auto_activate_hp_pct", 0.3)):
 		return
 
-	_enemy_borrowed_time_active = true
-	_enemy_borrowed_time_heal_conversion_pct = float(level_data.get("heal_conversion_pct", 1.0))
-	_enemy_borrowed_time_turns_remaining = int(level_data.get("duration", 0))
-	_enemy_borrowed_time_duration_pending_start = true
-	_set_borrowed_time_visual(enemy.get("node"), true)
+	_enemy_the_mist_remembers_active = true
+	_enemy_the_mist_remembers_heal_conversion_pct = float(level_data.get("heal_conversion_pct", 1.0))
+	_enemy_the_mist_remembers_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_the_mist_remembers_duration_pending_start = true
+	_set_the_mist_remembers_visual(enemy.get("node"), true)
 
-	_enemy_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
+	_enemy_skill_cooldowns["the_mist_remembers"] = int(level_data.get("cooldown", 0))
 
 
-func _tick_enemy_borrowed_time() -> void:
-	if not _enemy_borrowed_time_active:
+func _tick_enemy_the_mist_remembers() -> void:
+	if not _enemy_the_mist_remembers_active:
 		return
-	if _enemy_borrowed_time_duration_pending_start:
-		_enemy_borrowed_time_duration_pending_start = false
+	if _enemy_the_mist_remembers_duration_pending_start:
+		_enemy_the_mist_remembers_duration_pending_start = false
 		return
-	_enemy_borrowed_time_turns_remaining -= 1
-	if _enemy_borrowed_time_turns_remaining <= 0:
-		_end_enemy_borrowed_time()
+	_enemy_the_mist_remembers_turns_remaining -= 1
+	if _enemy_the_mist_remembers_turns_remaining <= 0:
+		_end_enemy_the_mist_remembers()
 
 
-func _end_enemy_borrowed_time() -> void:
-	_enemy_borrowed_time_active = false
-	_enemy_borrowed_time_heal_conversion_pct = 0.0
-	_enemy_borrowed_time_turns_remaining = 0
-	_enemy_borrowed_time_duration_pending_start = false
-	_set_borrowed_time_visual(_get_hero_fight_boss().get("node"), false)
+func _end_enemy_the_mist_remembers() -> void:
+	_enemy_the_mist_remembers_active = false
+	_enemy_the_mist_remembers_heal_conversion_pct = 0.0
+	_enemy_the_mist_remembers_turns_remaining = 0
+	_enemy_the_mist_remembers_duration_pending_start = false
+	_set_the_mist_remembers_visual(_get_hero_fight_boss().get("node"), false)
 
-	# Full cooldown from the moment it ends - see _end_borrowed_time().
-	var level_data: Dictionary = _get_enemy_borrowed_time_level_data()
+	# Full cooldown from the moment it ends - see _end_the_mist_remembers().
+	var level_data: Dictionary = _get_enemy_the_mist_remembers_level_data()
 	if not level_data.is_empty():
-		_enemy_skill_cooldowns["borrowed_time"] = int(level_data.get("cooldown", 0))
+		_enemy_skill_cooldowns["the_mist_remembers"] = int(level_data.get("cooldown", 0))
 
 
 # ------------------------------------------------------------------
@@ -14392,7 +14653,7 @@ func _end_enemy_borrowed_time() -> void:
 # _resolve_ice_vortex_cast(), just arming the single-player _player_
 # cold_feet_dot_*/_player_ice_vortex_dot_* vars instead of per-enemy
 # Dictionary fields, since there's only one player to track them on
-# (same simplification Entangle's own _player_entangle_dot_* fields
+# (same simplification Thornbind's own _player_thornbind_dot_* fields
 # already use). Ice Vortex's own AoE has nothing else to reach in a
 # hero fight (there's no other enemy besides the player), same "only
 # one possible target" simplification Abyssal Spasm/Torrent's splash
@@ -14424,7 +14685,7 @@ func _cast_enemy_ice_vortex(level_data: Dictionary) -> void:
 	_flash_bounce_hit(hero_image, COLD_FEET_FLASH_COLOR)
 
 	# Centered on the player (the vortex's only possible target here) -
-	# his illusions and Spirit Bear within that radius get the same DoT,
+	# his illusions and Elderwild Companion within that radius get the same DoT,
 	# ticked alongside his own in _tick_player_turn_start_effects().
 	_mark_illusions_ice_vortex(_illusions, _hero_pos_index, radius, damage, duration)
 	if _is_bear_alive() and _distance(_bear["pos_index"], _hero_pos_index) <= radius:
@@ -14486,7 +14747,7 @@ func _tick_player_allies_ice_vortex() -> void:
 		if dot > 0.0:
 			_deal_damage_to_illusion(illusion, _apply_armor_reduction(dot, hero_armor))
 
-	# The Spirit Bear's own Ice Vortex tick - along with every other DoT
+	# The Elderwild Companion's own Ice Vortex tick - along with every other DoT
 	# a rival can put on it - lives in _tick_bear_turn_start_effects().
 
 
@@ -14497,7 +14758,7 @@ func _tick_player_allies_ice_vortex() -> void:
 # _roll_hero_damage()) plus this level's own flat bonus_damage on top.
 # Like the player's own copy, this is SKILL damage, not the plain
 # Attack action itself, so it never triggers Leeching Hunger's steal,
-# Spirit Link's lifesteal, or Curse of Avernus's stacking - those stay
+# Wildbond's lifesteal, or Mark of the Mist's stacking - those stay
 # scoped specifically to _resolve_enemy_hero_attack().
 # ------------------------------------------------------------------
 
@@ -14592,7 +14853,7 @@ func _end_enemy_arctic_burn() -> void:
 # ------------------------------------------------------------------
 # Winter Wyvern's Splinter Blast, cast by the rival on the player -
 # mirrors the player's own _resolve_splinter_blast_cast(). Simplification
-# versus that player-facing copy: like Abyssal Spasm/Mist Coil/Torrent,
+# versus that player-facing copy: like Abyssal Spasm/Whisper of the Veil/Torrent,
 # there's only one possible target in a hero fight, so the splash onto
 # "every OTHER enemy within splinter_range" has nothing else to reach -
 # this always resolves as a single hit.
@@ -14625,10 +14886,10 @@ func _cast_enemy_splinter_blast(level_data: Dictionary) -> void:
 # effects()/_tick_cold_embrace()/_end_cold_embrace(), including swapping
 # the boss's own node texture to COLD_EMBRACE_IMAGE_PATH (and back once
 # it ends) the same way the player's portrait swaps - see
-# _activate_enemy_true_form()/_end_enemy_true_form() for the identical
-# pattern already used for True Form's own bear portrait. Damage
+# _activate_enemy_beast_of_the_elderwild()/_end_enemy_beast_of_the_elderwild() for the identical
+# pattern already used for Beast of the Elderwild's own bear portrait. Damage
 # immunity is enforced in _deal_fixed_damage_to_enemy() (checked before
-# Borrowed Time/Aphotic Shield, same as the player's own apply_damage()
+# The Mist Remembers/Veil of the Forgotten, same as the player's own apply_damage()
 # checks Cold Embrace before anything else); the full action lockout (no
 # move, attack, OR skill cast - stricter than the player's own copy,
 # which can still cast something else while encased) is enforced at the
@@ -14665,14 +14926,14 @@ func _dispel_all_enemy_hero_effects() -> void:
 		_end_enemy_leeching_hunger()
 	if _enemy_depthsveil_active:
 		_end_enemy_depthsveil()
-	if _enemy_spirit_link_active:
-		_end_enemy_spirit_link()
-	if _enemy_true_form_active:
-		_end_enemy_true_form()
-	if _enemy_aphotic_shield_active:
-		_end_enemy_aphotic_shield(false)
-	if _enemy_borrowed_time_active:
-		_end_enemy_borrowed_time()
+	if _enemy_wildbond_active:
+		_end_enemy_wildbond()
+	if _enemy_beast_of_the_elderwild_active:
+		_end_enemy_beast_of_the_elderwild()
+	if _enemy_veil_of_the_forgotten_active:
+		_end_enemy_veil_of_the_forgotten(false)
+	if _enemy_the_mist_remembers_active:
+		_end_enemy_the_mist_remembers()
 
 
 func _tick_enemy_cold_embrace() -> void:
@@ -15154,7 +15415,7 @@ func _end_enemy_living_armor() -> void:
 # Treant Protector's ultimate, Overgrowth, cast by the rival - mirrors
 # the player's own _activate_overgrowth(): every living, targetable
 # enemy within `radius` columns of the rival's CURRENT position gets
-# rooted (_player_root_turns_left, the same shared field Entangle's own
+# rooted (_player_root_turns_left, the same shared field Thornbind's own
 # root already uses - it can still attack and cast skills while rooted,
 # same as any other rooted enemy) for `root_duration` turns, armed with
 # that same level's own DoT (_player_overgrowth_dot_damage/_player_
@@ -15524,7 +15785,7 @@ func _cast_enemy_lil_shredder(enemy: Dictionary, level_data: Dictionary) -> void
 # Abyssal Spasm's/Ghostship's/Whirling Death's own rival copies already have,
 # see _cast_enemy_abyssal_spasm()'s own docstring), so unlike the player's
 # own _apply_rip_tide_cleave(), its splash off her plain Attack reaches
-# the player's own illusions and Spirit Bear near him (see
+# the player's own illusions and Elderwild Companion near him (see
 # _apply_enemy_rip_tide_splash()) - the player himself is the struck
 # target, never hit twice. "rip_tide_aoe_damage_pct" also feeds
 # EnemySkillAI's own scoring.
@@ -15548,7 +15809,7 @@ func _get_enemy_rip_tide_level_data() -> Dictionary:
 ## mirror of the player's own _apply_rip_tide_cleave(): this level's
 ## aoe_damage_pct of `attack_damage` (the Attack's raw, pre-mitigation
 ## roll) splashed onto every one of the player's illusions and his
-## Spirit Bear within this level's radius of the player (the struck
+## Elderwild Companion within this level's radius of the player (the struck
 ## target, never hit twice), each mitigated by its own armor (the
 ## illusions via the hero's, the bear via its own - see
 ## _deal_aoe_damage_to_illusions()/_deal_aoe_damage_to_bear()) and
@@ -15572,7 +15833,7 @@ func _apply_enemy_rip_tide_splash(attack_damage: float) -> void:
 ## _apply_tidebringer_cleave(): `level_data`'s cleave_damage_pct of
 ## `attack_damage` (the Attack's raw, pre-mitigation roll, Tidebringer's
 ## own bonus already folded in) to every one of the player's illusions
-## and his Spirit Bear within cleave_columns of the player (the struck
+## and his Elderwild Companion within cleave_columns of the player (the struck
 ## target, never hit twice), each mitigated by its own armor and given
 ## the standard splash hit-flash.
 func _apply_enemy_tidebringer_cleave(attack_damage: float, level_data: Dictionary) -> void:
@@ -15584,7 +15845,7 @@ func _apply_enemy_tidebringer_cleave(attack_damage: float, level_data: Dictionar
 	_deal_aoe_damage_to_bear(_hero_pos_index, radius, cleave_damage, true)
 
 
-## How many of the player's own illusions, plus his Spirit Bear, stand
+## How many of the player's own illusions, plus his Elderwild Companion, stand
 ## within `radius` columns of him - what a rival's splash/cleave off an
 ## Attack on the player could also reach. Feeds the AI's own scoring
 ## (e.g. Tidebringer's cleave target count).
@@ -15665,7 +15926,7 @@ func _spawn_enemy_illusion_node(pos_index: int, source_node: TextureRect) -> Tex
 	tex_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tex_rect.flip_h = source_node.flip_h
 	tex_rect.modulate = Color(1, 1, 1, HERO_ILLUSION_ALPHA)
-	tex_rect.position = Vector2(_index_to_x(pos_index), _creature_y())
+	tex_rect.position = Vector2(_index_to_x(pos_index), _creature_top_y(tex_rect.size.y))
 	add_child(tex_rect)
 	move_child(tex_rect, enemies_layer.get_index() + 1)
 	return tex_rect
@@ -15841,8 +16102,8 @@ func _deal_directional_aoe_damage_to_enemy_illusions(origin_pos_index: int, dire
 # player's own _resolve_ensnare_cast(): this level's own `damage`
 # (through normal armor mitigation, via apply_damage()) plus a root for
 # `root_turns` of the player's own turns (_player_root_turns_left, the
-# same shared field Entangle's/Overgrowth's own root already use) -
-# unlike Entangle, no silence/DoT fields are touched at all, so (per the
+# same shared field Thornbind's/Overgrowth's own root already use) -
+# unlike Thornbind, no silence/DoT fields are touched at all, so (per the
 # design doc's own explicit "Ensnare is not a stun" instruction) the
 # player can still attack/cast skills while rooted, just not move. Only
 # roots if the hit actually left the player alive.
@@ -15883,7 +16144,7 @@ func _cast_enemy_song_of_the_siren(enemy: Dictionary, level_data: Dictionary) ->
 		_player_armor_reduction += float(level_data.get("armor_reduction", 0))
 		_player_armor_reduction_turns_left = int(level_data.get("stun_turns", 0))
 		_player_siren_song_asleep = true
-	# The player's own Spirit Bear within the same radius falls asleep
+	# The player's own Elderwild Companion within the same radius falls asleep
 	# too - same stun and armor shred, the armor's turns refreshed (not
 	# added to) the same way the player's own are.
 	if _is_bear_alive() and _distance(enemy["pos_index"], _bear["pos_index"]) <= radius:
@@ -15986,7 +16247,7 @@ func _end_enemy_guardian_sprint() -> void:
 # simplification every other self-centered rival AoE cast already uses
 # (see _cast_enemy_overgrowth()'s own docstring). Only stuns if the hit
 # actually left the player alive. Centered on the caster's own column,
-# same as the check above - an illusion/the player's own Spirit Bear can
+# same as the check above - an illusion/the player's own Elderwild Companion can
 # be in range independently of whether the player himself currently is,
 # same "one-time hit for whatever's caught in the burst" reasoning
 # _cast_enemy_whirling_death()'s own copy already follows (illusions have
@@ -16014,7 +16275,7 @@ func _cast_enemy_slithereen_crush(enemy: Dictionary, level_data: Dictionary) -> 
 		if _recruited.get("current_hp", 0) > 0:
 			_player_stun_turns_left = int(level_data.get("stun_turns", 0))
 	_deal_aoe_damage_to_illusions(enemy["pos_index"], radius, damage)
-	# The player's own Spirit Bear caught in it is stunned too, if it
+	# The player's own Elderwild Companion caught in it is stunned too, if it
 	# survived the hit - same "only a hit that left it alive" rule as
 	# the player's own stun above (_stun_bear() is a no-op on a dead bear).
 	var bear_in_crush: bool = _is_bear_alive() and _distance(_bear["pos_index"], enemy["pos_index"]) <= radius
@@ -16102,7 +16363,7 @@ func _apply_enemy_bash_of_the_deep_knockback(enemy: Dictionary, level_data: Dict
 # timer" convention the player-side copy uses. There's only one possible
 # target in a hero fight, so - unlike the player's own copy, which needs
 # to pick one among several enemies - this needs no separate targeting
-# step at all, same simplification Entangle's/Torrent's own enemy-side
+# step at all, same simplification Thornbind's/Torrent's own enemy-side
 # copies already use. Deals no damage of its own - a pure debuff.
 # ------------------------------------------------------------------
 
@@ -16130,7 +16391,7 @@ func _cast_enemy_corrosive_haze(level_data: Dictionary) -> void:
 # _cast_enemy_overgrowth()'s own docstring). No stun of its own - purely
 # a damage nuke, same as the player-side copy. Centered on the caster's
 # own column, same as the check above - an illusion/the player's own
-# Spirit Bear can be in range independently of whether the player himself
+# Elderwild Companion can be in range independently of whether the player himself
 # currently is, same "one-time hit for whatever's caught in the burst"
 # reasoning _cast_enemy_whirling_death()'s own copy already follows.
 # ------------------------------------------------------------------
@@ -16168,7 +16429,7 @@ func _cast_enemy_starstorm(enemy: Dictionary, level_data: Dictionary) -> void:
 # already use) for this level's own stun_turns, only if the hit left him
 # alive. There's only one possible target in a hero fight, so - unlike
 # the player's own copy, which needs a separate targeting click - this
-# needs no separate targeting step at all, same simplification Entangle's/
+# needs no separate targeting step at all, same simplification Thornbind's/
 # Torrent's own enemy-side copies already use.
 # ------------------------------------------------------------------
 
@@ -16283,7 +16544,7 @@ func _end_enemy_moonlight_shadow() -> void:
 # bounces(), simplified for the one real difference a hero fight has:
 # there's no second real _enemies-style target the rival's own Attack
 # could bounce onto besides the player himself (already the primary
-# hit) - only the player's own illusions/Spirit Bear are real, separate
+# hit) - only the player's own illusions/Elderwild Companion are real, separate
 # occupants of their own columns near him, so those are the only actual
 # bounce targets here, hit exactly the same "unconditional collateral,
 # never counted toward the bounce cap" way the player-side copy already
@@ -16346,7 +16607,7 @@ func _get_enemy_lunar_blessing_level_data() -> Dictionary:
 # level's own stun_turns, only if the hit left him alive. There's only
 # one possible target in a hero fight, so - unlike the player's own copy,
 # which needs a separate targeting click - this needs no separate
-# targeting step at all, same simplification Entangle's/Torrent's own
+# targeting step at all, same simplification Thornbind's/Torrent's own
 # enemy-side copies already use. No Moon Glaives bounce here - the
 # player-side copy never applies it to Lucent Beam either (only a plain
 # Attack triggers it - see _apply_hero_attack()'s own call site).
@@ -16393,10 +16654,10 @@ func _cast_enemy_eclipse(level_data: Dictionary) -> void:
 ## from the player himself (if within `radius` columns of the rival's
 ## CURRENT position, re-checked fresh here, not fixed at cast time), any
 ## of the player's own illusions within that same radius of the rival,
-## and the player's own Spirit Bear if it's alive and in range too - the
+## and the player's own Elderwild Companion if it's alive and in range too - the
 ## enemy-side mirror of the player-side copy's own "boss, or one of its
 ## illusions" pool, extended with the bear since (unlike the boss's own
-## Spirit Bear, a genuine _enemies entry the player-side pool already
+## Elderwild Companion, a genuine _enemies entry the player-side pool already
 ## reaches for free) the player's own bear is a separate structure with
 ## no equivalent array to fall into automatically. A beam with nothing in
 ## range still counts against the total, same as the player-side copy.
@@ -16502,7 +16763,7 @@ func _fire_enemy_mortimer_kisses_shot() -> void:
 		_player_mortimer_burn_dot_turns_left = burn_duration
 
 	# The splash itself isn't simplified away like every other rival
-	# AoE's "no cleave" note above - illusions and the Spirit Bear are
+	# AoE's "no cleave" note above - illusions and the Elderwild Companion are
 	# real occupants of their own columns, and (unlike the enemy-side
 	# skill functions elsewhere, which are always centered on some
 	# OTHER point) the impact here is always the player's own position,
@@ -16547,8 +16808,12 @@ func _end_enemy_mortimer_kisses() -> void:
 ## just moved in (same left/right art convention as _spawn_enemy()).
 func _move_enemy(enemy: Dictionary, new_pos: int) -> void:
 	var old_pos: int = enemy["pos_index"]
+	var old_x: float = enemy["node"].position.x
 	enemy["pos_index"] = clampi(new_pos, 0, GRID_COLUMNS - 1)
-	enemy["node"].position = Vector2(_index_to_x(enemy["pos_index"]), _creature_y())
+	enemy["node"].position = Vector2(_index_to_x(enemy["pos_index"]), _creature_top_y(enemy["node"].size.y))
+	var animator := CreatureAnimator.of(enemy["node"])
+	if animator != null and not is_equal_approx(old_x, enemy["node"].position.x):
+		animator.play_move(old_x - enemy["node"].position.x)
 
 	var direction: int = enemy["pos_index"] - old_pos
 	if direction != 0:
@@ -16578,19 +16843,112 @@ const ATTACK_LUNGE_BACK_DURATION := 0.14
 ## target's column outright (distance 0), so a direction-to-target
 ## computation would always come out to zero for exactly the case that
 ## needs this lunge the most.
-func _play_enemy_attack_lunge(enemy: Dictionary) -> void:
+##
+## `target_pos` (a ranged attacker's target column) first turns the
+## attacker to face it - a ranged creep that just fled from the hero
+## would otherwise shoot with its back to him. Omitted (-1), or the same
+## column, keeps the current facing.
+func _play_enemy_attack_lunge(enemy: Dictionary, target_pos: int = -1) -> void:
 	var node: Control = enemy.get("node")
 	if node == null:
 		return
+
+	if target_pos >= 0:
+		_face_enemy_toward(enemy, target_pos)
 
 	var native_faces_right: bool = enemy["static"].get("is_hero_fight", false)
 	var facing_left: bool = node.flip_h if native_faces_right else not node.flip_h
 	var direction: float = -1.0 if facing_left else 1.0
 
+	# The node shift below is the lunge itself; the animator only adds
+	# the wind-up/strike body motion on top.
+	var animator := CreatureAnimator.of(node)
+	if animator != null:
+		animator.play_attack(direction, false)
+
 	var base_x: float = node.position.x
 	var tween := create_tween()
 	tween.tween_property(node, "position:x", base_x + direction * ATTACK_LUNGE_DISTANCE, ATTACK_LUNGE_OUT_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_property(node, "position:x", base_x, ATTACK_LUNGE_BACK_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+
+
+## Mirrors an enemy's art to face column `target_pos` - same left/right
+## art convention _move_enemy() uses. No-op for its own column.
+func _face_enemy_toward(enemy: Dictionary, target_pos: int) -> void:
+	var node: Control = enemy.get("node")
+	var direction: int = target_pos - int(enemy["pos_index"])
+	if node == null or direction == 0:
+		return
+	var native_faces_right: bool = enemy["static"].get("is_hero_fight", false)
+	node.flip_h = (direction < 0) if native_faces_right else (direction > 0)
+
+
+const PROJECTILE_RELEASE_DELAY := 0.08
+
+
+## A ranged enemy's attack projectile - only for enemies whose
+## GameManager definition names one ("projectile": a ProjectileFX style
+## id), so adding arrows to another creep is just that one field. Flies
+## from the attacker's front to `target_node`'s middle, released as the
+## lunge snaps forward.
+##
+## Call right BEFORE the damage call and clear _deferred_hit_node right
+## after it: that holds the target's CreatureAnimator hit reaction back
+## until the projectile actually lands, instead of flinching the moment
+## the shot leaves the bow.
+func _fire_enemy_projectile(enemy: Dictionary, target_node: Control) -> void:
+	var style_id: String = enemy["static"].get("projectile", "")
+	var node: Control = enemy.get("node")
+	if style_id == "" or node == null or not is_instance_valid(target_node):
+		return
+
+	var native_faces_right: bool = enemy["static"].get("is_hero_fight", false)
+	var facing_left: bool = node.flip_h if native_faces_right else not node.flip_h
+	var facing: float = -1.0 if facing_left else 1.0
+	var launch: Vector2 = ProjectileFX.launch_point(style_id)
+	var from: Vector2 = node.global_position + node.size * Vector2(0.5 + launch.x * facing, launch.y)
+	var to: Vector2 = target_node.global_position + target_node.size * 0.5
+
+	_deferred_hit_node = target_node
+	get_tree().create_timer(PROJECTILE_RELEASE_DELAY).timeout.connect(func() -> void:
+		if not is_instance_valid(_fx_layer):
+			return
+		ProjectileFX.fire(_fx_layer, style_id, from, to, func() -> void:
+			var animator := CreatureAnimator.of(target_node)
+			if animator != null:
+				animator.play_hit(signf(from.x - to.x))
+		)
+	)
+
+
+## A hero's own normal-attack visual, if its GameManager definition names
+## one ("attack_effect") - played from `caster`'s "attack_origin" (a
+## point on its art, mirrored when it faces left) to `target_node`'s
+## chest. Used for the player's Attack and a rival hero's alike.
+##
+## Like _fire_enemy_projectile(), call right BEFORE the damage and clear
+## _deferred_hit_node right after it, so the target flinches when the
+## effect lands instead of the moment it starts. Skipped while
+## `transformed` (Beast of the Elderwild's bear has no hand to cast from).
+func _play_hero_attack_effect(hero_static: Dictionary, caster: TextureRect, target_node: Control, transformed: bool) -> void:
+	var effect: String = hero_static.get("attack_effect", "")
+	if effect == "" or transformed or caster == null or not is_instance_valid(target_node):
+		return
+
+	var origin: Vector2 = hero_static.get("attack_origin", Vector2(0.5, 0.4))
+	if caster.flip_h:
+		origin.x = 1.0 - origin.x
+	var from: Vector2 = caster.global_position + caster.size * origin
+	var to: Vector2 = target_node.global_position + target_node.size * Vector2(0.5, 0.45)
+	var on_hit := func() -> void:
+		var animator := CreatureAnimator.of(target_node)
+		if animator != null:
+			animator.play_hit(signf(from.x - to.x))
+
+	match effect:
+		"vine_lash":
+			_deferred_hit_node = target_node
+			VineLashFX.play(_fx_layer, from, to, on_hit)
 
 
 ## Picks a flee direction once and sticks with it - only flipping to
@@ -17120,6 +17478,10 @@ func _handle_defeat() -> void:
 	if _in_hero_fight:
 		EnemyHeroManager.restock_npc_potions(_enemy_hero_id)
 
+	var hero_animator := CreatureAnimator.of(hero_image)
+	if hero_animator != null:
+		hero_animator.play_death(false)
+
 	defeat_popup.visible = true
 	print("Hero defeated.")
 
@@ -17136,7 +17498,7 @@ func _handle_defeat() -> void:
 # ------------------------------------------------------------------
 
 ## Whether `skill_id` would be worth casting on the player (`on_bear`
-## false) or on his Spirit Bear (`on_bear` true) right now - only the
+## false) or on his Elderwild Companion (`on_bear` true) right now - only the
 ## DoT skills have a "not worth restarting" rule (see
 ## _enemy_skill_worth_casting()'s own comments); everything else is
 ## always worth it.
@@ -17183,7 +17545,7 @@ func _enemy_skill_target_options(skill_id: String, enemy_type: String, hero_dist
 
 
 ## Decides, for one cast of a bear-targetable `skill_id`, whether the
-## rival aims it at the player's Spirit Bear. The player stays the
+## rival aims it at the player's Elderwild Companion. The player stays the
 ## default; the bear gets it when the player isn't a valid target at
 ## all, or when this hit would likely kill the bear outright (an
 ## estimate - see _estimate_enemy_skill_hit_on_bear()).
@@ -17202,12 +17564,12 @@ func _choose_enemy_skill_on_bear(enemy: Dictionary, skill_id: String) -> bool:
 
 ## Roughly how much damage `skill_id`'s own immediate hit would do to
 ## the bear after its armor - only used to judge whether a cast would
-## finish it off. DoT-only skills (Entangle/Cold Feet/Ice Vortex/
+## finish it off. DoT-only skills (Thornbind/Cold Feet/Ice Vortex/
 ## Frostbite/Leech Seed/Corrosive Haze/Winter's Curse) return 0.
 func _estimate_enemy_skill_hit_on_bear(enemy: Dictionary, skill_id: String, level_data: Dictionary) -> float:
 	var raw: float = 0.0
 	match skill_id:
-		"mist_coil", "torrent", "ensnare", "lucent_beam", "ice_blast", "splinter_blast", "snowball":
+		"whisper_of_the_veil", "torrent", "ensnare", "lucent_beam", "ice_blast", "splinter_blast", "snowball":
 			raw = float(level_data.get("damage", 0))
 		"sacred_arrow":
 			var distance: int = _distance(enemy["pos_index"], _bear["pos_index"])
@@ -17231,7 +17593,7 @@ func _show_message_over_bear(text: String) -> void:
 		_show_message_over_enemy(_bear["node"], text)
 
 
-## Every DoT/timed debuff a rival has put on the player's Spirit Bear,
+## Every DoT/timed debuff a rival has put on the player's Elderwild Companion,
 ## ticked once per turn at the start of the player's own turn (from
 ## _tick_player_turn_start_effects(), right after the hero's own) - the
 ## bear-side mirror of that function's own entries for the same
@@ -17241,7 +17603,7 @@ func _tick_bear_turn_start_effects() -> void:
 	if not _is_bear_alive():
 		return
 
-	for key in ["entangle", "cold_feet", "ice_vortex", "frostbite"]:
+	for key in ["thornbind", "cold_feet", "ice_vortex", "frostbite"]:
 		var turns_key: String = key + "_dot_turns_left"
 		if int(_bear.get(turns_key, 0)) > 0:
 			_bear[turns_key] -= 1
@@ -17315,17 +17677,17 @@ func _is_hero_in_bear_aoe(radius: int) -> bool:
 	return not _enemy_ai_hero_hidden and _is_bear_alive() and _distance(_hero_pos_index, _bear["pos_index"]) <= radius
 
 
-func _cast_enemy_entangle_on_bear(level_data: Dictionary) -> void:
+func _cast_enemy_thornbind_on_bear(level_data: Dictionary) -> void:
 	_bear["root_turns_left"] = int(level_data.get("root_turns", 0))
-	_bear["entangle_dot_damage"] = float(level_data.get("dot_damage", 0))
-	_bear["entangle_dot_turns_left"] = int(level_data.get("dot_duration", 0))
-	_show_message_over_bear("Entangled!")
-	_play_entangle_effect(_bear["node"])
-	_refresh_entangle_tints()
+	_bear["thornbind_dot_damage"] = float(level_data.get("dot_damage", 0))
+	_bear["thornbind_dot_turns_left"] = int(level_data.get("dot_duration", 0))
+	_show_message_over_bear("Thornbound!")
+	_play_thornbind_effect(_bear["node"])
+	_refresh_thornbind_vines()
 
 
-func _cast_enemy_mist_coil_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
-	_play_mist_coil_effect(enemy.get("node"), _bear["node"])
+func _cast_enemy_whisper_of_the_veil_on_bear(enemy: Dictionary, level_data: Dictionary) -> void:
+	_play_whisper_of_the_veil_effect(enemy.get("node"), _bear["node"])
 	_deal_damage_to_bear(float(level_data.get("damage", 0)))
 
 
@@ -17526,7 +17888,7 @@ func _cast_enemy_walrus_punch_on_bear(enemy: Dictionary, level_data: Dictionary)
 		return
 	_bear["pos_index"] = pos
 	_bear["node"].flip_h = direction < 0
-	_bear["node"].position = Vector2(_index_to_x(pos), _creature_y())
+	_place_bear_node(pos)
 	_stun_bear(int(level_data.get("stun_turns", 1)))
 
 
@@ -17557,20 +17919,20 @@ func _cast_enemy_lil_shredder_on_bear(enemy: Dictionary, level_data: Dictionary)
 		_bear["armor_reduction_turns_left"] = int(level_data.get("duration", 0))
 
 
-## The rival's Mist Coil on himself - the mirror of the player's own
-## _resolve_mist_coil_self_cast(): pays `level_data.hp_cost` straight
+## The rival's Whisper of the Veil on himself - the mirror of the player's own
+## _resolve_whisper_of_the_veil_self_cast(): pays `level_data.hp_cost` straight
 ## off his current HP (no armor, no shield - it's a cost, not a hit),
 ## then heals `level_data.heal`, capped at his effective max HP. Only
-## ever reached when _enemy_mist_coil_self_ready() already confirmed he
+## ever reached when _enemy_whisper_of_the_veil_self_ready() already confirmed he
 ## can afford the cost without dying.
-func _cast_enemy_mist_coil_on_self(enemy: Dictionary, level_data: Dictionary) -> void:
+func _cast_enemy_whisper_of_the_veil_on_self(enemy: Dictionary, level_data: Dictionary) -> void:
 	var hp_before: float = float(enemy.get("current_hp", 0.0))
 	var max_hp: float = _enemy_hero_effective_max_hp(enemy)
 	var after_cost: float = maxf(1.0, hp_before - float(level_data.get("hp_cost", 0)))
 	enemy["current_hp"] = minf(max_hp, after_cost + float(level_data.get("heal", 0)))
 
-	_play_mist_coil_effect(enemy.get("node"), enemy.get("node"))
+	_play_whisper_of_the_veil_effect(enemy.get("node"), enemy.get("node"))
 	if is_instance_valid(enemy.get("node")):
 		var gain: int = roundi(float(enemy["current_hp"]) - hp_before)
-		_show_message_over_enemy(enemy["node"], "Mist Coil +%d" % gain)
+		_show_message_over_enemy(enemy["node"], "Whisper of the Veil +%d" % gain)
 	_refresh_enemy_overhead_labels()

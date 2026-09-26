@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bepvj16sfdqli"
-path="res://.godot/imported/Avarice_range.png-572e36ec4766efc3029f5abfe8fad8a1.ctex"
+uid="uid://dqe45w6xfskj0"
+path="res://.godot/imported/Elderwild_area.png-8e8d11031d83656a394b94a6d44257ff.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/enemies/Avarice_range.png"
-dest_files=["res://.godot/imported/Avarice_range.png-572e36ec4766efc3029f5abfe8fad8a1.ctex"]
+source_file="res://assets/battle_areas/Elderwild_area.png"
+dest_files=["res://.godot/imported/Elderwild_area.png-8e8d11031d83656a394b94a6d44257ff.ctex"]
 
 [params]
 

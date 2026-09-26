@@ -272,6 +272,98 @@ func _migrate_legacy_zone_ids(data: Dictionary) -> void:
 			data[key] = LEGACY_ZONE_IDS[str(data[key])]
 
 
+# Hero ids, and Erynd's and Morvael's skill ids/names, from before they
+# were renamed (old -> new). Same idea as LEGACY_ZONE_IDS:
+# _migrate_legacy_hero_ids() rewrites them on load and the next flush
+# saves the new ones.
+const LEGACY_HERO_IDS := {
+	"lone_druid": "erynd",
+	"abaddon": "morvael",
+	# Morvael's old id was once typed with a Cyrillic "a" (U+0430).
+	"\u0430baddon": "morvael",
+}
+const LEGACY_HERO_NAMES := {
+	"Lone Druid": "Erynd",
+	"Abaddon": "Morvael, the Mistborn",
+}
+const LEGACY_SKILL_IDS := {
+	"summon_spirit_bear": "elderwild_companion",
+	"entangle": "thornbind",
+	"spirit_link": "wildbond",
+	"savage_roar": "blood_of_the_wild",
+	"true_form": "beast_of_the_elderwild",
+	"mist_coil": "whisper_of_the_veil",
+	"mist_coil_self": "whisper_of_the_veil_self",
+	"aphotic_shield": "veil_of_the_forgotten",
+	"curse_of_avernus": "mark_of_the_mist",
+	"borrowed_time": "the_mist_remembers",
+}
+const LEGACY_SKILL_NAMES := {
+	"Summon Spirit Bear": "Elderwild Companion",
+	"Entangle": "Thornbind",
+	"Spirit Link": "Wildbond",
+	"Savage Roar": "Blood of the Wild",
+	"True Form": "Beast of the Elderwild",
+	"Mist Coil": "Whisper of the Veil",
+	"Aphotic Shield": "Veil of the Forgotten",
+	"Curse of Avernus": "Mark of the Mist",
+	"Borrowed Time": "The Mist Remembers",
+}
+const SKILL_KEY_PREFIXES: Array[String] = ["skill_level_", "skill_cooldown_"]
+
+
+## Rewrites pre-rename hero/skill ids in `data` (see LEGACY_HERO_IDS and
+## LEGACY_SKILL_IDS) in place: "npc_<hero id>_..." keys, the skill id at
+## the end of "...skill_level_<id>"/"...skill_cooldown_<id>" keys (the
+## player's and every NPC's), and the values that hold a hero id, hero
+## name, skill id or skill name. Up-to-date saves are left unchanged.
+func _migrate_legacy_hero_ids(data: Dictionary) -> void:
+	for key in data.keys():
+		var old_key: String = str(key)
+		var new_key: String = old_key
+		for old_hero: String in LEGACY_HERO_IDS:
+			if new_key.begins_with("npc_" + old_hero + "_"):
+				new_key = "npc_" + LEGACY_HERO_IDS[old_hero] + new_key.substr(("npc_" + old_hero).length())
+		for prefix in SKILL_KEY_PREFIXES:
+			var at: int = new_key.find(prefix)
+			if at != -1:
+				var skill_id: String = new_key.substr(at + prefix.length())
+				if LEGACY_SKILL_IDS.has(skill_id):
+					new_key = new_key.substr(0, at + prefix.length()) + LEGACY_SKILL_IDS[skill_id]
+
+		var value: String = str(data[key])
+		if old_key == "hero" or old_key.ends_with("_invasion_target"):
+			value = LEGACY_HERO_IDS.get(value, value)
+		elif old_key == "hero_name":
+			value = LEGACY_HERO_NAMES.get(value, value)
+		elif old_key.ends_with("skill_id"):
+			value = LEGACY_SKILL_IDS.get(value, value)
+		elif old_key.ends_with("skill_name"):
+			value = LEGACY_SKILL_NAMES.get(value, value)
+		elif old_key == "defeated_heroes":
+			value = _map_id_list(value, LEGACY_HERO_IDS)
+		elif old_key == "skills":
+			value = _map_id_list(value, LEGACY_SKILL_IDS)
+
+		if new_key != old_key:
+			data.erase(key)
+		if new_key != old_key or value != str(data.get(new_key, "")):
+			data[new_key] = value
+
+
+## Maps each entry of a comma-separated id list through `legacy`,
+## dropping duplicates (two old spellings can map to the same new id).
+func _map_id_list(list: String, legacy: Dictionary) -> String:
+	if list == "":
+		return list
+	var ids: PackedStringArray = []
+	for id in list.split(","):
+		var new_id: String = legacy.get(id, id)
+		if not ids.has(new_id):
+			ids.append(new_id)
+	return ",".join(ids)
+
+
 ## The actual disk read, unconditionally - what _read_player_data()
 ## used to be before caching was added.
 func _read_player_data_from_disk(username: String) -> Dictionary:
@@ -291,6 +383,7 @@ func _read_player_data_from_disk(username: String) -> Dictionary:
 		data[key] = value
 	f.close()
 	_migrate_legacy_zone_ids(data)
+	_migrate_legacy_hero_ids(data)
 	return data
 
 ## The actual disk write, unconditionally - what _write_player_data()

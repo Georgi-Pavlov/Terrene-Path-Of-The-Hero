@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c7qmrg7pwdrpu"
-path="res://.godot/imported/Northern_Pine_mele.png-3fa79d6de1aea38fdb3a867a6d35dfb3.ctex"
+uid="uid://7vopovjqui8c"
+path="res://.godot/imported/the_elderwild_melee.png-f60a51367a3aac58105b6f2403e4466b.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/enemies/Northern_Pine_mele.png"
-dest_files=["res://.godot/imported/Northern_Pine_mele.png-3fa79d6de1aea38fdb3a867a6d35dfb3.ctex"]
+source_file="res://assets/enemies/the_elderwild_melee.png"
+dest_files=["res://.godot/imported/the_elderwild_melee.png-f60a51367a3aac58105b6f2403e4466b.ctex"]
 
 [params]
 

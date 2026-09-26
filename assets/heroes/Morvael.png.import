@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://gu2lcp3c1s7c"
-path="res://.godot/imported/Northern_Pine_range.png-5ae6a95810524512876ef7b4e7b3b42c.ctex"
+uid="uid://do3f7b56dkw2l"
+path="res://.godot/imported/Morvael.png-3cfeaa135d8e70fd33b5cde206c344b5.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/enemies/Northern_Pine_range.png"
-dest_files=["res://.godot/imported/Northern_Pine_range.png-5ae6a95810524512876ef7b4e7b3b42c.ctex"]
+source_file="res://assets/heroes/Morvael.png"
+dest_files=["res://.godot/imported/Morvael.png-3cfeaa135d8e70fd33b5cde206c344b5.ctex"]
 
 [params]
 

@@ -1,6 +1,7 @@
 extends Control
 
 @onready var background: TextureRect = $Background
+@onready var atmosphere: Control = $ZoneAtmosphere
 @onready var hero_name_label: Label = $HeroNameLabel
 @onready var hero_range_type: Label = $HeroRangeType
 @onready var hero_main_stat: Label = $HeroMainStat
@@ -181,6 +182,9 @@ func _show_hero(index: int) -> void:
 		background_path = _zone_data.get("background", "")
 	if background_path != "" and ResourceLoader.exists(background_path):
 		background.texture = load(background_path)
+	# Hero-specific ambient effects (see ZoneAtmosphere.gd) - rebuilt
+	# per hero, since each one's art has its own features to animate.
+	atmosphere.show_for_background(background_path)
 
 	# Switching hero clears any in-progress skill choice - it belonged
 	# to the previous hero's skill list, not this one's.

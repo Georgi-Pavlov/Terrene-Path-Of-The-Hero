@@ -25,11 +25,11 @@ class_name EnemySkillAI
 # fallback (a plain Attack) takes over, unchanged.
 #
 # Deliberately NOT covered as scored SKILL candidates here: Savage
-# Roar, Borrowed Time, Curse of Avernus, and Tidebringer. All four
+# Roar, The Mist Remembers, Mark of the Mist, and Tidebringer. All four
 # already auto-trigger off HP%/hits-landed outside of any skill-picking
-# loop (see battle.gd's _update_enemy_savage_roar_state()/
-# _maybe_auto_activate_enemy_borrowed_time()/
-# _apply_enemy_curse_of_avernus_stack()/_maybe_consume_enemy_
+# loop (see battle.gd's _update_enemy_blood_of_the_wild_state()/
+# _maybe_auto_activate_enemy_the_mist_remembers()/
+# _apply_enemy_mark_of_the_mist_stack()/_maybe_consume_enemy_
 # tidebringer_stack(), and EnemyHeroManager.gd's own mirrors) - they're
 # never "picked", so they have no business being scored candidates.
 # Tidebringer's current state DOES still feed into the AI, though - not
@@ -39,7 +39,7 @@ class_name EnemySkillAI
 # _kunkka_modifier()), since a Tidebringer-empowered Attack can
 # genuinely be the better play than any of Kunkka's real skills.
 #
-# Eleven heroes have real AI logic today: Veyrik, Erynd, Abaddon,
+# Eleven heroes have real AI logic today: Veyrik, Erynd, Morvael,
 # Kunkka, Ancient Apparition, Winter Wyvern, Crystal Maiden, Tusk,
 # Treant Protector, Timbersaw, and Snapfire - see resolve_hero_
 # archetype() for how a hero_static maps to one of them,
@@ -131,7 +131,7 @@ class_name EnemySkillAI
 # without inventing a parallel armor system of its own.
 #
 # Naga Siren is the twelfth hero with real AI logic. Mirror Image is
-# "utility" category, same shape as Erynd's own Spirit Bear - its
+# "utility" category, same shape as Erynd's own Elderwild Companion - its
 # entire value (both the illusions' own expected total damage over their
 # FULL duration and the redirect chance that can soak a hit meant for
 # Naga herself) is hero-specific, computed entirely in
@@ -158,7 +158,7 @@ class_name EnemySkillAI
 #
 # Slardar is the thirteenth hero with real AI logic. Guardian Sprint is
 # "utility" category, same "the hero-specific modifier IS the whole
-# value" shape Mirror Image/Spirit Bear already use - its value is almost
+# value" shape Mirror Image/Elderwild Companion already use - its value is almost
 # entirely positional, not a generic damage/defensive term (see
 # _slardar_guardian_sprint_modifier()'s own docstring). Slithereen Crush
 # and Corrosive Haze are both "offensive", same shape as every other
@@ -222,15 +222,15 @@ const SKILL_INFO := {
 	"barbed_lunge": {"category": "offensive", "base_score": 40.0},
 	"leeching_hunger": {"category": "utility", "base_score": 20.0},
 	"depthsveil": {"category": "defensive", "base_score": 50.0},
-	"entangle": {"category": "offensive", "base_score": 40.0},
-	"summon_spirit_bear": {"category": "utility", "base_score": 50.0},
-	"spirit_link": {"category": "defensive", "base_score": 30.0},
-	"true_form": {"category": "defensive", "base_score": 45.0},
-	"mist_coil": {"category": "offensive", "base_score": 35.0},
-	# Mist Coil cast on Abaddon himself (see MIST_COIL_SELF_ID) - a heal,
+	"thornbind": {"category": "offensive", "base_score": 40.0},
+	"elderwild_companion": {"category": "utility", "base_score": 50.0},
+	"wildbond": {"category": "defensive", "base_score": 30.0},
+	"beast_of_the_elderwild": {"category": "defensive", "base_score": 45.0},
+	"whisper_of_the_veil": {"category": "offensive", "base_score": 35.0},
+	# Whisper of the Veil cast on Morvael himself (see WHISPER_OF_THE_VEIL_SELF_ID) - a heal,
 	# so it rides the same HP-danger tiers every defensive skill does.
-	"mist_coil_self": {"category": "defensive", "base_score": 25.0},
-	"aphotic_shield": {"category": "defensive", "base_score": 40.0},
+	"whisper_of_the_veil_self": {"category": "defensive", "base_score": 25.0},
+	"veil_of_the_forgotten": {"category": "defensive", "base_score": 40.0},
 	"torrent": {"category": "offensive", "base_score": 45.0},
 	"x_marks_the_spot": {"category": "utility", "base_score": 35.0},
 	"ghostship": {"category": "offensive", "base_score": 55.0},
@@ -288,22 +288,22 @@ const BASIC_ATTACK_ID := "basic_attack"
 # damage/cleave, for Kunkka).
 const BASELINE_BASIC_ATTACK_SCORE := 30.0
 
-# Mist Coil cast on the caster himself (Abaddon's self-heal: pay
+# Whisper of the Veil cast on the caster himself (Morvael's self-heal: pay
 # hp_cost, heal for `heal`) - a pseudo skill id, like BASIC_ATTACK_ID:
 # never a real skill of its own, just a second way to use the real
-# "mist_coil" that's scored and compared as its own candidate. Callers
+# "whisper_of_the_veil" that's scored and compared as its own candidate. Callers
 # add it (see battle.gd's _pick_enemy_ready_skill()/EnemyHeroManager's
 # _pick_ready_skill()) only when the caster could survive paying its
-# hp_cost, and map a win back onto a self-targeted "mist_coil" cast.
-const MIST_COIL_SELF_ID := "mist_coil_self"
+# hp_cost, and map a win back onto a self-targeted "whisper_of_the_veil" cast.
+const WHISPER_OF_THE_VEIL_SELF_ID := "whisper_of_the_veil_self"
 
 # Static fallback order, per hero, used ONLY to settle a near-tie (see
 # CLOSE_SCORE_THRESHOLD/pick_best_skill()) - never consulted while one
 # skill's score clearly beats the rest.
 const HERO_TIE_BREAK := {
 	"veyrik": ["barbed_lunge", "abyssal_spasm", "depthsveil", "leeching_hunger"],
-	"erynd": ["entangle", "summon_spirit_bear", "spirit_link", "true_form"],
-	"abaddon": ["aphotic_shield", "mist_coil_self", "mist_coil"],
+	"erynd": ["thornbind", "elderwild_companion", "wildbond", "beast_of_the_elderwild"],
+	"morvael": ["veil_of_the_forgotten", "whisper_of_the_veil_self", "whisper_of_the_veil"],
 	"kunkka": ["ghostship", "torrent", "x_marks_the_spot"],
 	"ancient_apparition": ["ice_blast", "chilling_touch", "cold_feet", "ice_vortex"],
 	"winter_wyvern": ["winter's_curse", "splinter_blast", "cold_embrace", "arctic_burn"],
@@ -326,11 +326,8 @@ const CLOSE_SCORE_THRESHOLD := 5.0
 
 ## Figures out which of the six heroes with real AI logic today
 ## `hero_static` is, by checking for a skill only that hero has -
-## rather than ever comparing hero ids directly. (Abaddon's own id in
-## GameManager.gd is spelled with a Cyrillic "а", not a Latin "a" - see
-## its own hero entry - so an id == "abaddon" check would silently
-## never match. Every lookup in this file goes through skill ids
-## instead, which have no such trap.) Returns "" for any hero without a
+## rather than ever comparing hero ids directly, so this keeps working
+## however a hero's id is spelled or renamed. Returns "" for any hero without a
 ## known kit, in which case every hero-specific modifier below is a
 ## no-op and skills fall back to pure category scoring.
 static func resolve_hero_archetype(hero_static: Dictionary) -> String:
@@ -340,10 +337,10 @@ static func resolve_hero_archetype(hero_static: Dictionary) -> String:
 
 	if "barbed_lunge" in skill_ids:
 		return "veyrik"
-	if "summon_spirit_bear" in skill_ids:
+	if "elderwild_companion" in skill_ids:
 		return "erynd"
-	if "borrowed_time" in skill_ids:
-		return "abaddon"
+	if "the_mist_remembers" in skill_ids:
+		return "morvael"
 	if "torrent" in skill_ids:
 		return "kunkka"
 	if "ice_blast" in skill_ids:
@@ -500,14 +497,14 @@ static func _kill_potential_bonus(estimated_damage: float, target_hp: float) -> 
 
 ## Defensive: the steep HP-ratio tiers Depthsveil's own design calls
 ## for (big at <20%, less at <35%, a little at <50%, nothing above
-## that) - shared by every defensive skill (Aphotic Shield, True Form,
-## Spirit Link) rather than reimplemented per hero. Being outnumbered
+## that) - shared by every defensive skill (Veil of the Forgotten, Beast of the Elderwild,
+## Wildbond) rather than reimplemented per hero. Being outnumbered
 ## adds a small bump on top, but only once a danger tier is already
 ## active - it must never by itself be enough to make a defensive skill
 ## outscore offense at full HP (a defensive skill's base_score alone,
 ## e.g. Depthsveil's 50, would otherwise already beat a lower-base
 ## offensive skill with nothing at stake - see the explicit "healthy"
-## penalty below, without which Depthsveil/True Form would fire every
+## penalty below, without which Depthsveil/Beast of the Elderwild would fire every
 ## single turn regardless of HP).
 static func _evaluate_defensive(context: Dictionary) -> float:
 	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
@@ -556,9 +553,9 @@ static func _estimate_skill_damage(skill_id: String, level_data: Dictionary, con
 			return hero_damage * float(level_data.get("damage_multiplier", 0.75))
 		"barbed_lunge":
 			return hero_damage
-		"entangle":
+		"thornbind":
 			return float(level_data.get("dot_damage", 0.0)) * float(level_data.get("dot_duration", 0.0))
-		"mist_coil", "torrent", "ghostship":
+		"whisper_of_the_veil", "torrent", "ghostship":
 			return float(level_data.get("damage", 0.0))
 		"cold_feet", "ice_vortex":
 			# Both are pure DoTs with no upfront hit at all - their
@@ -673,8 +670,8 @@ static func _hero_specific_modifier(archetype: String, skill_id: String, level_d
 			return _veyrik_modifier(skill_id, level_data, context)
 		"erynd":
 			return _erynd_modifier(skill_id, level_data, context)
-		"abaddon":
-			return _abaddon_modifier(skill_id, level_data, context)
+		"morvael":
+			return _morvael_modifier(skill_id, level_data, context)
 		"kunkka":
 			return _kunkka_modifier(skill_id, level_data, context)
 		"ancient_apparition":
@@ -720,45 +717,45 @@ static func _veyrik_modifier(skill_id: String, level_data: Dictionary, context: 
 			return 0.0
 
 
-## Erynd: leans hard on his Spirit Bear. A missing/dead bear is
+## Erynd: leans hard on his Elderwild Companion. A missing/dead bear is
 ## treated as a near-emergency (a big enough bonus to beat almost
 ## everything except a genuine defensive crisis - see
 ## _evaluate_defensive()'s own <20% HP tier); once the bear is up,
-## Entangle/Spirit Link get a small synergy bump instead.
+## Thornbind/Wildbond get a small synergy bump instead.
 static func _erynd_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
 	var bear_active: bool = bool(context.get("bear_active", false))
 	match skill_id:
-		"summon_spirit_bear":
+		"elderwild_companion":
 			return 0.0 if bear_active else 70.0
-		"entangle":
+		"thornbind":
 			return 10.0 if bear_active else 0.0
-		"spirit_link":
+		"wildbond":
 			return 15.0 if bear_active else 0.0
 		_:
 			return 0.0
 
 
-## Abaddon: defensive/reactive, not a nuker. He'd rather put Aphotic
-## Shield up before things get dangerous than only as a last resort
-## (unlike Depthsveil/True Form's own "wait for real danger" curve),
-## and only reaches for Mist Coil's damage when it's actually a
+## Morvael: defensive/reactive, not a nuker. He'd rather put Veil of the
+## Forgotten up before things get dangerous than only as a last resort
+## (unlike Depthsveil/Beast of the Elderwild's own "wait for real danger" curve),
+## and only reaches for Whisper of the Veil's damage when it's actually a
 ## meaningful hit - otherwise he holds back rather than trading his own
 ## resources for a marginal poke.
-static func _abaddon_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+static func _morvael_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
 	match skill_id:
-		"aphotic_shield":
+		"veil_of_the_forgotten":
 			return 10.0 if float(context.get("hero_hp_ratio", 1.0)) < 0.7 else 0.0
-		"mist_coil":
+		"whisper_of_the_veil":
 			var target_hp: float = float(context.get("target_hp", 0.0))
 			var dmg: float = _estimate_skill_damage(skill_id, level_data, context)
 			return -10.0 if (target_hp > 0.0 and dmg < target_hp * 0.3) else 0.0
-		"mist_coil_self":
-			return _abaddon_mist_coil_self_modifier(level_data, context)
+		"whisper_of_the_veil_self":
+			return _morvael_whisper_of_the_veil_self_modifier(level_data, context)
 		_:
 			return 0.0
 
 
-## Abaddon's self-cast Mist Coil, on top of the shared defensive HP
+## Morvael's self-cast Whisper of the Veil, on top of the shared defensive HP
 ## tiers (_evaluate_defensive() - big when badly hurt, a penalty when
 ## healthy): how much of the heal would actually land. It costs
 ## hp_cost first, then heals `heal`, capped at max HP - so near full
@@ -766,7 +763,7 @@ static func _abaddon_modifier(skill_id: String, level_data: Dictionary, context:
 ## (+8 when every point counts, down to -12 when barely any does).
 ## Never picked if paying the cost would kill him, or if it would
 ## leave him no better off than before.
-static func _abaddon_mist_coil_self_modifier(level_data: Dictionary, context: Dictionary) -> float:
+static func _morvael_whisper_of_the_veil_self_modifier(level_data: Dictionary, context: Dictionary) -> float:
 	var hp: float = float(context.get("hero_hp", 0.0))
 	var max_hp: float = float(context.get("hero_max_hp", 0.0))
 	var hp_cost: float = float(level_data.get("hp_cost", 0.0))
@@ -1947,7 +1944,7 @@ static func _tp_living_armor_modifier(level_data: Dictionary, context: Dictionar
 ## deliberately never scored as a stun (per the design doc's own
 ## explicit "rooting does NOT prevent attacks/skills/items" instruction
 ## - Overgrowth's root shares the same generic root_turns_left field
-## Entangle's own does, which every attack/skill/item check already
+## Thornbind's own does, which every attack/skill/item check already
 ## ignores). The early-out mirrors Leech Seed's/Snowball's/Walrus
 ## Punch's own: a single target a plain Attack can already kill outright
 ## isn't worth an ultimate's mana/cooldown, but ONLY when just one enemy
@@ -2608,7 +2605,7 @@ static func _naga_siren_modifier(skill_id: String, level_data: Dictionary, conte
 ## illusion instead (defensive). Neither half is generic enough for
 ## _evaluate_offensive()/_evaluate_defensive() to cover (this skill's own
 ## SKILL_INFO category is "utility", same "the hero-specific modifier IS
-## the whole value" shape Erynd's own Spirit Bear uses - see
+## the whole value" shape Erynd's own Elderwild Companion uses - see
 ## _erynd_modifier()), so both live here together, exactly per the
 ## design doc's own "a defensive Mirror Image can be the right call even
 ## with lower immediate damage" instruction.
@@ -3673,7 +3670,7 @@ static func _mirana_basic_attack_modifier(context: Dictionary) -> float:
 ## time - see _roll_enemy_hero_damage()'s own docstring), and "eclipse_
 ## candidate_count"/"eclipse_candidate_hps"/"eclipse_candidate_max_hps"
 ## (every real beam candidate within Eclipse's own current radius right
-## now - the target, its illusions, and its Spirit Bear all separately,
+## now - the target, its illusions, and its Elderwild Companion all separately,
 ## mirroring the actual _tick_enemy_eclipse()/_tick_eclipse() candidate
 ## pool exactly, never just a single "target_hp").
 static func _luna_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
@@ -3742,7 +3739,7 @@ static func _luna_lucent_beam_modifier(level_data: Dictionary, context: Dictiona
 ## raw beams×damage total exceeds someone's HP (per the design doc's own
 ## explicit caution). `eclipse_candidate_hps`/`_max_hps` are the REAL
 ## beam candidates within radius right now (the target, its illusions,
-## its Spirit Bear, each counted separately - see this file's own header
+## its Elderwild Companion, each counted separately - see this file's own header
 ## comment), never a synthetic count.
 static func _luna_eclipse_modifier(level_data: Dictionary, context: Dictionary) -> float:
 	var candidate_hps: Array = context.get("eclipse_candidate_hps", [])
@@ -3829,7 +3826,7 @@ static func _luna_eclipse_modifier(level_data: Dictionary, context: Dictionary) 
 ## target's own share of the beam total works out to - beams×damage when
 ## it's the only real candidate in radius (fully deterministic - every
 ## beam has nowhere else to go), divided across every OTHER real
-## candidate (its own illusions, its Spirit Bear) when they're also
+## candidate (its own illusions, its Elderwild Companion) when they're also
 ## present, per the design doc's own explicit "do not assume an even
 ## deterministic distribution" instruction for the multi-target case.
 static func _luna_eclipse_expected_damage(level_data: Dictionary, context: Dictionary) -> float:

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d245qouyyfhuu"
-path="res://.godot/imported/Avarice.png-5296161f989ba6a1ae9ee69b9093666b.ctex"
+uid="uid://2ri1hdalhsad"
+path="res://.godot/imported/the_elderwild_range.png-84c84d26f08e7b48b2fdeba2b30b7d67.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/zones/Avarice.png"
-dest_files=["res://.godot/imported/Avarice.png-5296161f989ba6a1ae9ee69b9093666b.ctex"]
+source_file="res://assets/enemies/the_elderwild_range.png"
+dest_files=["res://.godot/imported/the_elderwild_range.png-84c84d26f08e7b48b2fdeba2b30b7d67.ctex"]
 
 [params]
 

@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://dsantk7su6j66"]
 
 [ext_resource type="Script" uid="uid://bhso52wawmu4r" path="res://scripts/zone.gd" id="1"]
+[ext_resource type="Script" path="res://scripts/ZoneAtmosphere.gd" id="2"]
 
 [sub_resource type="StyleBoxFlat" id="StatsPanelStyle"]
 bg_color = Color(0.04, 0.08, 0.1, 0.82)
@@ -63,6 +64,16 @@ grow_horizontal = 2
 grow_vertical = 2
 expand_mode = 1
 stretch_mode = 6
+
+[node name="ZoneAtmosphere" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2")
 
 [node name="HeroNameLabel" type="Label" parent="." unique_id=11931177]
 layout_mode = 1

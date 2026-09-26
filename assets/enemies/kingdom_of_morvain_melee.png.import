@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b2vcioh8mrqk0"
-path="res://.godot/imported/Avarice_mele.png-22d50c177f39faff499d544dcac18f6d.ctex"
+uid="uid://c1lbs6hqmkudm"
+path="res://.godot/imported/kingdom_of_morvain_melee.png-2dc2a309740aad51468bde15225771d6.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/enemies/Avarice_mele.png"
-dest_files=["res://.godot/imported/Avarice_mele.png-22d50c177f39faff499d544dcac18f6d.ctex"]
+source_file="res://assets/enemies/kingdom_of_morvain_melee.png"
+dest_files=["res://.godot/imported/kingdom_of_morvain_melee.png-2dc2a309740aad51468bde15225771d6.ctex"]
 
 [params]
 

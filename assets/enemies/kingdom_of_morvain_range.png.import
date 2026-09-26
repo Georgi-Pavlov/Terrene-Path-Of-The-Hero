@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cujh6d8lqh4q3"
-path="res://.godot/imported/Dark_Reef_range.png-580be98d88cf922fe3822778a4c07db1.ctex"
+uid="uid://d1kh5uq0oxvx4"
+path="res://.godot/imported/kingdom_of_morvain_range.png-2b35bf9e2940e854e638dbffcc6534da.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/enemies/Dark_Reef_range.png"
-dest_files=["res://.godot/imported/Dark_Reef_range.png-580be98d88cf922fe3822778a4c07db1.ctex"]
+source_file="res://assets/enemies/kingdom_of_morvain_range.png"
+dest_files=["res://.godot/imported/kingdom_of_morvain_range.png-2b35bf9e2940e854e638dbffcc6534da.ctex"]
 
 [params]
 
