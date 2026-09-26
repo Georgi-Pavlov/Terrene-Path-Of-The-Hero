@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c1feqpbicljth"
-path="res://.godot/imported/Dark_Reef.png-98a5cf52d57c33cd0c141bcb186e9e5f.ctex"
+uid="uid://d26lqppvtiufo"
+path="res://.godot/imported/Veyrik.png-c0c35b050d465500e5e94d90d0a4ed70.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/zones/Dark_Reef.png"
-dest_files=["res://.godot/imported/Dark_Reef.png-98a5cf52d57c33cd0c141bcb186e9e5f.ctex"]
+source_file="res://assets/heroes/Veyrik.png"
+dest_files=["res://.godot/imported/Veyrik.png-c0c35b050d465500e5e94d90d0a4ed70.ctex"]
 
 [params]
 

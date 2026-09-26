@@ -1,9 +1,10 @@
 [gd_scene format=3 uid="uid://ceuup05wfmsml"]
 
 [ext_resource type="Script" uid="uid://r2aiuqed57bu" path="res://scripts/MainMenu.gd" id="1"]
-[ext_resource type="Texture2D" uid="uid://csrdlcwu8dcdx" path="res://assets/menu_bg.jpg" id="2"]
+[ext_resource type="Texture2D" uid="uid://dy2uw1ofbmwxm" path="res://assets/menu_bg.jpg" id="2"]
 [ext_resource type="Texture2D" uid="uid://cw8ysxvwr3alc" path="res://assets/settings.png" id="3"]
 [ext_resource type="PackedScene" path="res://scenes/SettingsPopup.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://scenes/MenuAtmosphere.tscn" id="5"]
 
 [node name="MainMenu" type="Control" unique_id=712659081]
 layout_mode = 3
@@ -25,17 +26,20 @@ texture = ExtResource("2")
 expand_mode = 1
 stretch_mode = 6
 
+[node name="MenuAtmosphere" parent="." instance=ExtResource("5")]
+layout_mode = 1
+
 [node name="ButtonsContainer" type="VBoxContainer" parent="." unique_id=1099872438]
 layout_mode = 1
 anchors_preset = -1
-anchor_left = 0.5
-anchor_top = 0.62
-anchor_right = 0.5
-anchor_bottom = 0.62
-offset_left = -153.0
-offset_top = -206.4
-offset_right = 169.0
-offset_bottom = -30.399994
+anchor_left = 0.49500003
+anchor_top = 0.63100004
+anchor_right = 0.49500003
+anchor_bottom = 0.63100004
+offset_left = -161.60004
+offset_top = -176.32004
+offset_right = 160.39996
+offset_bottom = -0.32003784
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/separation = 22

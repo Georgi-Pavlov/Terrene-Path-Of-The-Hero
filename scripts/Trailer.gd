@@ -26,7 +26,7 @@ const KEN_BURNS_ZOOM := 1.08
 ## short instead of running through the entire roster. Matched against
 ## each hero's "name" field in GameManager.zones. Swap freely.
 const FEATURED_HERO_NAMES: Array[String] = [
-	"Slark",
+	"Veyrik",
 	"Crystal Maiden",
 	"Lone Druid",
 ]
@@ -38,8 +38,8 @@ const FEATURED_HERO_NAMES: Array[String] = [
 ## screenshot, since a static image of the battle background alone
 ## doesn't communicate "this is a turn-based battle" the way seeing the
 ## hero, the enemies, the skill bar and the hp/mana/xp bars together does.
-const BATTLE_MOCKUP_HERO_NAME := "Slark"
-const BATTLE_MOCKUP_ZONE_ID := "dark_reef"
+const BATTLE_MOCKUP_HERO_NAME := "Veyrik"
+const BATTLE_MOCKUP_ZONE_ID := "the_iron_abyss"
 const BATTLE_MOCKUP_BACKDROP := "res://assets/battle_areas/Dark_Reef_area.png"
 const BATTLE_MOCKUP_CAPTION := "Command Heroes in Turn-Based Tactical Battles"
 
@@ -49,7 +49,7 @@ const SHOP_MOCKUP_CAPTION := "Gear Up and Grow Stronger"
 ## Simple screens to show between the hero cards and the mockup beats -
 ## just a crossfade to that screen's own background art plus a caption.
 const MONTAGE_CARDS: Array[Array] = [
-	["res://assets/map_bg.jpg", "Explore Every Corner of the World of Terrene"],
+	["res://assets/map_bg.jpg", "Explore Every Corner of the World"],
 ]
 
 # Colors lifted straight from battle.gd's _build_bar_styles()/skill+item

@@ -2,7 +2,112 @@
 
 [ext_resource type="Script" uid="uid://buqowdjvrd4ti" path="res://scripts/Map.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://ckg6n07eojf74" path="res://assets/map_bg.jpg" id="2"]
-[ext_resource type="Texture2D" uid="uid://bfoxsltgx6ur" path="res://assets/shop.png" id="3"]
+[ext_resource type="Script" uid="uid://eni30c0su4ga" path="res://scripts/CompassFX.gd" id="3"]
+[ext_resource type="Script" uid="uid://b8d5oulkme5ir" path="res://scripts/MapFX.gd" id="4"]
+
+[sub_resource type="StyleBoxFlat" id="CompassPlaqueNormal"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.07, 0.045, 0.035, 0.94)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.55, 0.4, 0.22, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+shadow_size = 6
+
+[sub_resource type="StyleBoxFlat" id="CompassPlaquePressed"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.045, 0.03, 0.03, 0.96)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.55, 0.4, 0.22, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+shadow_color = Color(0.5, 0.2, 0.72, 0.4)
+shadow_size = 6
+
+[sub_resource type="StyleBoxFlat" id="CompassPlaqueHover"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.1, 0.06, 0.08, 0.96)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.85, 0.62, 0.35, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+shadow_color = Color(0.5, 0.2, 0.72, 0.55)
+shadow_size = 9
+
+[sub_resource type="StyleBoxEmpty" id="CompassPlaqueFocus"]
+
+[sub_resource type="StyleBoxFlat" id="EventsScrollGrabber"]
+bg_color = Color(0.5, 0.36, 0.2, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="EventsScrollGrabberHover"]
+bg_color = Color(0.72, 0.53, 0.3, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="EventsScrollTrack"]
+content_margin_left = 3.0
+content_margin_right = 3.0
+bg_color = Color(0.1, 0.065, 0.05, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="Theme" id="EventsTheme"]
+Button/colors/font_color = Color(0.93, 0.8, 0.55, 1)
+Button/colors/font_focus_color = Color(0.93, 0.8, 0.55, 1)
+Button/colors/font_hover_color = Color(1, 0.9, 0.7, 1)
+Button/colors/font_pressed_color = Color(0.85, 0.7, 0.45, 1)
+Button/font_sizes/font_size = 15
+Button/styles/focus = SubResource("CompassPlaqueFocus")
+Button/styles/hover = SubResource("CompassPlaqueHover")
+Button/styles/normal = SubResource("CompassPlaqueNormal")
+Button/styles/pressed = SubResource("CompassPlaquePressed")
+VScrollBar/styles/grabber = SubResource("EventsScrollGrabber")
+VScrollBar/styles/grabber_highlight = SubResource("EventsScrollGrabberHover")
+VScrollBar/styles/grabber_pressed = SubResource("EventsScrollGrabberHover")
+VScrollBar/styles/scroll = SubResource("EventsScrollTrack")
+
+[sub_resource type="StyleBoxFlat" id="EventsPanel"]
+bg_color = Color(0.055, 0.035, 0.028, 0.97)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.55, 0.4, 0.22, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+
+[sub_resource type="StyleBoxLine" id="EventsDivider"]
+color = Color(0.55, 0.4, 0.22, 0.7)
+grow_begin = -30.0
+grow_end = -30.0
 
 [node name="Map" type="Control" unique_id=502966162]
 layout_mode = 3
@@ -29,16 +134,21 @@ grow_vertical = 2
 texture = ExtResource("2")
 expand_mode = 1
 
+[node name="MapFX" type="Control" parent="." unique_id=796445948]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("4")
+
 [node name="RegionButtons" type="Control" parent="." unique_id=1916871913]
 layout_mode = 1
-anchor_left = -0.004
-anchor_top = 0.019000001
-anchor_right = 0.99000007
-anchor_bottom = 1.01
-offset_left = 0.12000036
-offset_top = 0.31999874
-offset_right = -0.20007324
-offset_bottom = -0.2000122
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
@@ -52,32 +162,65 @@ offset_top = -68.0
 offset_right = 1244.0
 offset_bottom = -31.0
 grow_vertical = 0
+theme_override_colors/font_color = Color(0.93, 0.8, 0.55, 1)
+theme_override_colors/font_focus_color = Color(0.93, 0.8, 0.55, 1)
+theme_override_colors/font_pressed_color = Color(0.85, 0.7, 0.45, 1)
+theme_override_colors/font_hover_color = Color(1, 0.9, 0.7, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+theme_override_styles/normal = SubResource("CompassPlaqueNormal")
+theme_override_styles/pressed = SubResource("CompassPlaquePressed")
+theme_override_styles/hover = SubResource("CompassPlaqueHover")
+theme_override_styles/focus = SubResource("CompassPlaqueFocus")
 text = "Back"
 
-[node name="ShopImage" type="TextureRect" parent="." unique_id=241629587]
-layout_mode = 0
-offset_left = 20.0
-offset_top = 20.0
-offset_right = 140.0
-offset_bottom = 140.0
-texture = ExtResource("3")
-expand_mode = 1
-stretch_mode = 5
+[node name="CompassFX" type="Control" parent="." unique_id=1751323400]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("3")
 
 [node name="ShopButton" type="Button" parent="." unique_id=625887085]
 layout_mode = 0
-offset_left = 20.0
-offset_top = 144.0
-offset_right = 140.0
-offset_bottom = 178.0
+offset_left = 80.0
+offset_top = 77.0
+offset_right = 176.0
+offset_bottom = 107.0
+theme_override_colors/font_color = Color(0.93, 0.8, 0.55, 1)
+theme_override_colors/font_focus_color = Color(0.93, 0.8, 0.55, 1)
+theme_override_colors/font_pressed_color = Color(0.85, 0.7, 0.45, 1)
+theme_override_colors/font_hover_color = Color(1, 0.9, 0.7, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+theme_override_styles/normal = SubResource("CompassPlaqueNormal")
+theme_override_styles/pressed = SubResource("CompassPlaquePressed")
+theme_override_styles/hover = SubResource("CompassPlaqueHover")
+theme_override_styles/focus = SubResource("CompassPlaqueFocus")
 text = "Shop"
 
 [node name="WorldStatusButton" type="Button" parent="." unique_id=625887086]
 layout_mode = 0
-offset_left = 20.0
-offset_top = 182.0
-offset_right = 140.0
-offset_bottom = 216.0
+offset_left = 58.0
+offset_top = 243.0
+offset_right = 198.0
+offset_bottom = 273.0
+theme_override_colors/font_color = Color(0.93, 0.8, 0.55, 1)
+theme_override_colors/font_focus_color = Color(0.93, 0.8, 0.55, 1)
+theme_override_colors/font_pressed_color = Color(0.85, 0.7, 0.45, 1)
+theme_override_colors/font_hover_color = Color(1, 0.9, 0.7, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+theme_override_styles/normal = SubResource("CompassPlaqueNormal")
+theme_override_styles/pressed = SubResource("CompassPlaquePressed")
+theme_override_styles/hover = SubResource("CompassPlaqueHover")
+theme_override_styles/focus = SubResource("CompassPlaqueFocus")
 text = "World Status"
 
 [node name="StatsPanel" type="PanelContainer" parent="." unique_id=-913939552]
@@ -85,10 +228,10 @@ layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
-offset_left = -220.0
-offset_top = 16.0
-offset_right = -16.0
-offset_bottom = 172.0
+offset_left = -138.0
+offset_top = 15.0
+offset_right = -23.0
+offset_bottom = 169.0
 grow_horizontal = 0
 
 [node name="Margin" type="MarginContainer" parent="StatsPanel" unique_id=-913939551]
@@ -104,7 +247,7 @@ theme_override_constants/separation = 6
 
 [node name="HeroNameLabel" type="Label" parent="StatsPanel/Margin/VBox" unique_id=-913939549]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_colors/font_color = Color(0.9, 0.74, 0.45, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 18
@@ -122,7 +265,7 @@ columns = 2
 
 [node name="LevelKey" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939546]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.78, 0.72, 0.64, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -131,7 +274,7 @@ text = "Level"
 [node name="LevelValue" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939545]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.88, 0.82, 0.72, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -140,7 +283,7 @@ horizontal_alignment = 2
 
 [node name="GoldKey" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939544]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.78, 0.72, 0.64, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -149,7 +292,7 @@ text = "Gold"
 [node name="GoldValue" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939543]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_color = Color(0.95, 0.78, 0.4, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -158,7 +301,7 @@ horizontal_alignment = 2
 
 [node name="HealthKey" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939542]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.78, 0.72, 0.64, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -167,7 +310,7 @@ text = "Health"
 [node name="HealthValue" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939541]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_colors/font_color = Color(0.4, 0.95, 0.4, 1)
+theme_override_colors/font_color = Color(0.9, 0.38, 0.3, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -176,7 +319,7 @@ horizontal_alignment = 2
 
 [node name="ManaKey" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939540]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.78, 0.72, 0.64, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -185,74 +328,74 @@ text = "Mana"
 [node name="ManaValue" type="Label" parent="StatsPanel/Margin/VBox/StatsGrid" unique_id=-913939539]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_colors/font_color = Color(0.4, 0.7, 1, 1)
+theme_override_colors/font_color = Color(0.5, 0.68, 0.95, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
 text = "0 / 0"
 horizontal_alignment = 2
 
-[node name="Legend" type="VBoxContainer" parent="." unique_id=1477984387]
+[node name="Legend" type="HBoxContainer" parent="." unique_id=1477984387]
 layout_mode = 1
 anchors_preset = 2
 anchor_top = 1.0
 anchor_bottom = 1.0
-offset_left = 20.0
-offset_top = -70.0
-offset_right = 190.0
-offset_bottom = -16.0
+offset_left = 40.0
+offset_top = -32.0
+offset_right = 404.0
+offset_bottom = -10.0
 grow_vertical = 0
-theme_override_constants/separation = 4
+theme_override_constants/separation = 20
 
 [node name="ReadyRow" type="HBoxContainer" parent="Legend" unique_id=2007710106]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 10
 
 [node name="ReadyDot" type="Panel" parent="Legend/ReadyRow" unique_id=1693452837]
-custom_minimum_size = Vector2(10, 10)
+custom_minimum_size = Vector2(14, 14)
 layout_mode = 2
 size_flags_vertical = 4
 
 [node name="ReadyLabel" type="Label" parent="Legend/ReadyRow" unique_id=1593836799]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.88, 0.82, 0.72, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
-theme_override_font_sizes/font_size = 14
+theme_override_font_sizes/font_size = 15
 text = "Hero available"
 
 [node name="EmptyRow" type="HBoxContainer" parent="Legend" unique_id=2123686644]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 10
 
 [node name="EmptyDot" type="Panel" parent="Legend/EmptyRow" unique_id=572627347]
-custom_minimum_size = Vector2(10, 10)
+custom_minimum_size = Vector2(14, 14)
 layout_mode = 2
 size_flags_vertical = 4
 
 [node name="EmptyLabel" type="Label" parent="Legend/EmptyRow" unique_id=1611964919]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.88, 0.82, 0.72, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
-theme_override_font_sizes/font_size = 14
+theme_override_font_sizes/font_size = 15
 text = "Coming soon"
 
 [node name="LockedRow" type="HBoxContainer" parent="Legend" unique_id=1325564143]
 layout_mode = 2
-theme_override_constants/separation = 8
+theme_override_constants/separation = 10
 
 [node name="LockedDot" type="Panel" parent="Legend/LockedRow" unique_id=467020976]
-custom_minimum_size = Vector2(10, 10)
+custom_minimum_size = Vector2(14, 14)
 layout_mode = 2
 size_flags_vertical = 4
 
 [node name="LockedLabel" type="Label" parent="Legend/LockedRow" unique_id=1110464298]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.88, 0.82, 0.72, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
-theme_override_font_sizes/font_size = 14
+theme_override_font_sizes/font_size = 15
 text = "Locked"
 
 [node name="LockMessageLabel" type="Label" parent="." unique_id=492599840]
@@ -274,12 +417,14 @@ horizontal_alignment = 1
 title = "While you were away..."
 size = Vector2i(420, 320)
 exclusive = true
+theme = SubResource("EventsTheme")
+theme_override_styles/panel = SubResource("EventsPanel")
 
 [node name="Margin" type="MarginContainer" parent="EventsPopup" unique_id=683107225]
-offset_left = 4.0
-offset_top = 4.0
-offset_right = 416.0
-offset_bottom = 316.0
+offset_left = 2.0
+offset_top = 2.0
+offset_right = 418.0
+offset_bottom = 340.0
 theme_override_constants/margin_left = 18
 theme_override_constants/margin_top = 18
 theme_override_constants/margin_right = 18
@@ -291,28 +436,29 @@ theme_override_constants/separation = 12
 
 [node name="TitleLabel" type="Label" parent="EventsPopup/Margin/VBox" unique_id=683107227]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.85, 0.4, 1)
+theme_override_colors/font_color = Color(0.9, 0.74, 0.45, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
-theme_override_font_sizes/font_size = 18
+theme_override_font_sizes/font_size = 20
 text = "While you were away..."
 horizontal_alignment = 1
+
+[node name="Divider" type="HSeparator" parent="EventsPopup/Margin/VBox" unique_id=1510761583]
+layout_mode = 2
+theme_override_styles/separator = SubResource("EventsDivider")
 
 [node name="EventsScroll" type="ScrollContainer" parent="EventsPopup/Margin/VBox" unique_id=683107228]
 custom_minimum_size = Vector2(0, 200)
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="EventsLabel" type="Label" parent="EventsPopup/Margin/VBox/EventsScroll" unique_id=683107229]
+[node name="EventsList" type="VBoxContainer" parent="EventsPopup/Margin/VBox/EventsScroll" unique_id=683107229]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 2
-theme_override_font_sizes/font_size = 14
-autowrap_mode = 3
+theme_override_constants/separation = 6
 
 [node name="CloseButton" type="Button" parent="EventsPopup/Margin/VBox" unique_id=683107230]
+custom_minimum_size = Vector2(110, 34)
 layout_mode = 2
 size_flags_horizontal = 4
 text = "OK"

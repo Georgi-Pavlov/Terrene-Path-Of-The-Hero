@@ -25,8 +25,9 @@ const ITEMS_PER_PAGE := 6
 # is items [0:6), page 1 is [6:12), etc.
 var _current_page: int = 0
 
-# item_id -> how many are left this visit, for EVERY shop item (not
-# just the current page) so stock survives flipping pages. Intentionally
+# item_id -> how many are left this visit, for every limited-stock
+# item (GameManager.SHOP_LIMITED_STOCK_IDS, not just the current page)
+# so stock survives flipping pages. Items missing here are unlimited. Intentionally
 # not saved anywhere - stock refills whenever the player re-enters the shop.
 var _stock: Dictionary = {}
 
@@ -167,12 +168,17 @@ func _refresh_gold_label() -> void:
 	gold_value_label.text = str(PlayerManager.get_gold())
 
 
-## Stocks every shop item once, up front - not just the current page's
-## items - so switching pages never resets what's already been bought.
+## Stocks every limited item once, up front - not just the current
+## page's items - so switching pages never resets what's already been
+## bought. Every other shop item is unlimited and never sells out.
 func _initialize_stock() -> void:
 	_stock.clear()
-	for item_id in GameManager.SHOP_ITEM_IDS:
+	for item_id in GameManager.SHOP_LIMITED_STOCK_IDS:
 		_stock[item_id] = GameManager.SHOP_STOCK_PER_ITEM
+
+
+func _is_sold_out(item_id: String) -> bool:
+	return _stock.has(item_id) and _stock[item_id] <= 0
 
 
 func _total_pages() -> int:
@@ -242,21 +248,21 @@ func _build_item_card(item_id: String, item_data: Dictionary) -> Control:
 	var name_label := Label.new()
 	name_label.text = item_data.get("name", "")
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	name_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	name_label.add_theme_color_override("font_color", Color(0.88, 0.82, 0.72, 1))
 	name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 	name_label.add_theme_constant_override("outline_size", 3)
 	name_label.add_theme_font_size_override("font_size", 15)
 
 	var cost_label := Label.new()
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cost_label.add_theme_color_override("font_color", Color(1, 0.85, 0.2, 1))
+	cost_label.add_theme_color_override("font_color", Color(0.95, 0.78, 0.4, 1))
 	cost_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 	cost_label.add_theme_constant_override("outline_size", 3)
 	cost_label.add_theme_font_size_override("font_size", 14)
 
 	var stock_label := Label.new()
 	stock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	stock_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1))
+	stock_label.add_theme_color_override("font_color", Color(0.65, 0.58, 0.5, 1))
 	stock_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 	stock_label.add_theme_constant_override("outline_size", 2)
 	stock_label.add_theme_font_size_override("font_size", 12)
@@ -282,21 +288,22 @@ func _refresh_item_card(item_id: String) -> void:
 
 	var item_data: Dictionary = GameManager.get_item(item_id)
 	var cost: int = int(item_data.get("cost", 0))
-	var stock: int = _stock.get(item_id, 0)
 
 	var card: Dictionary = _cards[item_id]
 	var button: Button = card["button"]
 	var cost_label: Label = card["cost_label"]
 	var stock_label: Label = card["stock_label"]
 
-	if stock <= 0:
+	if _is_sold_out(item_id):
 		button.disabled = true
 		cost_label.text = "Sold out"
 		stock_label.text = ""
 	else:
 		button.disabled = not TutorialManager.is_action_allowed("buy:" + item_id)
 		cost_label.text = str(cost) + " Gold"
-		stock_label.text = "x%d in stock" % stock
+		# Only limited items show a stock count; the label stays (empty)
+		# on unlimited ones so every card keeps the same height.
+		stock_label.text = "x%d in stock" % _stock[item_id] if _stock.has(item_id) else ""
 
 
 ## Clicking an item's icon no longer buys it directly - it just shows
@@ -318,7 +325,6 @@ func _refresh_details_panel() -> void:
 		return
 
 	var item_data: Dictionary = GameManager.get_item(_selected_item_id)
-	var stock: int = _stock.get(_selected_item_id, 0)
 	var cost: int = int(item_data.get("cost", 0))
 
 	details_name_label.text = item_data.get("name", "")
@@ -333,7 +339,7 @@ func _refresh_details_panel() -> void:
 	# price even though its own Buy button correctly re-enabled.
 	details_cost_label.text = str(cost) + " Gold"
 
-	if stock <= 0:
+	if _is_sold_out(_selected_item_id):
 		details_cost_label.text = "Sold out"
 		details_buy_button.disabled = true
 		details_buy_button.text = "Sold Out"
@@ -353,8 +359,7 @@ func _on_buy_pressed() -> void:
 	if not TutorialManager.is_action_allowed("buy:" + item_id):
 		return
 
-	var stock: int = _stock.get(item_id, 0)
-	if stock <= 0:
+	if _is_sold_out(item_id):
 		_show_message("Sold out")
 		return
 
@@ -371,7 +376,8 @@ func _on_buy_pressed() -> void:
 
 	PlayerManager.add_gold(-cost)
 	PlayerManager.add_item(item_id, 1)
-	_stock[item_id] = stock - 1
+	if _stock.has(item_id):
+		_stock[item_id] -= 1
 
 	_refresh_gold_label()
 	_refresh_item_card(item_id)
@@ -411,7 +417,7 @@ func _refresh_sell_popup() -> void:
 		var empty_label := Label.new()
 		empty_label.text = "You have no items to sell."
 		empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		empty_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 1))
+		empty_label.add_theme_color_override("font_color", Color(0.65, 0.58, 0.5, 1))
 		empty_label.add_theme_font_size_override("font_size", 14)
 		sell_items_list.add_child(empty_label)
 		return
@@ -426,8 +432,10 @@ func _refresh_sell_popup() -> void:
 func _build_sell_row(item_id: String, item_data: Dictionary, count: int) -> Control:
 	var row := PanelContainer.new()
 	var row_style := StyleBoxFlat.new()
-	row_style.bg_color = Color(1, 1, 1, 0.06)
-	row_style.set_corner_radius_all(6)
+	row_style.bg_color = Color(0.13, 0.075, 0.05, 0.75)
+	row_style.border_width_bottom = 1
+	row_style.border_color = Color(0.45, 0.3, 0.18, 0.5)
+	row_style.set_corner_radius_all(2)
 	row.add_theme_stylebox_override("panel", row_style)
 
 	var margin := MarginContainer.new()
@@ -451,7 +459,7 @@ func _build_sell_row(item_id: String, item_data: Dictionary, count: int) -> Cont
 	name_label.text = "%s  x%d" % [item_data.get("name", ""), count]
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_label.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	name_label.add_theme_color_override("font_color", Color(0.88, 0.82, 0.72, 1))
 	name_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 1))
 	name_label.add_theme_constant_override("outline_size", 2)
 	name_label.add_theme_font_size_override("font_size", 15)
@@ -461,6 +469,7 @@ func _build_sell_row(item_id: String, item_data: Dictionary, count: int) -> Cont
 	var sell_button := Button.new()
 	sell_button.text = "Sell for %d Gold" % sell_price
 	sell_button.custom_minimum_size = Vector2(150, 36)
+	sell_button.theme_type_variation = &"BloodButton"
 	sell_button.pressed.connect(_on_sell_item_pressed.bind(item_id))
 
 	hbox.add_child(icon_rect)

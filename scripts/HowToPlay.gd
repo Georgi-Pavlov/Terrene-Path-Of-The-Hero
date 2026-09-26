@@ -1,6 +1,6 @@
 extends Control
 
-const EXPLANATION_TEXT := """Welcome to Terrence: Path of the Hero
+const EXPLANATION_TEXT := """Welcome to Echoes of the Forgotten
 
 Each zone on the map, that has a green dot next to it, offers one or more heroes - browse them with the arrows, pick a skill, and press Accept. Your hero and that skills are locked in for the rest of the run - the only way to choose differently is starting a fresh "New Game".
 

@@ -53,7 +53,7 @@ func start_tutorial() -> void:
 	PlayerManager.clear_recruited_hero()
 
 	_pre_tutorial_selected_zone = GameManager.selected_zone
-	GameManager.select_zone("cladd_isles")
+	GameManager.select_zone("the_ironbound_isles")
 
 	is_active = true
 	current_stage = 1
@@ -62,7 +62,7 @@ func start_tutorial() -> void:
 	_overlay.set_exit_button_visible(true)
 
 	show_popup(
-		"Welcome to the tutorial!\n\nYou'll play through Kunkka's home zone, Cladd Isles, step by "
+		"Welcome to the tutorial!\n\nYou'll play through Kunkka's home zone, The Ironbound Isles, step by "
 		+ "step - picking skills, using them in battle, and knowing when to flee and restock on "
 		+ "potions.\n\nFirst up: recruit Kunkka and pick his starting skill.",
 		func(): get_tree().change_scene_to_file("res://scenes/Zone.tscn")
@@ -71,7 +71,7 @@ func start_tutorial() -> void:
 
 ## Called when the player picks "Continue Tutorial" at stage 1's clear
 ## checkpoint (see battle.gd's "stage_cleared" case). Manufactures a
-## fresh mid-run scenario - Kunkka at level 5, deep into Cladd Isles'
+## fresh mid-run scenario - Kunkka at level 5, deep into The Ironbound Isles'
 ## hardest stage, critically low on HP/mana, no potions - rather than
 ## literally continuing stage 1's fight, since the point here is
 ## teaching when to retreat and restock, not more combat. Still runs
@@ -117,7 +117,7 @@ func start_stage2() -> void:
 
 	show_popup(
 		"Second tutorial stage!\n\nThis time you're picking up mid-run: Kunkka's already level 5 and "
-		+ "deep into Cladd Isles' toughest stage.",
+		+ "deep into The Ironbound Isles' toughest stage.",
 		func(): get_tree().change_scene_to_file("res://scenes/Battle.tscn")
 	)
 
@@ -151,7 +151,7 @@ func _apply_low_hp_mana(hp_fraction: float, mana_fraction: float) -> void:
 ## Called when the player picks "Continue Tutorial" at stage 2's
 ## restock checkpoint (see Shop.gd's _tutorial_check_progress()). Same
 ## setup as stage 2 - level 5, critically low HP/mana, already in
-## melee range on Cladd Isles' final stage - but this time the potions
+## melee range on The Ironbound Isles' final stage - but this time the potions
 ## bought in stage 2 are still sitting in the sandboxed inventory, and
 ## XP is tuned so the very next melee kill lands exactly on level 6,
 ## unlocking Ghostship (see GameManager.ULTIMATE_SKILL_LEVEL_UNLOCKS).
@@ -170,13 +170,13 @@ func start_stage3() -> void:
 
 	_apply_low_hp_mana(STAGE3_LOW_HP_FRACTION, STAGE2_LOW_MANA_FRACTION)
 
-	# Cladd Isles' melee creep's XP value, looked up rather than
+	# The Ironbound Isles' melee creep's XP value, looked up rather than
 	# hardcoded so this stays correct if the zone's numbers ever change.
-	var zone_data: Dictionary = GameManager.get_zone("cladd_isles")
-	var mele_xp: float = 0.0
+	var zone_data: Dictionary = GameManager.get_zone("the_ironbound_isles")
+	var melee_xp: float = 0.0
 	for enemy_def in zone_data.get("enemies", []):
 		if enemy_def.get("type", "") != "range":
-			mele_xp = float(enemy_def.get("XP", 0))
+			melee_xp = float(enemy_def.get("XP", 0))
 			break
 
 	# Sets XP so it lands EXACTLY on level 5's own requirement once the
@@ -185,7 +185,7 @@ func start_stage3() -> void:
 	# levels 5 -> 6's own requirement.
 	var xp_required: int = GameManager.get_xp_required_for_level(STAGE2_TARGET_LEVEL)
 	var current_xp: float = float(PlayerManager.get_recruited_hero().get("xp", 0))
-	var target_xp_before_kill: float = float(xp_required) - mele_xp
+	var target_xp_before_kill: float = float(xp_required) - melee_xp
 	PlayerManager.add_xp(target_xp_before_kill - current_xp)
 
 	show_popup(

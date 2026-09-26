@@ -39,7 +39,7 @@ class_name EnemySkillAI
 # _kunkka_modifier()), since a Tidebringer-empowered Attack can
 # genuinely be the better play than any of Kunkka's real skills.
 #
-# Eleven heroes have real AI logic today: Slark, Lone Druid, Abaddon,
+# Eleven heroes have real AI logic today: Veyrik, Lone Druid, Abaddon,
 # Kunkka, Ancient Apparition, Winter Wyvern, Crystal Maiden, Tusk,
 # Treant Protector, Timbersaw, and Snapfire - see resolve_hero_
 # archetype() for how a hero_static maps to one of them,
@@ -74,10 +74,10 @@ class_name EnemySkillAI
 # Tusk's actual (rolled) Attack damage times a multiplier, not a flat
 # number - see its own "walrus_punch" case in _estimate_skill_damage().
 # Treant Protector's Nature's Guise is "defensive" category, exactly
-# like Slark's own Shadow Dance (functionally the same invisibility) -
+# like Veyrik's own Depthsveil (functionally the same invisibility) -
 # in the simulation it relies ENTIRELY on that shared category term, no
-# hero-specific modifier on top at all, same as Shadow Dance's own
-# _slark_modifier() case (there isn't one); only in a real hero fight,
+# hero-specific modifier on top at all, same as Depthsveil's own
+# _veyrik_modifier() case (there isn't one); only in a real hero fight,
 # with real positions, does _tp_natures_guise_modifier() add its own
 # stealth-engage/root-setup value on top (see that function's own
 # "target_distance" gate). Overgrowth is a second self-cast AoE
@@ -99,7 +99,7 @@ class_name EnemySkillAI
 # Death's own "pure damage"/primary-attribute-reduction flavor text
 # isn't backed by any real mechanic in this project (see battle.gd's own
 # _cast_enemy_whirling_death() docstring) - same "documented but not
-# implemented" gap Dark Pact's own silence effect already has - so
+# implemented" gap Abyssal Spasm's own silence effect already has - so
 # _timbersaw_whirling_death_modifier() only ever adds a small flat
 # qualitative bonus for "a hero was hit" (context's own "target_is_hero"
 # field), never a real stat-based number.
@@ -138,7 +138,7 @@ class_name EnemySkillAI
 # _naga_mirror_image_modifier() rather than any generic category term
 # (see that function's own docstring). Ensnare is "offensive" (a root,
 # not a stun - the target can still attack/cast while rooted, so unlike
-# Torrent's/Pounce's own stuns it gets no generic "stun_turns" bonus of
+# Torrent's/Barbed Lunge's own stuns it gets no generic "stun_turns" bonus of
 # its own, only the movement-denial/kill-setup value
 # _naga_ensnare_modifier() adds). Song of the Siren, Naga's ultimate, is
 # also "offensive" despite dealing no direct damage of its own - see
@@ -218,10 +218,10 @@ const DEBUG_AI := false
 # _evaluate_utility() and each hero's own modifier below can easily
 # swing a low-base skill above a high-base one.
 const SKILL_INFO := {
-	"dark_pact": {"category": "offensive", "base_score": 30.0},
-	"pounce": {"category": "offensive", "base_score": 40.0},
-	"essence_shift": {"category": "utility", "base_score": 20.0},
-	"shadow_dance": {"category": "defensive", "base_score": 50.0},
+	"abyssal_spasm": {"category": "offensive", "base_score": 30.0},
+	"barbed_lunge": {"category": "offensive", "base_score": 40.0},
+	"leeching_hunger": {"category": "utility", "base_score": 20.0},
+	"depthsveil": {"category": "defensive", "base_score": 50.0},
 	"entangle": {"category": "offensive", "base_score": 40.0},
 	"summon_spirit_bear": {"category": "utility", "base_score": 50.0},
 	"spirit_link": {"category": "defensive", "base_score": 30.0},
@@ -301,7 +301,7 @@ const MIST_COIL_SELF_ID := "mist_coil_self"
 # CLOSE_SCORE_THRESHOLD/pick_best_skill()) - never consulted while one
 # skill's score clearly beats the rest.
 const HERO_TIE_BREAK := {
-	"slark": ["pounce", "dark_pact", "shadow_dance", "essence_shift"],
+	"veyrik": ["barbed_lunge", "abyssal_spasm", "depthsveil", "leeching_hunger"],
 	"lone_druid": ["entangle", "summon_spirit_bear", "spirit_link", "true_form"],
 	"abaddon": ["aphotic_shield", "mist_coil_self", "mist_coil"],
 	"kunkka": ["ghostship", "torrent", "x_marks_the_spot"],
@@ -338,8 +338,8 @@ static func resolve_hero_archetype(hero_static: Dictionary) -> String:
 	for skill in hero_static.get("skills", []):
 		skill_ids.append(skill.get("id", ""))
 
-	if "pounce" in skill_ids:
-		return "slark"
+	if "barbed_lunge" in skill_ids:
+		return "veyrik"
 	if "summon_spirit_bear" in skill_ids:
 		return "lone_druid"
 	if "borrowed_time" in skill_ids:
@@ -460,7 +460,7 @@ static func evaluate_basic_attack(context: Dictionary) -> float:
 # ------------------------------------------------------------------
 
 ## Offensive: rewards a target that's already hurt, a real chance to
-## finish it off, and - for a true AoE like Dark Pact - extra living
+## finish it off, and - for a true AoE like Abyssal Spasm - extra living
 ## targets to hit at once. Torrent's own level-4 splash and Ghostship's
 ## whole "everyone the ship's path crosses" AoE get their own precise
 ## tiered bonuses in _kunkka_torrent_modifier()/_kunkka_ghostship_
@@ -478,7 +478,7 @@ static func _evaluate_offensive(skill_id: String, level_data: Dictionary, contex
 		score += (1.0 - target_hp / target_max_hp) * 15.0
 	score += _kill_potential_bonus(estimated_damage, target_hp)
 
-	if skill_id == "dark_pact":
+	if skill_id == "abyssal_spasm":
 		score += minf(float(enemy_count - 1), 4.0) * 8.0
 
 	return score
@@ -498,16 +498,16 @@ static func _kill_potential_bonus(estimated_damage: float, target_hp: float) -> 
 	return 0.0
 
 
-## Defensive: the steep HP-ratio tiers Shadow Dance's own design calls
+## Defensive: the steep HP-ratio tiers Depthsveil's own design calls
 ## for (big at <20%, less at <35%, a little at <50%, nothing above
 ## that) - shared by every defensive skill (Aphotic Shield, True Form,
 ## Spirit Link) rather than reimplemented per hero. Being outnumbered
 ## adds a small bump on top, but only once a danger tier is already
 ## active - it must never by itself be enough to make a defensive skill
 ## outscore offense at full HP (a defensive skill's base_score alone,
-## e.g. Shadow Dance's 50, would otherwise already beat a lower-base
+## e.g. Depthsveil's 50, would otherwise already beat a lower-base
 ## offensive skill with nothing at stake - see the explicit "healthy"
-## penalty below, without which Shadow Dance/True Form would fire every
+## penalty below, without which Depthsveil/True Form would fire every
 ## single turn regardless of HP).
 static func _evaluate_defensive(context: Dictionary) -> float:
 	var hp_ratio: float = float(context.get("hero_hp_ratio", 1.0))
@@ -552,9 +552,9 @@ static func _resource_penalty(level_data: Dictionary, context: Dictionary) -> fl
 static func _estimate_skill_damage(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
 	var hero_damage: float = float(context.get("hero_damage", 0.0))
 	match skill_id:
-		"dark_pact":
+		"abyssal_spasm":
 			return hero_damage * float(level_data.get("damage_multiplier", 0.75))
-		"pounce":
+		"barbed_lunge":
 			return hero_damage
 		"entangle":
 			return float(level_data.get("dot_damage", 0.0)) * float(level_data.get("dot_duration", 0.0))
@@ -669,8 +669,8 @@ static func _estimate_skill_damage(skill_id: String, level_data: Dictionary, con
 
 static func _hero_specific_modifier(archetype: String, skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
 	match archetype:
-		"slark":
-			return _slark_modifier(skill_id, level_data, context)
+		"veyrik":
+			return _veyrik_modifier(skill_id, level_data, context)
 		"lone_druid":
 			return _lone_druid_modifier(skill_id, level_data, context)
 		"abaddon":
@@ -703,18 +703,18 @@ static func _hero_specific_modifier(archetype: String, skill_id: String, level_d
 			return 0.0
 
 
-## Slark: an aggressive kill-seeker. Pounce gets a further top-up when
+## Veyrik: an aggressive kill-seeker. Barbed Lunge gets a further top-up when
 ## it can personally close out the kill (on top of the generic kill
-## bonus every offensive skill already gets), and Essence Shift is more
-## attractive when Slark is healthy enough to expect to land the
+## bonus every offensive skill already gets), and Leeching Hunger is more
+## attractive when Veyrik is healthy enough to expect to land the
 ## follow-up hits it needs to pay off.
-static func _slark_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
+static func _veyrik_modifier(skill_id: String, level_data: Dictionary, context: Dictionary) -> float:
 	match skill_id:
-		"pounce":
+		"barbed_lunge":
 			var target_hp: float = float(context.get("target_hp", 0.0))
 			var dmg: float = _estimate_skill_damage(skill_id, level_data, context)
 			return 15.0 if (target_hp > 0.0 and dmg >= target_hp) else 0.0
-		"essence_shift":
+		"leeching_hunger":
 			return 15.0 if float(context.get("hero_hp_ratio", 1.0)) > 0.6 else 0.0
 		_:
 			return 0.0
@@ -740,7 +740,7 @@ static func _lone_druid_modifier(skill_id: String, level_data: Dictionary, conte
 
 ## Abaddon: defensive/reactive, not a nuker. He'd rather put Aphotic
 ## Shield up before things get dangerous than only as a last resort
-## (unlike Shadow Dance/True Form's own "wait for real danger" curve),
+## (unlike Depthsveil/True Form's own "wait for real danger" curve),
 ## and only reaches for Mist Coil's damage when it's actually a
 ## meaningful hit - otherwise he holds back rather than trading his own
 ## resources for a marginal poke.
@@ -1018,7 +1018,7 @@ static func _aa_ice_vortex_modifier(level_data: Dictionary, context: Dictionary)
 ## side simplification - only the execute term still does real work
 ## there.
 ##
-## Target selection: this project's own AoE skills (Dark Pact, Torrent's
+## Target selection: this project's own AoE skills (Abyssal Spasm, Torrent's
 ## splash, Ghostship, Ice Vortex) already always hit either the single
 ## player (a hero fight) or literally every living enemy (this sim's own
 ## "no columns" simplification - see EnemyHeroManager's own "ice_blast"
@@ -1776,7 +1776,7 @@ static func _tusk_basic_attack_modifier(context: Dictionary) -> float:
 ## Treant Protector: durable, melee, control/sustain, opportunistic.
 ## Nature's Guise is "defensive" category (see SKILL_INFO) - in the
 ## simulation that's its ENTIRE score, no case here at all (matching
-## Shadow Dance's own precedent); in a real hero fight, _tp_natures_
+## Depthsveil's own precedent); in a real hero fight, _tp_natures_
 ## guise_modifier() adds its own stealth-engage/root-setup value on top.
 ## Leech Seed and Overgrowth are both "offensive" (fed by their own
 ## dot_damage x duration _estimate_skill_damage() cases, for the shared
@@ -1815,7 +1815,7 @@ static func _treant_modifier(skill_id: String, level_data: Dictionary, context: 
 ## context() docstring); this returns a flat 0 in that case rather than
 ## guessing, leaving the shared "defensive" category term (hero_hp_
 ## ratio tiers) as this skill's entire simulated value, exactly mirroring
-## Shadow Dance's own precedent (no hero-specific case for it at all).
+## Depthsveil's own precedent (no hero-specific case for it at all).
 static func _tp_natures_guise_modifier(level_data: Dictionary, context: Dictionary) -> float:
 	var raw_distance: int = int(context.get("target_distance", -1))
 	if raw_distance < 0:
@@ -2676,7 +2676,7 @@ static func _naga_mirror_image_modifier(level_data: Dictionary, context: Diction
 
 ## Ensnare: a ROOT, not a stun - the target can still attack and cast
 ## while rooted (see the design doc's own explicit "does not prevent
-## attacking or skill usage" instruction), so unlike Torrent's/Pounce's
+## attacking or skill usage" instruction), so unlike Torrent's/Barbed Lunge's
 ## own stuns this gets no generic "stun_turns" bonus at all - its whole
 ## value is movement denial/kill setup: securing a kill the upfront hit
 ## alone wouldn't, keeping a target that would otherwise create distance

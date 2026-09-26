@@ -7,20 +7,20 @@ class_name EnemySkillRange
 # Pure helper for battle.gd's rival-hero AI (_enemy_hero_turn()/
 # _pick_enemy_ready_skill()): decides whether a rival hero is actually
 # within range to land a given skill on the player, so a boss can't
-# hit the player with Dark Pact or Entangle from clear across the
+# hit the player with Abyssal Spasm or Entangle from clear across the
 # board regardless of distance - it has to close in first, same as it
 # already must for a plain Attack (see battle.gd's
 # RANGE_ENEMY_ATTACK_RANGE/_enemy_hero_turn()).
 #
 # Only skills that hit the player directly need a range check here:
-#   - Dark Pact: an AoE centered on the caster - in range whenever the
+#   - Abyssal Spasm: an AoE centered on the caster - in range whenever the
 #     player is within the skill's own `radius` field (0 at low
 #     levels, meaning the same column; 1 only at max level).
 #   - Torrent/X Marks the Spot/Ghostship: targeted casts with their own
 #     `range` field (a constant 3 for Torrent, 2-5 growing with level
 #     for X Marks the Spot, 4-6 for Ghostship) - in range whenever the
 #     player is within it, the same "distance <= radius" comparison as
-#     Dark Pact, just against a targeting range instead of a self-
+#     Abyssal Spasm, just against a targeting range instead of a self-
 #     centered AoE radius (see battle.gd's _enemy_skill_in_range(),
 #     which reads whichever of the two fields a given skill actually
 #     has).
@@ -34,13 +34,13 @@ class_name EnemySkillRange
 #     the player's own copies of each use the player's attack-column
 #     range (_hero_attack_column_range(), via _start_crystal_nova_
 #     targeting()/_start_frostbite_targeting()).
-#   - Pounce: a gap-closer, but only up to its own `distance` field of
+#   - Barbed Lunge: a gap-closer, but only up to its own `distance` field of
 #     columns - it stops the moment it lands on the player's column
-#     (see battle.gd's _cast_enemy_pounce()), so a player standing
+#     (see battle.gd's _cast_enemy_barbed_lunge()), so a player standing
 #     farther away than that just watches the rival leap partway and
 #     whiff instead of taking the hit. In range whenever the player is
 #     within `distance`, the same "distance <= radius" comparison as
-#     Dark Pact/Torrent/X Marks the Spot/Ghostship, just against the
+#     Abyssal Spasm/Torrent/X Marks the Spot/Ghostship, just against the
 #     leap's own reach instead of a targeting range or AoE radius.
 #   - Cold Feet: a targeted cast with its own per-level `range` field
 #     (2-4, growing with level) - same "distance <= radius" comparison
@@ -60,24 +60,24 @@ class_name EnemySkillRange
 #     Cold Feet's own - Tusk himself fights at melee range, but both are
 #     thrown/charged well past it.
 #   - Walrus Punch (Tusk's ultimate): strictly melee range (same column
-#     as the player, sharing his own basic-attack reach for "mele" - 0
+#     as the player, sharing his own basic-attack reach for "melee" - 0
 #     columns) rather than any range/radius field of its own, mirroring
 #     the player's own _start_walrus_punch_targeting()'s "shares his own
 #     column" requirement - so this uses the same attack_range fallback
 #     Entangle/Mist Coil do, just against a hero whose own type is
-#     always "mele" (see GameManager's own Tusk entry), where that
+#     always "melee" (see GameManager's own Tusk entry), where that
 #     fallback is always 0 anyway.
 #   - Leech Seed (Treant Protector's): a targeted cast with its own
 #     per-level `range` field (a constant 2 per the design doc), same
 #     "distance <= radius" comparison as Cold Feet's/Ice Shards'/
 #     Snowball's own.
 #   - Whirling Death (Timbersaw's): an AoE centered on the caster, same
-#     shape as Dark Pact's own - in range whenever the player is within
+#     shape as Abyssal Spasm's own - in range whenever the player is within
 #     the skill's own `radius` field. It has no `range` field of its
 #     own, so the generic fallback chain battle.gd's own
 #     _enemy_skill_in_range() already uses (range, then radius, then
 #     distance) correctly falls through to `radius` here, exactly like
-#     Dark Pact's own case.
+#     Abyssal Spasm's own case.
 #   - Timber Chain/Chakram (both Timbersaw's): targeted casts with their
 #     own per-level `range` field, same "distance <= radius" comparison
 #     as Cold Feet's/Leech Seed's own. Chakram ALSO has its own `radius`
@@ -121,7 +121,7 @@ class_name EnemySkillRange
 #     `range` field, same "distance <= radius" comparison as Sacred
 #     Arrow's own just above.
 # Naga Siren's Song of the Siren is deliberately NOT range-checked here
-# either, despite being a self-centered AoE like Dark Pact/Whirling
+# either, despite being a self-centered AoE like Abyssal Spasm/Whirling
 # Death above - unlike those two, it's scored (not gated) against range,
 # the same "out of range scores low rather than being excluded outright"
 # shape Overgrowth's/Freezing Field's own self-cast ultimates already use
@@ -154,7 +154,7 @@ class_name EnemySkillRange
 # radius moves with her and is scored (via EnemySkillAI's own _luna_
 # eclipse_modifier()), never gated here. Moon Glaives and Lunar Blessing
 # are both passive and never even reach this file.
-# Every other known skill (Essence Shift, Shadow Dance, Spirit Link,
+# Every other known skill (Leeching Hunger, Depthsveil, Spirit Link,
 # True Form, Summon Spirit Bear, Aphotic Shield, Arctic Burn, Cold
 # Embrace, Crystal Maiden's own Freezing Field, Tusk's own Tag Team, and
 # Treant Protector's own Nature's Guise/Living Armor/Overgrowth) is a
@@ -174,12 +174,12 @@ class_name EnemySkillRange
 # Firesnap Cookie is simpler still - a self-directed hop with no target
 # requirement at all to even attempt it (mirroring the player's own
 # _activate_firesnap_cookie(), which "never fails for lack of a target"
-# the way Pounce/Dark Pact/Entangle can) - whether it actually LANDS
+# the way Barbed Lunge/Abyssal Spasm/Entangle can) - whether it actually LANDS
 # somewhere useful is purely a scoring question (see EnemySkillAI's own
 # _snapfire_firesnap_cookie_modifier()), never a candidacy gate here.
 # ============================================================
 
-const RANGE_CHECKED_SKILL_IDS: Array[String] = ["dark_pact", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch", "leech_seed", "whirling_death", "timber_chain", "chakram", "lil_shredder", "mortimer_kisses", "scatterblast", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam"]
+const RANGE_CHECKED_SKILL_IDS: Array[String] = ["abyssal_spasm", "entangle", "mist_coil", "torrent", "x_marks_the_spot", "ghostship", "barbed_lunge", "cold_feet", "ice_vortex", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "ice_shards", "snowball", "walrus_punch", "leech_seed", "whirling_death", "timber_chain", "chakram", "lil_shredder", "mortimer_kisses", "scatterblast", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam"]
 
 
 ## True if `skill_id` needs a range check at all before being cast -
@@ -189,18 +189,18 @@ static func requires_range_check(skill_id: String) -> bool:
 
 
 ## True if a rival hero standing `distance` columns from the player can
-## reach them with `skill_id` right now. `radius` is Dark Pact's own
+## reach them with `skill_id` right now. `radius` is Abyssal Spasm's own
 ## `radius` field, Torrent's/X Marks the Spot's/Ghostship's own `range`
-## field, or Pounce's own `distance` field, depending on the skill (all
+## field, or Barbed Lunge's own `distance` field, depending on the skill (all
 ## compared the same way as "distance <= radius"); `attack_range` is the
-## rival's basic-attack range for its type (0 for "mele", battle.gd's
+## rival's basic-attack range for its type (0 for "melee", battle.gd's
 ## RANGE_ENEMY_ATTACK_RANGE for "range") - Entangle/Mist Coil piggyback
 ## on that since neither has a range field of its own. Any skill not in
 ## RANGE_CHECKED_SKILL_IDS always reports true here, matching
 ## requires_range_check().
 static func is_in_range(skill_id: String, distance: int, radius: int, attack_range: int) -> bool:
 	match skill_id:
-		"dark_pact", "torrent", "x_marks_the_spot", "ghostship", "pounce", "cold_feet", "ice_vortex", "ice_shards", "snowball", "leech_seed", "whirling_death", "timber_chain", "chakram", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam":
+		"abyssal_spasm", "torrent", "x_marks_the_spot", "ghostship", "barbed_lunge", "cold_feet", "ice_vortex", "ice_shards", "snowball", "leech_seed", "whirling_death", "timber_chain", "chakram", "ensnare", "corrosive_haze", "sacred_arrow", "lucent_beam":
 			return distance <= radius
 		"entangle", "mist_coil", "chilling_touch", "splinter_blast", "winter's_curse", "crystal_nova", "frostbite", "walrus_punch", "lil_shredder", "mortimer_kisses":
 			return distance <= attack_range

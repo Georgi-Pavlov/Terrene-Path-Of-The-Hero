@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b1ail0wiiuhwl"
-path="res://.godot/imported/loading_screen.png-826d5c18ae118fa33c44da2472949a8a.ctex"
+uid="uid://x0x5mmm8dgud"
+path="res://.godot/imported/the_iron_abyss.jpg-801c3927f28bcb84e9e13e191cbc9160.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/loading_screen.png"
-dest_files=["res://.godot/imported/loading_screen.png-826d5c18ae118fa33c44da2472949a8a.ctex"]
+source_file="res://assets/zones/the_iron_abyss.jpg"
+dest_files=["res://.godot/imported/the_iron_abyss.jpg-801c3927f28bcb84e9e13e191cbc9160.ctex"]
 
 [params]
 

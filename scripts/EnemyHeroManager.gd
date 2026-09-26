@@ -207,9 +207,9 @@ func _restock_npc_potion(hero_id: String, potion_id: String) -> void:
 # fights via _try_npc_zone_mate_fight(), invasion duels via
 # _try_npc_invasion_duel()). Known simplifications, called out because
 # they make simulated combat meaningfully different from a real fight:
-#   - Pounce always targets the lowest-HP enemy (no "nearest along a
+#   - Barbed Lunge always targets the lowest-HP enemy (no "nearest along a
 #     column" concept) but still applies its real stun duration.
-#   - Dark Pact hits EVERY living enemy regardless of level's radius
+#   - Abyssal Spasm hits EVERY living enemy regardless of level's radius
 #     field, since there are no columns to restrict it to.
 #   - _apply_armor_reduction() below is verified to exactly match
 #     battle.gd's own formula (as of Step 4) - if that formula ever
@@ -264,7 +264,7 @@ const FLEE_HP_THRESHOLD: float = 0.15
 const NEW_SIM_HP_RESTORE_PCT: float = 0.30
 const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 
-# Every ACTIVE skill across Slark, Lone Druid, Abaddon, Kunkka, Ancient
+# Every ACTIVE skill across Veyrik, Lone Druid, Abaddon, Kunkka, Ancient
 # Apparition, Winter Wyvern, Crystal Maiden, Tusk, Treant Protector,
 # Timbersaw, and Snapfire, the only eleven heroes with any simulated
 # skill logic today - anything else a hero knows just never gets cast
@@ -316,7 +316,7 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # collision bonus at all (see _tusk_walrus_punch_modifier()'s own
 # sim-side proxy for how the AI still accounts for the POSSIBILITY of
 # one without the actual cast ever guaranteeing it). Treant Protector's
-# Nature's Guise mirrors Shadow Dance's own sim copy exactly (see this
+# Nature's Guise mirrors Depthsveil's own sim copy exactly (see this
 # file's "nature's_guise" cases below and in _npc_skill_worth_casting()/
 # the retaliation-loop guard) - invisibility skips enemy retaliation for
 # the turn, and the Attack that breaks it roots whichever enemy it hits
@@ -327,8 +327,8 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # Ghostship (Kunkka's ultimate) IS in this list, unlike X Marks the
 # Spot - its whole "everyone the ship's path crosses" concept has no
 # columns to work out a path along here, so it falls back to the same
-# "no columns, hit everyone" simplification Dark Pact's own sim copy
-# already uses (see this file's "dark_pact" case in _cast_skill()
+# "no columns, hit everyone" simplification Abyssal Spasm's own sim copy
+# already uses (see this file's "abyssal_spasm" case in _cast_skill()
 # below). Ice Vortex and Ice Blast (both Ancient Apparition's) use that
 # exact same "no columns, hit everyone" fallback for their own AoE, so
 # both ARE in this list, same reasoning as Ghostship's. Splinter Blast
@@ -357,7 +357,7 @@ const NEW_SIM_MANA_RESTORE_PCT: float = 0.40
 # chain), just firing an automatic shot each of those turns instead of
 # doing nothing.
 const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
-	"dark_pact", "pounce", "essence_shift", "shadow_dance",
+	"abyssal_spasm", "barbed_lunge", "leeching_hunger", "depthsveil",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
 	"mist_coil", "aphotic_shield", "torrent", "ghostship",
 	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
@@ -411,8 +411,8 @@ const KNOWN_ACTIVE_SKILL_IDS: Array[String] = [
 # positionless sim, the exact same reasoning X Marks the Spot is excluded
 # for (see KNOWN_ACTIVE_SKILL_IDS's own comment above) - a Leap that
 # always "succeeds" here would have literally nothing to accomplish.
-# Moonlight Shadow mirrors Shadow Dance's own sim copy exactly (see this
-# file's "shadow_dance" cases below and in _npc_skill_worth_casting()/
+# Moonlight Shadow mirrors Depthsveil's own sim copy exactly (see this
+# file's "depthsveil" cases below and in _npc_skill_worth_casting()/
 # the retaliation-loop guard) - invisibility skips enemy retaliation for
 # the turn, and its own bonus_damage_pct folds into the hero's next
 # Attack as a PERCENTAGE of the roll (mirroring Bash of the Deep's own
@@ -763,17 +763,17 @@ func _build_simulated_stage_enemies(zone_id: String, stage: int) -> Array:
 	var zone_data: Dictionary = GameManager.get_zone(zone_id)
 	var enemy_defs: Array = zone_data.get("enemies", [])
 
-	var mele_templates: Array = []
+	var melee_templates: Array = []
 	var range_templates: Array = []
 	for enemy_def in enemy_defs:
 		if enemy_def.get("type", "") == "range":
 			range_templates.append(enemy_def)
 		else:
-			mele_templates.append(enemy_def)
+			melee_templates.append(enemy_def)
 
 	var counts: Dictionary = GameManager.get_stage_enemy_counts(stage)
 	var enemies: Array = []
-	enemies.append_array(_build_stage_enemy_batch(mele_templates, int(counts.get("mele", 0)), stage))
+	enemies.append_array(_build_stage_enemy_batch(melee_templates, int(counts.get("melee", 0)), stage))
 	enemies.append_array(_build_stage_enemy_batch(range_templates, int(counts.get("range", 0)), stage))
 	return enemies
 
@@ -788,8 +788,8 @@ func _build_stage_enemy_batch(templates: Array, count: int, stage: int) -> Array
 		result.append({
 			"static": staged,
 			"current_hp": float(staged.get("hp", 1)),
-			# Needed for Slark's Essence Shift (see
-			# _apply_npc_essence_shift_steal()) - mirrors the field
+			# Needed for Veyrik's Leeching Hunger (see
+			# _apply_npc_leeching_hunger_steal()) - mirrors the field
 			# battle.gd's own _spawn_enemy() seeds every enemy with.
 			"current_main_stat_value": float(staged.get("main_stat_value", 0)),
 		})
@@ -816,13 +816,13 @@ func _spawn_npc_reinforcements(enemies: Array, zone_id: String, stage: int, allo
 	var zone_data: Dictionary = GameManager.get_zone(zone_id)
 	var enemy_defs: Array = zone_data.get("enemies", [])
 
-	var mele_templates: Array = []
+	var melee_templates: Array = []
 	var range_templates: Array = []
 	for enemy_def in enemy_defs:
 		if enemy_def.get("type", "") == "range":
 			range_templates.append(enemy_def)
 		else:
-			mele_templates.append(enemy_def)
+			melee_templates.append(enemy_def)
 
 	var reinforcement_stage: int = stage if allow_flee else GameManager.MAX_ZONE_STAGE
 	var counts: Dictionary = (
@@ -830,7 +830,7 @@ func _spawn_npc_reinforcements(enemies: Array, zone_id: String, stage: int, allo
 		else GameManager.get_stage_enemy_counts(reinforcement_stage)
 	)
 
-	enemies.append_array(_build_stage_enemy_batch(mele_templates, int(counts.get("mele", 0)), reinforcement_stage))
+	enemies.append_array(_build_stage_enemy_batch(melee_templates, int(counts.get("melee", 0)), reinforcement_stage))
 	enemies.append_array(_build_stage_enemy_batch(range_templates, int(counts.get("range", 0)), reinforcement_stage))
 
 
@@ -926,8 +926,8 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		for skill_id in cooldowns.keys():
 			cooldowns[skill_id] = maxi(0, cooldowns[skill_id] - 1)
 
-		_tick_npc_essence_shift(state["essence_shift"])
-		_tick_npc_shadow_dance(state["shadow_dance"])
+		_tick_npc_leeching_hunger(state["leeching_hunger"])
+		_tick_npc_depthsveil(state["depthsveil"])
 		_tick_npc_moonlight_shadow(state["moonlight_shadow"])
 		_tick_npc_eclipse(state["eclipse"])
 		_tick_npc_spirit_link(state["spirit_link"])
@@ -1020,10 +1020,10 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				acted_with = ready_skill_id
 			elif _has_unaffordable_ready_skill(hero_id, hero_static, cooldowns, current_mana, state) and PlayerManager.get_npc_potion_count(hero_id, "mana") > 0:
 				PlayerManager.set_npc_potion_count(hero_id, "mana", PlayerManager.get_npc_potion_count(hero_id, "mana") - 1)
-				current_mana = minf(max_mana + state["essence_shift"]["bonus"].get("mana", 0.0), current_mana + float(GameManager.get_item("mana").get("value", 0)))
+				current_mana = minf(max_mana + state["leeching_hunger"]["bonus"].get("mana", 0.0), current_mana + float(GameManager.get_item("mana").get("value", 0)))
 			else:
 				var target: Dictionary = _lowest_hp_enemy(living)
-				var shadow_bonus: float = state["shadow_dance"]["bonus_damage"] if state["shadow_dance"]["active"] else 0.0
+				var shadow_bonus: float = state["depthsveil"]["bonus_damage"] if state["depthsveil"]["active"] else 0.0
 				# Same idea for Nature's Guise, just with a root on the
 				# target instead of bonus damage - captured now, before the
 				# attack (and possibly _end_npc_natures_guise()) below can
@@ -1052,7 +1052,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				if not bash_level_data.is_empty():
 					dmg += dmg * float(bash_level_data.get("bonus_damage_pct", 0.0))
 				var mitigated: float = _apply_damage_to_enemy(target, dmg)
-				_apply_npc_essence_shift_steal(target, state["essence_shift"], hero_static)
+				_apply_npc_leeching_hunger_steal(target, state["leeching_hunger"], hero_static)
 				_apply_npc_curse_of_avernus_stack(hero_id, hero_static, target, turn_index)
 				if not tidebringer_level_data.is_empty():
 					_apply_npc_tidebringer_cleave(target, dmg, tidebringer_level_data, living)
@@ -1075,7 +1075,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 						target["root_turns_left"] = int(state["nature's_guise"]["root_turns"])
 					_end_npc_natures_guise(state["nature's_guise"])
 
-		# Shadow Dance/Nature's Guise only break from attacking or casting
+		# Depthsveil/Nature's Guise only break from attacking or casting
 		# ANOTHER skill, never from a cast/recast of themselves and never
 		# from drinking a potion - exactly mirroring battle.gd's own
 		# _on_skill_pressed()/_apply_hero_attack(). Nature's Guise's own
@@ -1084,8 +1084,8 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# (_end_npc_natures_guise() is a no-op once it's already inactive)
 		# and still correctly covers the "broke by casting another skill"
 		# case this shared check exists for.
-		if state["shadow_dance"]["active"] and acted_with != "" and acted_with != "shadow_dance":
-			_end_npc_shadow_dance(state["shadow_dance"])
+		if state["depthsveil"]["active"] and acted_with != "" and acted_with != "depthsveil":
+			_end_npc_depthsveil(state["depthsveil"])
 		if state["nature's_guise"]["active"] and acted_with != "" and acted_with != "nature's_guise":
 			_end_npc_natures_guise(state["nature's_guise"])
 		# Sacred Arrow is deliberately exempt - mirrors battle.gd's own
@@ -1186,8 +1186,8 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 				result = "win"
 				break
 
-		# --- Enemies retaliate, skipping anyone Pounce just stunned,
-		# while Shadow Dance or Nature's Guise is hiding the hero entirely
+		# --- Enemies retaliate, skipping anyone Barbed Lunge just stunned,
+		# while Depthsveil or Nature's Guise is hiding the hero entirely
 		# (mirrors battle.gd's _is_hero_hidden() check in _enemy_turn()),
 		# or while
 		# Cold Embrace makes the hero fully immune (mirrors battle.gd's
@@ -1203,7 +1203,7 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 		# partway through this same loop once its turn comes up, so
 		# every enemy this pass needs to see the same answer regardless
 		# of iteration order. ---
-		if not state["shadow_dance"]["active"] and not state["cold_embrace"]["active"] and not state["nature's_guise"]["active"] and not state["moonlight_shadow"]["active"]:
+		if not state["depthsveil"]["active"] and not state["cold_embrace"]["active"] and not state["nature's_guise"]["active"] and not state["moonlight_shadow"]["active"]:
 			# Timbersaw's Reactive Armor bonus is added on top of the base
 			# armor here, at the single call site, rather than inside
 			# _npc_effective_armor() itself (which has no hero_id/hero_
@@ -1255,19 +1255,19 @@ func _run_stage_fight(hero_id: String, hero_static: Dictionary, enemies: Array, 
 
 ## Fresh per-attempt state for every buff/debuff-carrying skill -
 ## mirrors the shape (and defaults) of battle.gd's own
-## _essence_shift_*/_shadow_dance_*/_spirit_link_*/_true_form_*/
+## _leeching_hunger_*/_depthsveil_*/_spirit_link_*/_true_form_*/
 ## _aphotic_shield_*/_borrowed_time_*/_bear instance variables, just
 ## bundled into one Dictionary here since this state only needs to live
 ## for the duration of one _run_stage_fight() call rather than the
 ## whole scene's lifetime.
 func _new_npc_combat_state() -> Dictionary:
 	return {
-		"essence_shift": {
+		"leeching_hunger": {
 			"active": false, "attacks_remaining": 0, "turns_remaining": 0,
 			"duration_pending_start": false, "stolen": [],
 			"bonus": {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0},
 		},
-		"shadow_dance": {"active": false, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
+		"depthsveil": {"active": false, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"spirit_link": {"active": false, "lifesteal_pct": 0.0, "bonus_armor": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"true_form": {"active": false, "bonus_hp": 0.0, "bonus_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
 		"aphotic_shield": {"active": false, "hp": 0.0, "aoe_damage": 0.0, "turns_remaining": 0, "duration_pending_start": false},
@@ -1300,20 +1300,20 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 	cooldowns[skill_id] = int(level_data.get("cooldown", 0))
 
 	match skill_id:
-		"dark_pact":
+		"abyssal_spasm":
 			var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
 			var dmg: float = _npc_roll_damage(damage_range, state) * multiplier
 			for enemy in living:
 				_apply_damage_to_enemy(enemy, dmg)
-		"pounce":
+		"barbed_lunge":
 			var target: Dictionary = _lowest_hp_enemy(living)
 			_apply_damage_to_enemy(target, _npc_roll_damage(damage_range, state))
 			if target["current_hp"] > 0:
 				target["stun_turns_left"] = int(level_data.get("stun_turns", 1))
-		"essence_shift":
-			_activate_npc_essence_shift(state["essence_shift"], level_data)
-		"shadow_dance":
-			_activate_npc_shadow_dance(state["shadow_dance"], level_data)
+		"leeching_hunger":
+			_activate_npc_leeching_hunger(state["leeching_hunger"], level_data)
+		"depthsveil":
+			_activate_npc_depthsveil(state["depthsveil"], level_data)
 		"entangle":
 			# No separate "pick a target" step here (there's no player
 			# to click one) - roots/silences/DoTs whichever enemy the
@@ -1341,8 +1341,8 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			# Level 4's small splash radius has no columns to be
 			# "around the target" in this positionless sim, so it
 			# falls back to the same "no columns, hit everyone else"
-			# simplification Dark Pact/Aphotic Shield's own explosion
-			# already use here (see this match's "dark_pact" case
+			# simplification Abyssal Spasm/Aphotic Shield's own explosion
+			# already use here (see this match's "abyssal_spasm" case
 			# above and _end_npc_aphotic_shield()).
 			if int(level_data.get("radius", 0)) > 0:
 				for enemy in living:
@@ -1354,7 +1354,7 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			# one marked target, damaging everyone caught in between -
 			# no columns here to work that path out along, so (see
 			# KNOWN_ACTIVE_SKILL_IDS's own comment above) it falls back
-			# to hitting every living enemy, same as Dark Pact.
+			# to hitting every living enemy, same as Abyssal Spasm.
 			var ghostship_damage: float = float(level_data.get("damage", 0))
 			for enemy in living:
 				_apply_damage_to_enemy(enemy, ghostship_damage)
@@ -1364,7 +1364,7 @@ func _cast_skill(hero_id: String, hero_static: Dictionary, skill_id: String, coo
 			cold_feet_target["cold_feet_dot_turns_left"] = int(level_data.get("duration", 0))
 		"ice_vortex":
 			# No columns to center an AoE on a specific position here -
-			# same "no columns, hit everyone" fallback Dark Pact's/
+			# same "no columns, hit everyone" fallback Abyssal Spasm's/
 			# Torrent's/Ghostship's own sim copies already use (see
 			# KNOWN_ACTIVE_SKILL_IDS's own comment above), so the DoT
 			# lands on every living enemy instead of just whichever one
@@ -1666,19 +1666,19 @@ func _npc_skill_mana_cost(hero_id: String, hero_static: Dictionary, skill_id: St
 
 
 ## False for a buff/summon skill that's already active and wouldn't do
-## anything new right now (recasting Essence Shift/Shadow Dance/Spirit
+## anything new right now (recasting Leeching Hunger/Depthsveil/Spirit
 ## Link/True Form just restarts their duration from the same values,
 ## and a Spirit Bear that's already out doesn't need replacing) - so
 ## the NPC doesn't burn mana refreshing something with no benefit
-## instead of attacking. Dark Pact/Pounce/Entangle always report true;
+## instead of attacking. Abyssal Spasm/Barbed Lunge/Entangle always report true;
 ## they only ever get checked once a living target is already
 ## confirmed to exist by the caller.
 func _npc_skill_worth_casting(skill_id: String, state: Dictionary) -> bool:
 	match skill_id:
-		"essence_shift":
-			return not state["essence_shift"]["active"]
-		"shadow_dance":
-			return not state["shadow_dance"]["active"]
+		"leeching_hunger":
+			return not state["leeching_hunger"]["active"]
+		"depthsveil":
+			return not state["depthsveil"]["active"]
 		"moonlight_shadow":
 			return not state["moonlight_shadow"]["active"]
 		"eclipse":
@@ -1958,7 +1958,7 @@ func _npc_estimate_damage(damage_range: String, state: Dictionary) -> float:
 	var parts: PackedStringArray = damage_range.split("-")
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
-	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["tag_team"]["bonus_damage"]
+	var bonus_damage: float = state["leeching_hunger"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["tag_team"]["bonus_damage"]
 	var estimate: float = (min_dmg + max_dmg) / 2.0 + bonus_damage
 	# Luna's Lunar Blessing - see _npc_roll_damage()'s own comment for why
 	# this reads state's own cached percentage. Applied last, same order
@@ -1987,22 +1987,22 @@ func _has_unaffordable_ready_skill(hero_id: String, hero_static: Dictionary, coo
 
 
 # ------------------------------------------------------------------
-# Slark's Essence Shift - mirrors battle.gd's own
-# _activate_essence_shift/_apply_essence_shift_steal/_tick_essence_
-# shift/_end_essence_shift, just against this sim's flat enemy list
+# Veyrik's Leeching Hunger - mirrors battle.gd's own
+# _activate_leeching_hunger/_apply_leeching_hunger_steal/_tick_essence_
+# shift/_end_leeching_hunger, just against this sim's flat enemy list
 # and NPC-local state Dictionary instead of instance variables.
 # ------------------------------------------------------------------
 
-func _activate_npc_essence_shift(es: Dictionary, level_data: Dictionary) -> void:
+func _activate_npc_leeching_hunger(es: Dictionary, level_data: Dictionary) -> void:
 	if es["active"]:
-		_end_npc_essence_shift(es)
+		_end_npc_leeching_hunger(es)
 	es["active"] = true
 	es["attacks_remaining"] = int(level_data.get("attacks", 0))
 	es["turns_remaining"] = int(level_data.get("duration", 0))
 	es["duration_pending_start"] = true
 
 
-func _apply_npc_essence_shift_steal(target: Dictionary, es: Dictionary, hero_static: Dictionary) -> void:
+func _apply_npc_leeching_hunger_steal(target: Dictionary, es: Dictionary, hero_static: Dictionary) -> void:
 	if not es["active"] or es["attacks_remaining"] <= 0:
 		return
 
@@ -2011,23 +2011,23 @@ func _apply_npc_essence_shift_steal(target: Dictionary, es: Dictionary, hero_sta
 		return
 
 	var current_value: float = float(target.get("current_main_stat_value", 0.0))
-	if current_value <= GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT:
+	if current_value <= GameManager.LEECHING_HUNGER_MIN_ENEMY_MAIN_STAT:
 		return
 
 	target["current_main_stat_value"] = current_value - 1.0
 	es["attacks_remaining"] -= 1
 	es["stolen"].append({"enemy": target, "amount": 1.0})
 
-	var contribution: Dictionary = _essence_shift_contribution_for(stat_name, hero_static)
+	var contribution: Dictionary = _leeching_hunger_contribution_for(stat_name, hero_static)
 	for stat_key in contribution.keys():
 		es["bonus"][stat_key] = es["bonus"].get(stat_key, 0.0) + contribution[stat_key]
 
 
 ## Same conversion table as battle.gd's own
-## _essence_shift_contribution_for(): strength -> hp, agility -> armor,
+## _leeching_hunger_contribution_for(): strength -> hp, agility -> armor,
 ## intelligence -> mana, at GameManager's per-point rates, plus damage
 ## on top if the stolen stat happens to be this hero's own main stat.
-func _essence_shift_contribution_for(stat_name: String, hero_static: Dictionary) -> Dictionary:
+func _leeching_hunger_contribution_for(stat_name: String, hero_static: Dictionary) -> Dictionary:
 	var contribution: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 	match stat_name:
@@ -2044,7 +2044,7 @@ func _essence_shift_contribution_for(stat_name: String, hero_static: Dictionary)
 	return contribution
 
 
-func _tick_npc_essence_shift(es: Dictionary) -> void:
+func _tick_npc_leeching_hunger(es: Dictionary) -> void:
 	if not es["active"]:
 		return
 	if es["duration_pending_start"]:
@@ -2052,13 +2052,13 @@ func _tick_npc_essence_shift(es: Dictionary) -> void:
 		return
 	es["turns_remaining"] -= 1
 	if es["turns_remaining"] <= 0:
-		_end_npc_essence_shift(es)
+		_end_npc_leeching_hunger(es)
 
 
 ## Hands back every currently-borrowed point to whichever donor enemies
 ## are still alive (dead ones just forfeit theirs, same as
 ## battle.gd's own _is_enemy_still_active() check accomplishes there).
-func _end_npc_essence_shift(es: Dictionary) -> void:
+func _end_npc_leeching_hunger(es: Dictionary) -> void:
 	for entry in es["stolen"]:
 		var donor: Dictionary = entry["enemy"]
 		if donor.get("current_hp", 0) > 0:
@@ -2073,20 +2073,20 @@ func _end_npc_essence_shift(es: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Slark's Shadow Dance - mirrors battle.gd's _activate_shadow_dance/
-# _tick_shadow_dance/_end_shadow_dance. There's no visibility/targeting
+# Veyrik's Depthsveil - mirrors battle.gd's _activate_depthsveil/
+# _tick_depthsveil/_end_depthsveil. There's no visibility/targeting
 # system in this sim, so "hidden" just means enemies skip their
 # retaliation entirely for the turn (see _run_stage_fight()).
 # ------------------------------------------------------------------
 
-func _activate_npc_shadow_dance(sd: Dictionary, level_data: Dictionary) -> void:
+func _activate_npc_depthsveil(sd: Dictionary, level_data: Dictionary) -> void:
 	sd["active"] = true
 	sd["bonus_damage"] = float(level_data.get("bonus_damage", 0))
 	sd["turns_remaining"] = int(level_data.get("duration", 0))
 	sd["duration_pending_start"] = true
 
 
-func _tick_npc_shadow_dance(sd: Dictionary) -> void:
+func _tick_npc_depthsveil(sd: Dictionary) -> void:
 	if not sd["active"]:
 		return
 	if sd["duration_pending_start"]:
@@ -2094,10 +2094,10 @@ func _tick_npc_shadow_dance(sd: Dictionary) -> void:
 		return
 	sd["turns_remaining"] -= 1
 	if sd["turns_remaining"] <= 0:
-		_end_npc_shadow_dance(sd)
+		_end_npc_depthsveil(sd)
 
 
-func _end_npc_shadow_dance(sd: Dictionary) -> void:
+func _end_npc_depthsveil(sd: Dictionary) -> void:
 	sd["active"] = false
 	sd["bonus_damage"] = 0.0
 	sd["turns_remaining"] = 0
@@ -2105,13 +2105,13 @@ func _end_npc_shadow_dance(sd: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Mirana's ultimate, Moonlight Shadow - mirrors Shadow Dance's own shape
-# exactly (see the "shadow_dance" state dict above and this file's own
+# Mirana's ultimate, Moonlight Shadow - mirrors Depthsveil's own shape
+# exactly (see the "depthsveil" state dict above and this file's own
 # retaliation-loop guard) - invisibility skips enemy retaliation for the
 # turn, same as being hidden there already does; the one real difference
 # is the bonus itself, a PERCENTAGE of the next Attack's own roll (folded
 # in by _run_stage_fight()'s own basic-attack branch, mirroring Bash of
-# the Deep's own post-roll percentage there) rather than Shadow Dance's
+# the Deep's own post-roll percentage there) rather than Depthsveil's
 # flat pre-roll bonus_damage.
 # ------------------------------------------------------------------
 
@@ -2422,10 +2422,10 @@ func _end_npc_cold_embrace(ce: Dictionary) -> void:
 func _dispel_all_npc_effects(state: Dictionary) -> void:
 	if state["arctic_burn"]["active"]:
 		_end_npc_arctic_burn(state["arctic_burn"])
-	if state["essence_shift"]["active"]:
-		_end_npc_essence_shift(state["essence_shift"])
-	if state["shadow_dance"]["active"]:
-		_end_npc_shadow_dance(state["shadow_dance"])
+	if state["leeching_hunger"]["active"]:
+		_end_npc_leeching_hunger(state["leeching_hunger"])
+	if state["depthsveil"]["active"]:
+		_end_npc_depthsveil(state["depthsveil"])
 	if state["spirit_link"]["active"]:
 		_end_npc_spirit_link(state["spirit_link"])
 	if state["true_form"]["active"]:
@@ -2442,7 +2442,7 @@ func _dispel_all_npc_effects(state: Dictionary) -> void:
 # Frostbite's own dedicated per-enemy fields (see battle.gd's
 # _resolve_frostbite_cast() for why it's kept separate from every other
 # skill's own DoT fields). The stun itself needs no separate tick here -
-# it shares stun_turns_left, the same generic per-enemy field Pounce's/
+# it shares stun_turns_left, the same generic per-enemy field Barbed Lunge's/
 # Torrent's own stun already decrements in _run_stage_fight()'s own
 # retaliation loop.
 # ------------------------------------------------------------------
@@ -2534,8 +2534,8 @@ func _end_npc_tag_team(tt: Dictionary) -> void:
 # ------------------------------------------------------------------
 # Treant Protector's Nature's Guise - mirrors battle.gd's own
 # _activate_natures_guise()/_tick_natures_guise()/_end_natures_guise(),
-# and this file's own _activate_npc_shadow_dance()/_tick_npc_shadow_
-# dance()/_end_npc_shadow_dance() (functionally the same invisibility -
+# and this file's own _activate_npc_depthsveil()/_tick_npc_shadow_
+# dance()/_end_npc_depthsveil() (functionally the same invisibility -
 # see this file's own retaliation-loop guard and the Attack branch's own
 # "attacking_from_natures_guise" case in _run_stage_fight()).
 # ------------------------------------------------------------------
@@ -2928,7 +2928,7 @@ func _end_npc_spirit_link(sl: Dictionary) -> void:
 
 
 ## Only ever called for the plain basic-attack branch of the hero's
-## turn - like the real fight, skill damage (Dark Pact, Pounce,
+## turn - like the real fight, skill damage (Abyssal Spasm, Barbed Lunge,
 ## Entangle's DoT, the bear's own hits) never triggers lifesteal.
 ## Returns the HP to heal (already scaled by the damage actually
 ## dealt), 0.0 while inactive.
@@ -3040,9 +3040,9 @@ func _tick_npc_aphotic_shield(shield: Dictionary) -> void:
 ## Ends the shield, whether its duration simply ran out (`exploded`
 ## false) or enough damage drained it to 0 HP (`exploded` true, from
 ## _apply_reduced_damage_to_npc()) - in which case it deals the cast's
-## own aoe_damage to every living enemy, mirroring Dark Pact's own
+## own aoe_damage to every living enemy, mirroring Abyssal Spasm's own
 ## "no columns, hit everyone" simplification in this sim (see
-## _cast_skill()'s "dark_pact" case).
+## _cast_skill()'s "abyssal_spasm" case).
 func _end_npc_aphotic_shield(shield: Dictionary, exploded: bool, living: Array) -> void:
 	var aoe_damage: float = shield["aoe_damage"]
 
@@ -3304,28 +3304,28 @@ func _apply_reduced_damage_to_npc(hero_id: String, hero_static: Dictionary, stat
 # Shared combat-math helpers that fold every active buff's bonus in.
 # ------------------------------------------------------------------
 
-## Base max HP plus Essence Shift's borrowed hp plus True Form's bonus
+## Base max HP plus Leeching Hunger's borrowed hp plus True Form's bonus
 ## hp while each is active - mirrors battle.gd's _hero_max_hp().
 func _npc_effective_max_hp(max_hp: float, state: Dictionary) -> float:
-	return max_hp + state["essence_shift"]["bonus"].get("hp", 0.0) + state["true_form"]["bonus_hp"]
+	return max_hp + state["leeching_hunger"]["bonus"].get("hp", 0.0) + state["true_form"]["bonus_hp"]
 
 
-## Base armor plus Essence Shift's borrowed armor plus Spirit Link's
+## Base armor plus Leeching Hunger's borrowed armor plus Spirit Link's
 ## flat bonus while each is active - mirrors battle.gd's _hero_armor().
 func _npc_effective_armor(base_armor: float, state: Dictionary) -> float:
-	return base_armor + state["essence_shift"]["bonus"].get("armor", 0.0) + state["spirit_link"]["bonus_armor"] + state["living_armor"]["bonus_armor"]
+	return base_armor + state["leeching_hunger"]["bonus"].get("armor", 0.0) + state["spirit_link"]["bonus_armor"] + state["living_armor"]["bonus_armor"]
 
 
-## Rolls damage from `damage_range`, adding Essence Shift's ongoing
+## Rolls damage from `damage_range`, adding Leeching Hunger's ongoing
 ## borrowed damage, True Form's bonus damage while active, and (for the
-## single hit that triggers it) Shadow Dance's one-shot `extra_bonus` -
+## single hit that triggers it) Depthsveil's one-shot `extra_bonus` -
 ## mirrors battle.gd's _roll_hero_damage().
 func _npc_roll_damage(damage_range: String, state: Dictionary, extra_bonus: float = 0.0) -> float:
 	var parts: PackedStringArray = damage_range.split("-")
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	var bonus_damage: float = state["essence_shift"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + state["tag_team"]["bonus_damage"] + extra_bonus
+	var bonus_damage: float = state["leeching_hunger"]["bonus"].get("damage", 0.0) + state["true_form"]["bonus_damage"] + state["arctic_burn"]["bonus_damage"] + state["tag_team"]["bonus_damage"] + extra_bonus
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 

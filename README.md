@@ -1,4 +1,4 @@
-# Terrence: Path of the Hero
+# Echoes of the Forgotten
 
 A turn-based hero RPG built in Godot 4, where you recruit a hero, fight your way through a world of zones, and level up while every other hero in that world is quietly doing the exact same thing in the background.
 
@@ -12,7 +12,7 @@ But you're not the only one adventuring. Every rival hero on the map is simultan
 
 - **Turn-based combat** - movement, attacks, skills, and items, with range and targeting that actually matter.
 - **Hero recruitment** - pick a hero and a starting skill; that choice is locked in for the run.
-- **A growing hero roster**, each with a full, unique skill kit - Slark, Lone Druid (with his Spirit Bear), Abaddon, Kunkka, Ancient Apparition, Crystal Maiden, Naga Siren, Mirana, and Luna so far.
+- **A growing hero roster**, each with a full, unique skill kit - Veyrik, Lone Druid (with his Spirit Bear), Abaddon, Kunkka, Ancient Apparition, Crystal Maiden, Naga Siren, Mirana, and Luna so far.
 - **Smart enemy AI** - every rival hero scores its currently-castable skills situationally (health, mana, range, likely kills) instead of following a fixed priority list, so fights (and the background simulation) react to the actual state of the battle.
 - **Leveling & itemization** - earn XP and gold from kills, spend gold at the Shop, and grow your stats and skills.
 - **A living world** - every rival hero levels up, fights, and dies in the background, whether you're watching or not.

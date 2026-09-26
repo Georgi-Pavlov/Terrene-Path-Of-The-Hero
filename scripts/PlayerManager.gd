@@ -5,7 +5,7 @@ extends Node
 # separate per-player data file where hero/level/stats will live later.
 #
 # Files live under user:// which is a real writable folder on disk:
-#   Windows:  %APPDATA%/Godot/app_userdata/Terrence Path of the Hero/
+#   Windows:  %APPDATA%/Godot/app_userdata/Echoes of the Forgotten/
 #   macOS:    ~/Library/Application Support/Godot/app_userdata/...
 #   Linux:    ~/.local/share/godot/app_userdata/...
 #   Android/iOS export: the app's private sandboxed storage.
@@ -208,6 +208,70 @@ func end_tutorial_sandbox() -> void:
 	_tutorial_snapshot = null
 
 
+# Zone ids from before the zones were renamed (old id -> new id). A save
+# written back then still has them - in "zone_cleared_<id>" keys and in
+# each NPC's "..._current_zone" value - so _migrate_legacy_zone_ids()
+# rewrites them on load. The next flush then saves the new ids.
+const LEGACY_ZONE_IDS := {
+	"azura": "the_veiled_reach",
+	"dark_reef": "the_iron_abyss",
+	"northern_pine": "the_elderwild",
+	"avarice": "kingdom_of_morvain",
+	"cladd_isles": "the_ironbound_isles",
+	"white_spire": "frostspire",
+	"frozen_realm": "the_everfrost",
+	"vale_of_augury": "the_verdant_scar",
+	"wailing_mountains": "the_sundered_peaks",
+	"kingdom_of_olympus": "the_fall_of_empyrean",
+	"sunken_cities": "drowned_empire",
+	"nightsilver_woods": "the_blackbloom",
+	"hinterlands": "the_wildreach",
+	"drakken_highlands": "wyrmfall",
+	"jidi_islands": "the_rotbloom",
+	"nishai": "the_stonewake",
+	"outlands": "scorchlands",
+	"bronze_empire": "the_bronze_dominion",
+	"ruelands": "the_hollowlands",
+	"emauracus": "aureth",
+	"ghastly_eyrie": "vaelith",
+	"arktura": "kharuun",
+	"xhacatocail_mountains": "kharazhul",
+	"kalabor": "the_sandgrave",
+	"scintillant_waste": "qadaris",
+	"revtel": "carthane",
+	"fields_of_carnage": "the_wargrave",
+	"bleeding_hills": "the_blackveins",
+	"hoven": "gloamwood",
+	"fellstrath": "the_stonewild",
+	"druud": "thundersteppe",
+	"hazhadal_barrens": "glasslands",
+	"ivory_isles": "veyraku",
+	"ashkavor": "velashan",
+	"thousand_tarns": "the_drowned_marches",
+	"gun_yu": "yun_shai",
+	"new_frontiers": "the_last_horizon",
+	"drylands": "the_sunscar",
+	"dezun": "the_veilbound",
+}
+
+
+## Rewrites any pre-rename zone id in `data` (see LEGACY_ZONE_IDS) to its
+## new one, in place: "zone_cleared_<old>" keys, and every
+## "..._current_zone" value. Keys/values already using new ids are left
+## alone, so running it on an up-to-date save changes nothing.
+func _migrate_legacy_zone_ids(data: Dictionary) -> void:
+	for key in data.keys():
+		var key_str: String = str(key)
+		if key_str.begins_with("zone_cleared_"):
+			var old_id: String = key_str.substr("zone_cleared_".length())
+			if LEGACY_ZONE_IDS.has(old_id):
+				var value = data[key]
+				data.erase(key)
+				data["zone_cleared_" + LEGACY_ZONE_IDS[old_id]] = value
+		elif key_str.ends_with("_current_zone") and LEGACY_ZONE_IDS.has(str(data[key])):
+			data[key] = LEGACY_ZONE_IDS[str(data[key])]
+
+
 ## The actual disk read, unconditionally - what _read_player_data()
 ## used to be before caching was added.
 func _read_player_data_from_disk(username: String) -> Dictionary:
@@ -226,6 +290,7 @@ func _read_player_data_from_disk(username: String) -> Dictionary:
 		var value := line.substr(idx + 1)
 		data[key] = value
 	f.close()
+	_migrate_legacy_zone_ids(data)
 	return data
 
 ## The actual disk write, unconditionally - what _write_player_data()
@@ -238,7 +303,7 @@ func _write_player_data_to_disk(username: String, data: Dictionary) -> void:
 
 ## Adds a skill id to the current player's learned skills.
 ## Stored as a comma-separated list under the "skills" key, e.g.
-## "skills=essence_shift,dark_pact"
+## "skills=leeching_hunger,abyssal_spasm"
 func learn_skill(skill_id: String) -> void:
 	if current_player == "":
 		print("ERROR: No current player set - can't save learned skill.")
@@ -261,12 +326,12 @@ func learn_skill(skill_id: String) -> void:
 ## drain as HP/mana get used or lost.
 ## Each stat is stored under its own "hero_stat_<key>" line so the
 ## file stays plain-text and human-readable, e.g.:
-##   hero=slark
-##   hero_name=Slark
+##   hero=veyrik
+##   hero_name=Veyrik
 ##   hero_stat_strength=20
 ##   hero_stat_hp=560
-##   hero_skill_id=essence_shift
-##   hero_skill_name=Essence Shift
+##   hero_skill_id=leeching_hunger
+##   hero_skill_name=Leeching Hunger
 ##   hero_xp=0
 ##   hero_current_hp=560
 ##   hero_current_mana=260

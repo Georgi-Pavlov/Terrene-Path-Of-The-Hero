@@ -14,7 +14,7 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 [application]
 
-config/name="Terrence: Path of the Hero"
+config/name="Echoes of the Forgotten"
 run/main_scene="res://scenes/LoadingScreen.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://assets/menu_bg.jpg"
@@ -39,3 +39,4 @@ window/handheld/orientation="landscape"
 
 renderer/rendering_method="mobile"
 textures/vram_compression/import_etc2_astc=true
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)

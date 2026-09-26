@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://dw6hev63d7230"]
 
 [ext_resource type="Script" uid="uid://dl6i6fwswluem" path="res://scripts/Login.gd" id="1"]
-[ext_resource type="Texture2D" uid="uid://csrdlcwu8dcdx" path="res://assets/menu_bg.jpg" id="2"]
+[ext_resource type="Texture2D" uid="uid://dy2uw1ofbmwxm" path="res://assets/menu_bg.jpg" id="2"]
 
 [node name="Login" type="Control" unique_id=1452185416]
 layout_mode = 3
@@ -30,10 +30,10 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -180.0
-offset_top = -130.0
-offset_right = 180.0
-offset_bottom = 130.0
+offset_left = -189.0
+offset_top = -89.0
+offset_right = 176.0
+offset_bottom = 155.0
 grow_horizontal = 2
 grow_vertical = 2
 

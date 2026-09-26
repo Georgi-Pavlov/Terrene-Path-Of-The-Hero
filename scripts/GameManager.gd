@@ -134,10 +134,10 @@ const ARMOR_PER_AGILITY: float = 0.167
 const MANA_PER_INTELLIGENCE: float = 12.0
 const DAMAGE_PER_MAIN_STAT: float = 1.0
 
-# Slark's Essence Shift (see battle.gd's _apply_essence_shift_steal):
+# Veyrik's Leeching Hunger (see battle.gd's _apply_leeching_hunger_steal):
 # an enemy's main_stat_value is never drained below this floor, so a
 # long fight can't leave an enemy sitting at 0 or negative stats.
-const ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT: int = 5
+const LEECHING_HUNGER_MIN_ENEMY_MAIN_STAT: int = 5
 
 
 ## Computes a hero's effective hp/mana/armor/damage from how far
@@ -199,9 +199,9 @@ const MAX_ZONE_STAGE: int = 3
 # doesn't have that many distinct melee/ranged templates in its
 # "enemies" list, battle.gd just cycles through the ones it has.
 const STAGE_ENEMY_COUNTS: Dictionary = {
-	1: {"mele": 3, "range": 1},
-	2: {"mele": 4, "range": 1},
-	3: {"mele": 5, "range": 2},
+	1: {"melee": 3, "range": 1},
+	2: {"melee": 4, "range": 1},
+	3: {"melee": 5, "range": 2},
 }
 
 # How many melee/ranged enemies a reinforcement wave spawns - battle.gd's
@@ -212,9 +212,9 @@ const STAGE_ENEMY_COUNTS: Dictionary = {
 # using whichever stage is CURRENTLY loaded when reinforcements arrive,
 # so they come in scaled to match everything else already on the field.
 const REINFORCEMENT_ENEMY_COUNTS: Dictionary = {
-	1: {"mele": 2, "range": 1},
-	2: {"mele": 2, "range": 2},
-	3: {"mele": 3, "range": 2},
+	1: {"melee": 2, "range": 1},
+	2: {"melee": 2, "range": 2},
+	3: {"melee": 3, "range": 2},
 }
 
 # hp/damage bonus each stage adds ON TOP OF the enemy's base stats -
@@ -277,28 +277,28 @@ func get_stage_cumulative_gold_bonus(stage: int) -> int:
 
 var zones: Dictionary = {
 
-	"azura": {
-		"name": "Azura",
+	"the_veiled_reach": {
+		"name": "The Veiled Reach",
 		"description": "A frozen land hidden beneath an eternal winter.",
-		"music": "azura",
+		"music": "the_veiled_reach",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"dark_reef": {
-		"name": "Dark Reef",
-		"description": "A dark, twisting underwater labyrinth covered by a heavy metallic grid. 
-		This inescapable prison, built inside a deep ocean trench, holds the ocean's most dangerous criminals: 
-		murderous Slithereen, treacherous Deep Ones, and sociopathic Meranths. Slark is famously the only inmate to ever successfully escape from it.",
-		"music": "dark_reef",
+	"the_iron_abyss": {
+		"name": "The Iron Abyss",
+		"description": "The Iron Abyss is a vast prison buried within the deepest reaches of the ocean, its labyrinthine corridors sealed behind layers of iron and ancient machinery.  
+		Built into a bottomless trench, the prison was created to contain creatures too violent, cunning, or unnatural to ever walk the surface again. Its flooded cells hold killers, raiders, and things that no longer resemble the beings they once were.  
+		Few prisoners have ever escaped the Abyss. Fewer still survived the journey to the surface. Among them is a single fugitive whose name has become a whispered legend among the creatures of the deep.",
+		"music": "the_iron_abyss",
 		"heroes": [
 			{
-				"id": "slark",
-				"name": "Slark",
-				"image": "res://assets/heroes/Slark.png",
-				"background": "res://assets/zones/Dark_Reef.png",
-				"range_type": "Mele",
+				"id": "veyrik",
+				"name": "Veyrik",
+				"image": "res://assets/heroes/Veyrik.png",
+				"background": "res://assets/zones/the_iron_abyss.jpg",
+				"range_type": "Melee",
 				"main_stat": "Agility",
 				"stats": {
 					"strength": 20,
@@ -314,10 +314,10 @@ var zones: Dictionary = {
 				},
 				"skills": [
 					{
-						"id": "essence_shift",
-						"name": "Essence Shift",
+						"id": "leeching_hunger",
+						"name": "Leeching Hunger",
 						"type": "standard",
-						"description": "Activates for a number of turns - Slark's next several melee attacks each steal 1 point of the target's main stat, weakening them and empowering Slark.",
+						"description": "Veyrik awakens a ravenous hunger within himself. For several turns, his next melee attacks tear a fragment of the target's main attribute from them, weakening the victim and feeding Veyrik's strength.",
 						"levels": [
 							{"attacks": 2, "steal_per_hit": 1, "duration": 4, "mana_cost": 30, "cooldown": 3},
 							{"attacks": 3, "steal_per_hit": 1, "duration": 4, "mana_cost": 35, "cooldown": 3},
@@ -326,10 +326,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "dark_pact",
-						"name": "Dark Pact",
+						"id": "abyssal_spasm",
+						"name": "Abyssal Spasm",
 						"type": "standard",
-						"description": "Deals damage in a radius around Slark and silences all enemies caught in it.",
+						"description": "Veyrik violently convulses, releasing a burst of unnatural force around himself. Enemies caught within it suffer damage and are silenced.",
 						"levels": [
 							{"damage_multiplier": 0.75, "radius": 0, "mana_cost": 65, "cooldown": 4},
 							{"damage_multiplier": 1.0, "radius": 0, "mana_cost": 70, "cooldown": 4},
@@ -338,10 +338,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "pounce",
-						"name": "Pounce",
+						"id": "barbed_lunge",
+						"name": "Barbed Lunge",
 						"type": "standard",
-						"description": "Leaps forward, stunning and damaging the first enemy hero hit.",
+						"description": "Veyrik launches himself forward with violent speed, impaling the first enemy hero he reaches and leaving them stunned.",
 						"levels": [
 							{"distance": 2, "stun_turns": 1, "mana_cost": 75, "cooldown": 5},
 							{"distance": 3, "stun_turns": 1, "mana_cost": 80, "cooldown": 5},
@@ -350,10 +350,10 @@ var zones: Dictionary = {
 						]
 					},
 					{
-						"id": "shadow_dance",
-						"name": "Shadow Dance",
+						"id": "depthsveil",
+						"name": "Depthsveil",
 						"type": "ultimate",
-						"description": "Ultimate: Slark turns invisible and can't be attacked. His next attack while hidden deals bonus damage and ends the invisibility early - otherwise it simply runs out after a number of turns.",
+						"description": "Ultimate: Veyrik slips beneath a veil of unnatural darkness, becoming invisible and untouchable. His next attack while concealed tears into his victim with increased force and ends the veil early. If he does not attack, the effect eventually fades.",
 						"levels": [
 							{"duration": 2, "bonus_damage": 20, "mana_cost": 80, "cooldown": 8},
 							{"duration": 3, "bonus_damage": 35, "mana_cost": 90, "cooldown": 7},
@@ -370,10 +370,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "dark_reef_mele",
-				"name": "Dark Reef mele creep",
+				"id": "the_iron_abyss_melee",
+				"name": "Iron Abyss melee creep",
 				"image": "res://assets/enemies/Dark_Reef_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -385,10 +385,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "dark_reef_mele_2",
-				"name": "Dark Reef mele creep",
+				"id": "the_iron_abyss_melee_2",
+				"name": "Iron Abyss melee creep",
 				"image": "res://assets/enemies/Dark_Reef_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -400,8 +400,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "dark_reef_range",
-				"name": "Dark Reef range creep",
+				"id": "the_iron_abyss_range",
+				"name": "Iron Abyss range creep",
 				"image": "res://assets/enemies/Dark_Reef_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -416,15 +416,15 @@ var zones: Dictionary = {
 			}
 		],
 		"unlocked": true,
-		"background": "res://assets/zones/Dark_Reef.png",
-		"battle_background": "res://assets/battle_areas/Dark_Reef_area.png"
+		"background": "res://assets/zones/the_iron_abyss.jpg",
+		"battle_background": "res://assets/battle_areas/the_iron_abyss_area.png"
 	},
 
-	"northern_pine": {
-		"name": "Northern Pine",
-		"description": "Onyx Grove also known as 'northern pine' is a dark forest where the exiled hero Sylla,
-		the Lone Druid, discovered a shadowy nexus of fierce and strange creatures.",
-		"music": "northern_pine",
+	"the_elderwild": {
+		"name": "The Elderwild",
+		"description": "The Elderwild is an ancient forest hidden beyond the northern reaches, where towering pines blot out the sky and the light rarely reaches the forest floor. No kingdom claims the land, and few travelers willingly venture beyond its outer paths.  
+		Deep within the woods, the boundary between nature and something far older begins to fade. Those who enter the Elderwild often speak of hearing movement between the trees, even when nothing is there. Some claim the forest watches them. Others never return to tell their story.",
+		"music": "the_elderwild",
 		"heroes": [
 			{
 				"id": "lone_druid",
@@ -515,10 +515,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "northern_pine_mele",
-				"name": "Northern Pine mele creep",
+				"id": "the_elderwild_melee",
+				"name": "Elderwild melee creep",
 				"image": "res://assets/enemies/Northern_Pine_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -530,10 +530,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "northern_pine_mele_2",
-				"name": "Northern Pine mele creep",
+				"id": "the_elderwild_melee_2",
+				"name": "Elderwild melee creep",
 				"image": "res://assets/enemies/Northern_Pine_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -545,8 +545,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "northern_pine_range",
-				"name": "Northern Pine range creep",
+				"id": "the_elderwild_range",
+				"name": "Elderwild range creep",
 				"image": "res://assets/enemies/Northern_Pine_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -565,21 +565,20 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/Northern Pine_area.png"
 	},
 
-	"avarice": {
-		"name": "Avarice / Avernus",
-		"description": "The Realm of Avernus, a mist-shrouded domain became known as 'Avarice' - the greed.
-		The kingdom of Slom was ruled by a tyrant whose descent into greed and dark magic brought madness to the throne.
-		Abaddon: Abaddon is the current lord of Avernus. Unlike his brethren who trained purely for physical combat, 
-		he spent decades meditating within the mist, absorbing its potency until he merged his spirit with it, 
-		mastering powers over life and death.",
-		"music": "avarice",
+	"kingdom_of_morvain": {
+		"name": "Kingdom of Morvain",
+		"description": "The Kingdom of Morvain was once a prosperous realm, hidden beneath a veil of unnatural mist that slowly crept in from the surrounding valleys. As the years passed, the mist grew thicker, and so did the ambitions of the kingdom's rulers.
+		The last king became obsessed with the strange power within the mist, believing it could grant him dominion over life and death. His pursuit of forbidden magic consumed the royal court, leaving the kingdom fractured by madness, betrayal, and bloodshed.
+		Now Morvain is a forsaken kingdom, its ruined halls and forgotten villages swallowed by the mist. Those who still wander its roads speak of figures moving within the fog and voices calling from places where no living soul should remain.
+		Deep within the heart of Morvain, the mist has taken on a will of its own. Some say it remembers the kingdom that created it. Others believe the kingdom was never its master to begin with.",
+		"music": "kingdom_of_morvain",
 		"heroes": [
 			{
 				"id": "аbaddon",
 				"name": "Abaddon",
 				"image": "res://assets/heroes/Abaddon.png",
 				"background": "res://assets/zones/Avarice.png",
-				"range_type": "Mele",
+				"range_type": "Melee",
 				"main_stat": "Strength",
 				"stats": {
 					"strength": 22,
@@ -652,10 +651,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "avarice_mele",
-				"name": "Avarice mele creep",
+				"id": "kingdom_of_morvain_melee",
+				"name": "Kingdom of Morvain melee creep",
 				"image": "res://assets/enemies/Avarice_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -667,10 +666,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "avarice_mele_2",
-				"name": "Avarice mele creep",
+				"id": "kingdom_of_morvain_melee_2",
+				"name": "Kingdom of Morvain melee creep",
 				"image": "res://assets/enemies/Avarice_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -682,8 +681,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "avarice_range",
-				"name": "Avarice range creep",
+				"id": "kingdom_of_morvain_range",
+				"name": "Kingdom of Morvain range creep",
 				"image": "res://assets/enemies/Avarice_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -702,19 +701,19 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/Avarice_area.png"
 	},
 
-	"cladd_isles": {
-		"name": "Cladd Isles",
-		"description": "Cladd (or Cladd Isles) is a rugged collection of islands famous for its powerful 
-		maritime military, high-quality steel, and tragic history with deep-sea horrors. The proud blue-and-gold 
-		naval fleet, known as 'The Claddish Navy', was once commanded by their Admiral: Kunkka.",
-		"music": "cladd_isles",
+	"the_ironbound_isles": {
+		"name": "The Ironbound Isles",
+		"description": "The Ironbound Isles are a rugged chain of islands surrounded by treacherous seas, where iron and salt have shaped the lives of their people for generations. Their shipyards and forges produce some of the finest steel in the known world, while their formidable fleet guards the narrow waters between the islands.
+		For centuries, the islanders believed the open sea belonged to them. That belief ended when something ancient began rising from the depths. Ships vanished without a trace, coastal settlements were found abandoned, and survivors spoke of shapes moving beneath the waves.
+		The islands endured, but their people were changed by the horrors they witnessed. Their once-proud navy now patrols waters that few sailors willingly cross, armed not only against rival kingdoms, but against whatever waits beneath the black surface.",
+		"music": "the_ironbound_isles",
 		"heroes": [
 			{
 				"id": "kunkka",
 				"name": "Kunkka",
 				"image": "res://assets/heroes/Kunkka.png",
 				"background": "res://assets/zones/Cladd_Isles.png",
-				"range_type": "Mele",
+				"range_type": "Melee",
 				"main_stat": "Strength",
 				"stats": {
 					"strength": 24,
@@ -786,10 +785,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "cladd_isles_mele",
-				"name": "Cladd Isles mele creep",
+				"id": "the_ironbound_isles_melee",
+				"name": "Ironbound Isles melee creep",
 				"image": "res://assets/enemies/Cladd Isles_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -801,10 +800,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "cladd_isles_mele_2",
-				"name": "Cladd Isles mele creep",
+				"id": "the_ironbound_isles_melee_2",
+				"name": "Ironbound Isles melee creep",
 				"image": "res://assets/enemies/Cladd Isles_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -816,8 +815,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "cladd_isles_range",
-				"name": "Cladd Isles range creep",
+				"id": "the_ironbound_isles_range",
+				"name": "Ironbound Isles range creep",
 				"image": "res://assets/enemies/Cladd Isles_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -836,10 +835,11 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/Cladd Isles_area.png"
 	},
 
-	"white_spire": {
-		"name": "White Spire",
-		"description": "A towering frozen region surrounded by ancient ice.",
-		"music": "white_spire",
+	"frostspire": {
+		"name": "Frostspire",
+		"description": "Frostspire is a vast frozen region where towering mountains and ancient glaciers rise beyond the reach of the sun. Jagged peaks of blue-white ice stretch across the horizon, while deep crevasses disappear beneath layers of snow that have remained untouched for centuries.
+		The oldest parts of Frostspire are said to contain ice far older than any known kingdom. Within its frozen depths lie traces of something that existed long before the region became a land of eternal winter.",
+		"music": "frostspire",
 		"heroes": [
 			{
 				"id": "ancient_apparition",
@@ -992,10 +992,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "white_spire_mele",
-				"name": "White Spire mele creep",
+				"id": "frostspire_melee",
+				"name": "Frostspire melee creep",
 				"image": "res://assets/enemies/white_spire_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1007,10 +1007,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "white_spire_mele_2",
-				"name": "White Spire mele creep",
+				"id": "frostspire_melee_2",
+				"name": "Frostspire melee creep",
 				"image": "res://assets/enemies/white_spire_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1022,8 +1022,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "white_spire_range",
-				"name": "White Spire range creep",
+				"id": "frostspire_range",
+				"name": "Frostspire range creep",
 				"image": "res://assets/enemies/white_spire_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -1042,11 +1042,11 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/white_spire_area.png"
 	},
 
-	"frozen_realm": {
-		"name": "Frozen Realm",
-		"description": "This bitter, ice-bound region is the origin of frost magic, 
-		home to hardy tribes, and the domain of elemental forces of cold and winter.",
-		"music": "frozen_realm",
+	"the_everfrost": {
+		"name": "The Everfrost",
+		"description": "The Everfrost is a vast land locked in an endless winter, where snow and ice cover the mountains, forests, and valleys beneath a sky that rarely clears.
+		Hardy tribes have survived in the region for generations, adapting to a land where warmth and food are scarce. Each tribe carries its own traditions, but all share a deep respect for the ancient forces that rule the frozen wilderness.",
+		"music": "the_everfrost",
 		"heroes": [
 			{
 				"id": "crystal_maiden",
@@ -1127,7 +1127,7 @@ var zones: Dictionary = {
 				"name": "Tusk",
 				"image": "res://assets/heroes/Tusk.png",
 				"background": "res://assets/zones/Frozen_Realm_Tusk.png",
-				"range_type": "Mele",
+				"range_type": "Melee",
 				"main_stat": "Strength",
 				"stats": {
 					"strength": 23,
@@ -1199,10 +1199,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "frozen_realm_mele",
-				"name": "Frozen Realm mele creep",
+				"id": "the_everfrost_melee",
+				"name": "Everfrost melee creep",
 				"image": "res://assets/enemies/Frozen_Realm_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1214,10 +1214,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "frozen_realm_mele_2",
-				"name": "Frozen Realm mele creep",
+				"id": "the_everfrost_melee_2",
+				"name": "Everfrost melee creep",
 				"image": "res://assets/enemies/Frozen_Realm_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1229,8 +1229,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "frozen_realm_range",
-				"name": "Frozen Realm range creep",
+				"id": "the_everfrost_range",
+				"name": "Everfrost range creep",
 				"image": "res://assets/enemies/Frozen_Realm_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -1249,13 +1249,13 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/Frozen_Realm_area.png"
 	},
 
-	"vale_of_augury": {
-		"name": "Vale of Augury",
-		"description": "A remote western land near the port city of Augury Bay and the high mountain woods of the Treant Protectors.
-		The mountains beyond the vale contain an ancient power source emitting strange, life-altering energy.
-		The technologically advanced inhabitants of nearby Augury Bay threatened the natural order, prompting a devastating attack by 
-		the ageless Treant Protectors that leveled the city and its surroundings.",
-		"music": "vale_of_augury",
+	"the_verdant_scar": {
+		"name": "The Verdant Scar",
+		"description": "The Verdant Scar is a remote valley where nature and ruin have grown together into something neither entirely alive nor truly dead. Once home to the prosperous city of Augury Bay, the region was transformed when its inhabitants uncovered an ancient source of energy buried deep within the surrounding mountains.
+		The energy promised limitless power, but its influence reached far beyond machinery. Plants grew with unnatural speed, animals changed in disturbing ways, and living things exposed to it began to develop strange and unpredictable traits.
+		Over the years the city lost the battle against the nature, its towers and machines swallowed beneath roots, vines, and centuries of unchecked growth.
+		Today, the ruins lie scattered beneath an enormous living wilderness. The ancient energy still pulses somewhere beneath the mountains, slowly changing everything that grows near it.",
+		"music": "the_verdant_scar",
 		"heroes": [
 			{
 				"id": "treant_protector",
@@ -1336,7 +1336,7 @@ var zones: Dictionary = {
 				"name": "Timbersaw",
 				"image": "res://assets/heroes/Timbersaw.png",
 				"background": "res://assets/zones/Vale_of_Augury_Timbersaw.png",
-				"range_type": "Mele",
+				"range_type": "Melee",
 				"main_stat": "Strength",
 				"stats": {
 					"strength": 27,
@@ -1405,87 +1405,13 @@ var zones: Dictionary = {
 					"intelligence": 2.7
 				},
 			},
-			{
-				"id": "snapfire",
-				"name": "Snapfire",
-				"image": "res://assets/heroes/Snapfire.png",
-				"background": "res://assets/zones/Vale_of_Augury_Snapfire.png",
-				"range_type": "Range",
-				"main_stat": "Strength",
-				"stats": {
-					"strength": 21,
-					"agility": 16,
-					"intelligence": 21,
-					"range": 500,
-					"hp": 582,
-					"mana": 327,
-					"armor": 3.7,
-					"damage": "67-73",
-					"speed": 1,
-					"XP": 0
-				},
-				"skills": [
-					{
-						"id": "scatterblast",
-						"name": "Scatterblast",
-						"type": "standard",
-						"description": "Fires a shotgun blast in the direction she's facing, dealing damage to every enemy within range.",
-						"levels": [
-							{"damage": 70, "range": 2, "mana_cost": 80, "cooldown": 6},
-							{"damage": 100, "range": 2, "mana_cost": 105, "cooldown": 6},
-							{"damage": 170, "range": 3, "mana_cost": 135, "cooldown": 7},
-							{"damage": 230, "range": 3, "mana_cost": 160, "cooldown": 7}
-						]
-					},
-					{
-						"id": "firesnap_cookie",
-						"name": "Firesnap Cookie",
-						"type": "standard",
-						"description": "Feeds a cookie to Mortimer (her pet) to cause a hop in the direction she's facing, damaging and stunning enemies around where he lands.",
-						"levels": [
-							{"jump_distance": 2, "damage": 60, "radius": 1, "stun_turns": 1, "mana_cost": 70, "cooldown": 5},
-							{"jump_distance": 2, "damage": 90, "radius": 1, "stun_turns": 1, "mana_cost": 90, "cooldown": 5},
-							{"jump_distance": 3, "damage": 120, "radius": 1, "stun_turns": 2, "mana_cost": 115, "cooldown": 6},
-							{"jump_distance": 3, "damage": 160, "radius": 1, "stun_turns": 2, "mana_cost": 140, "cooldown": 6}
-						]
-					},
-					{
-						"id": "lil_shredder",
-						"name": "Lil' Shredder",
-						"type": "standard",
-						"description": "Marks a target within normal attack range and fires 3 shots at it, each dealing a percentage of her own attack damage and shredding armor - the shredded armor returns after a duration.",
-						"levels": [
-							{"shots": 3, "damage_pct": 0.45, "armor_reduction_per_shot": 1, "duration": 1, "mana_cost": 80, "cooldown": 5},
-							{"shots": 3, "damage_pct": 0.55, "armor_reduction_per_shot": 2, "duration": 1, "mana_cost": 105, "cooldown": 5},
-							{"shots": 3, "damage_pct": 0.65, "armor_reduction_per_shot": 3.5, "duration": 2, "mana_cost": 130, "cooldown": 6},
-							{"shots": 3, "damage_pct": 0.75, "armor_reduction_per_shot": 5, "duration": 2, "mana_cost": 155, "cooldown": 6}
-						]
-					},
-					{
-						"id": "mortimer_kisses",
-						"name": "Mortimer Kisses",
-						"type": "ultimate",
-						"description": "Ultimate: marks a target within normal attack range, then channels for 3 turns - unable to move, act, or use items - firing one shot a turn that tracks the target (or its last known column, if it dies), dealing damage and burn to whoever it hits plus splash to the columns around it.",
-						"levels": [
-							{"hits": 3, "main_damage": 180, "splash_damage": 90, "burn_per_turn": 35, "burn_duration": 5, "mana_cost": 200, "cooldown": 10},
-							{"hits": 3, "main_damage": 260, "splash_damage": 130, "burn_per_turn": 50, "burn_duration": 5, "mana_cost": 270, "cooldown": 11},
-							{"hits": 3, "main_damage": 350, "splash_damage": 175, "burn_per_turn": 70, "burn_duration": 6, "mana_cost": 350, "cooldown": 12}
-						]
-					},
-				],
-				"level_up": {
-					"strength": 3.2,
-					"agility": 1.2,
-					"intelligence": 2.1
-				},
-			}
 		],
 		"enemies": [
 			{
-				"id": "vale_of_augury_mele",
-				"name": "Vale of Augury mele creep",
+				"id": "the_verdant_scar_melee",
+				"name": "Verdant Scar melee creep",
 				"image": "res://assets/enemies/vale_of_augury_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1497,10 +1423,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "vale_of_augury_mele_2",
-				"name": "Vale of Augury mele creep",
+				"id": "the_verdant_scar_melee_2",
+				"name": "Verdant Scar melee creep",
 				"image": "res://assets/enemies/vale_of_augury_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1512,8 +1438,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "vale_of_augury_range",
-				"name": "Vale of Augury range creep",
+				"id": "the_verdant_scar_range",
+				"name": "Verdant Scar range creep",
 				"image": "res://assets/enemies/vale_of_augury_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -1532,38 +1458,41 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/Vale_of_Augury.png"
 	},
 
-	"wailing_mountains": {
-		"name": "Wailing Mountains",
-		"description": "Jagged mountains where the wind carries unsettling cries.",
-		"music": "wailing_mountains",
+	"the_sundered_peaks": {
+		"name": "The Sundered Peaks",
+		"description": "The Sundered Peaks are a remote mountain range scarred by an ancient event whose true nature has long since been forgotten. Jagged summits rise above deep valleys filled with ruined temples, abandoned fortresses, and monuments built by civilizations that vanished centuries ago.
+		Hidden among the highest peaks are the remains of ancient orders that devoted generations to understanding the nature of existence itself. Their surviving writings speak of a forgotten force that once sundered reality, leaving behind echoes that still linger in the mountains.",
+		"music": "the_sundered_peaks",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"kingdom_of_olympus": {
-		"name": "Kingdom of Olympus",
-		"description": "A legendary kingdom ruled from the heights of the gods.",
-		"music": "kingdom_of_olympus",
+	"the_fall_of_empyrean": {
+		"name": "The Fall of Empyrean",
+		"description": "The Fall of Empyrean is a vast region scarred by the remains of an ancient celestial civilization that once stood above the mortal world. Whatever Empyrean was, it did not simply vanish. Something brought it down.
+		Enormous fragments of impossible architecture lie scattered across the land, half-buried in the earth and surrounded by strange crystalline formations.
+		Broken structures still hum with an unfamiliar energy, while pieces of the fallen realm remain suspended in the air as if gravity itself has forgotten them.
+		No surviving record explains what destroyed Empyrean. Some believe it was a war between celestial beings. Others claim the realm was punished for interfering with the mortal world.",
+		"music": "the_fall_of_empyrean",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"sunken_cities": {
-		"name": "Sunken Cities",
-		"description": "The Sunken Cities are a vast network of elegant, subaqueous metropolises 
-		built by the Naga and guarded by the Deep Ones and the Slithereen Guard. These lightless 
-		ocean depths hold ancient golden riches and the Deep Vault, protected from surface thieves 
-		and marauding Levianths who seek tribute for the tentacled ancient god, Maelrawn",
-		"music": "sunken_cities",
+	"drowned_empire": {
+		"name": "Drowned Empire",
+		"description": "The Drowned Empire lies far beneath the surface, where vast cities of pale stone and forgotten metal rise from the darkness of the deep. Once the heart of a powerful civilization, its towers, plazas, and temples now stand silent beneath the weight of the ocean.
+		The empire's people built their cities around enormous vaults containing treasures, relics, and knowledge gathered over countless generations. When the empire fell, the sea claimed everything, sealing its secrets behind miles of dark water.
+		Strange guardians still patrol the drowned streets, protecting places that have not been disturbed for centuries. Ancient creatures have made their homes among the ruins, while enormous shapes can sometimes be seen moving beyond the limits of the city's fading light.",
+		"music": "drowned_empire",
 		"heroes": [
 			{
 				"id": "naga_siren",
 				"name": "Naga Siren",
 				"image": "res://assets/heroes/Naga Siren.png",
 				"background": "res://assets/zones/Sunken_Cities_Naga.png",
-				"range_type": "Mele",
+				"range_type": "Melee",
 				"main_stat": "Agility",
 				"stats": {
 					"strength": 21,
@@ -1637,7 +1566,7 @@ var zones: Dictionary = {
 				"name": "Slardar",
 				"image": "res://assets/heroes/Slardar.png",
 				"background": "res://assets/zones/Sunken_Cities_Slardar.png",
-				"range_type": "Mele",
+				"range_type": "Melee",
 				"main_stat": "Strength ",
 				"stats": {
 					"strength": 21,
@@ -1709,10 +1638,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "sunken_cities_mele",
-				"name": "Sunken Cities mele creep",
+				"id": "drowned_empire_melee",
+				"name": "Drowned Empire melee creep",
 				"image": "res://assets/enemies/Sunken Cities_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1724,10 +1653,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "sunken_cities_mele_2",
-				"name": "Sunken Cities mele creep",
+				"id": "drowned_empire_melee_2",
+				"name": "Drowned Empire melee creep",
 				"image": "res://assets/enemies/Sunken Cities_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1739,8 +1668,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "sunken_cities_range",
-				"name": "Sunken Cities range",
+				"id": "drowned_empire_range",
+				"name": "Drowned Empire range",
 				"image": "res://assets/enemies/Sunken Cities_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -1759,12 +1688,12 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/Sunken Cities_area.png"
 	},
 
-	"nightsilver_woods": {
-		"name": "Nightsilver Woods",
-		"description": "A sacred, perpetual-night forest dedicated to the Moon Goddess Selemene. 
-		Sanctified by a fallen celestial moon shard, it houses holy sites like the Shrine of Selemene 
-		and the Temple of Mene, protected fiercely by the zealous Dark Moon Order against poachers and invaders.",
-		"music": "nightsilver_woods",
+	"the_blackbloom": {
+		"name": "The Blackbloom",
+		"description": "The Blackbloom is a vast forest where night has endured for centuries. The trees grow beneath a sky that never brightens, their twisted branches forming a canopy that hides the stars and keeps the forest floor in perpetual darkness.
+		Long ago, something fell from the heavens and buried itself deep within the heart of the forest. No one knows what it was, but its arrival changed the land forever. Strange black flowers began to grow throughout the woods, blooming without sunlight and feeding on the unseen energy spreading through the soil.
+		Ancient shrines and forgotten temples stand among the trees, remnants of a civilization that once worshipped the celestial object as a gift from the heavens. Their descendants still guard the deepest parts of the forest, convinced that the fallen relic is sacred and must never be disturbed.",
+		"music": "the_blackbloom",
 		"heroes": [
 			{
 				"id": "mirana",
@@ -1917,10 +1846,10 @@ var zones: Dictionary = {
 		],
 		"enemies": [
 			{
-				"id": "nightsilver_woods_mele",
-				"name": "Nightsilver Woods mele creep",
+				"id": "the_blackbloom_melee",
+				"name": "Blackbloom melee creep",
 				"image": "res://assets/enemies/Nightsilver_Woods_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1932,10 +1861,10 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "nightsilver_woods_mele_2",
-				"name": "Nightsilver Woods mele creep",
+				"id": "the_blackbloom_melee_2",
+				"name": "Blackbloom melee creep",
 				"image": "res://assets/enemies/Nightsilver_Woods_mele.png",
-				"type": "mele",
+				"type": "melee",
 				"main_stat": "strength",
 				"main_stat_value": 10,
 				"hp": 150,
@@ -1947,8 +1876,8 @@ var zones: Dictionary = {
 				"gold": "34-39"
 			},
 			{
-				"id": "nightsilver_woods_range",
-				"name": "Nightsilver Woods range creep",
+				"id": "the_blackbloom_range",
+				"name": "Blackbloom range creep",
 				"image": "res://assets/enemies/Nightsilver_Woods_range.png",
 				"type": "range",
 				"main_stat": "agility",
@@ -1967,244 +1896,474 @@ var zones: Dictionary = {
 		"battle_background": "res://assets/battle_areas/Nightsilver_Woods_area.png"
 	},
 
-	"hinterlands": {
-		"name": "Hinterlands",
-		"description": "A vast wilderness far from the civilized lands.",
-		"music": "hinterlands",
+	"the_wildreach": {
+		"name": "The Wildreach",
+		"description": "The Wildreach is a vast frontier stretching far beyond the borders of the great kingdoms. Forests, plains, and rugged valleys cover the region, broken by scattered settlements whose inhabitants live far from the protection of any crown or army.
+		No single power rules the Wildreach. Small communities survive on their own, connected by old roads that disappear into the wilderness and forgotten watchtowers that stand as the last remnants of a more civilized age.
+		The farther one travels from the settled lands, the less reliable the old maps become.",
+		"music": "the_wildreach",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"drakken_highlands": {
-		"name": "Drakken Highlands",
-		"description": "A harsh mountainous region inhabited by powerful creatures.",
-		"music": "drakken_highlands",
+	"wyrmfall": {
+		"name": "Wyrmfall",
+		"description": "Wyrmfall is a vast highland region surrounded by jagged peaks, deep ravines, and windswept valleys. The land is littered with enormous bones and fragments of ancient scales, remnants of creatures whose size and age defy anything known to exist in the modern world.
+		Local legends claim that the great Wyrms once ruled these mountains, nesting among the highest peaks and treating the valleys below as their hunting grounds.",
+		"music": "wyrmfall",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"jidi_islands": {
-		"name": "Jidi Islands",
-		"description": "Remote islands surrounded by mysterious waters.",
-		"music": "jidi_islands",
+	"the_rotbloom": {
+		"name": "The Rotbloom",
+		"description": "The Rotbloom is a hostile chain of islands where life has grown wild, poisonous, and strangely beautiful.
+		Dense jungles cover the land, their twisted roots and enormous leaves saturated with corrosive sap. Pools of acidic water collect beneath the canopy, while clouds of luminous spores drift through the humid air.
+		Many of the creatures of the islands have by carry venom strong enough to kill within moments, while others have developed bizarre forms to survive among the poisonous vegetation.
+		Few outsiders willingly venture into the deepest parts of the jungle. Those who do often return changed, their bodies bearing strange growths or their memories clouded by the spores they inhaled.",
+		"music": "the_rotbloom",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"nishai": {
-		"name": "Nishai",
-		"description": "A wild region scarred by ancient forces.",
-		"music": "nishai",
+	"the_stonewake": {
+		"name": "The Stonewake",
+		"description": "The Stonewake is a vast mountain region where the earth itself seems restless. Jagged peaks rise from a landscape fractured by deep ravines, unstable cliffs, and enormous seams of mineral buried beneath the rock.
+		The region has suffered countless upheavals throughout its history. Mountains have shifted, rivers have changed their course overnight, and entire valleys have disappeared beneath landslides and collapsing stone. No settlement has ever remained unchanged for long.
+		The oldest legends speak of a time when the mountains were silent and something beneath them was asleep. Then, during a season of violent earthquakes, the Stonewake shook with such force that entire peaks were torn apart.",
+		"music": "the_stonewake",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"outlands": {
-		"name": "Outlands",
-		"description": "A dangerous frontier beyond the known territories.",
-		"music": "outlands",
+	"scorchlands": {
+		"name": "Scorchlands",
+		"description": "The Scorchlands are a vast desert frontier where relentless heat has stripped the land down to sand, stone, and bone. Endless dunes stretch between jagged rock formations, dry riverbeds, and isolated oases that serve as the only refuge for travelers crossing the wastes.
+		No kingdom has ever managed to hold the Scorchlands for long. Scattered settlements survive along the old trade routes, populated by merchants, outlaws, wanderers, and people who have learned to rely on their own hands rather than distant rulers. Every settlement is a small island of civilization surrounded by miles of unforgiving wilderness.
+		The desert is also home to countless predators and creatures adapted to its brutal conditions.",
+		"music": "scorchlands",
+		"heroes": [
+			{
+				"id": "snapfire",
+				"name": "Snapfire",
+				"image": "res://assets/heroes/Snapfire.png",
+				"background": "res://assets/zones/Vale_of_Augury_Snapfire.png",
+				"range_type": "Range",
+				"main_stat": "Strength",
+				"stats": {
+					"strength": 21,
+					"agility": 16,
+					"intelligence": 21,
+					"range": 500,
+					"hp": 582,
+					"mana": 327,
+					"armor": 3.7,
+					"damage": "67-73",
+					"speed": 1,
+					"XP": 0
+				},
+				"skills": [
+					{
+						"id": "scatterblast",
+						"name": "Scatterblast",
+						"type": "standard",
+						"description": "Fires a shotgun blast in the direction she's facing, dealing damage to every enemy within range.",
+						"levels": [
+							{"damage": 70, "range": 2, "mana_cost": 80, "cooldown": 6},
+							{"damage": 100, "range": 2, "mana_cost": 105, "cooldown": 6},
+							{"damage": 170, "range": 3, "mana_cost": 135, "cooldown": 7},
+							{"damage": 230, "range": 3, "mana_cost": 160, "cooldown": 7}
+						]
+					},
+					{
+						"id": "firesnap_cookie",
+						"name": "Firesnap Cookie",
+						"type": "standard",
+						"description": "Feeds a cookie to Mortimer (her pet) to cause a hop in the direction she's facing, damaging and stunning enemies around where he lands.",
+						"levels": [
+							{"jump_distance": 2, "damage": 60, "radius": 1, "stun_turns": 1, "mana_cost": 70, "cooldown": 5},
+							{"jump_distance": 2, "damage": 90, "radius": 1, "stun_turns": 1, "mana_cost": 90, "cooldown": 5},
+							{"jump_distance": 3, "damage": 120, "radius": 1, "stun_turns": 2, "mana_cost": 115, "cooldown": 6},
+							{"jump_distance": 3, "damage": 160, "radius": 1, "stun_turns": 2, "mana_cost": 140, "cooldown": 6}
+						]
+					},
+					{
+						"id": "lil_shredder",
+						"name": "Lil' Shredder",
+						"type": "standard",
+						"description": "Marks a target within normal attack range and fires 3 shots at it, each dealing a percentage of her own attack damage and shredding armor - the shredded armor returns after a duration.",
+						"levels": [
+							{"shots": 3, "damage_pct": 0.45, "armor_reduction_per_shot": 1, "duration": 1, "mana_cost": 80, "cooldown": 5},
+							{"shots": 3, "damage_pct": 0.55, "armor_reduction_per_shot": 2, "duration": 1, "mana_cost": 105, "cooldown": 5},
+							{"shots": 3, "damage_pct": 0.65, "armor_reduction_per_shot": 3.5, "duration": 2, "mana_cost": 130, "cooldown": 6},
+							{"shots": 3, "damage_pct": 0.75, "armor_reduction_per_shot": 5, "duration": 2, "mana_cost": 155, "cooldown": 6}
+						]
+					},
+					{
+						"id": "mortimer_kisses",
+						"name": "Mortimer Kisses",
+						"type": "ultimate",
+						"description": "Ultimate: marks a target within normal attack range, then channels for 3 turns - unable to move, act, or use items - firing one shot a turn that tracks the target (or its last known column, if it dies), dealing damage and burn to whoever it hits plus splash to the columns around it.",
+						"levels": [
+							{"hits": 3, "main_damage": 180, "splash_damage": 90, "burn_per_turn": 35, "burn_duration": 5, "mana_cost": 200, "cooldown": 10},
+							{"hits": 3, "main_damage": 260, "splash_damage": 130, "burn_per_turn": 50, "burn_duration": 5, "mana_cost": 270, "cooldown": 11},
+							{"hits": 3, "main_damage": 350, "splash_damage": 175, "burn_per_turn": 70, "burn_duration": 6, "mana_cost": 350, "cooldown": 12}
+						]
+					},
+				],
+				"level_up": {
+					"strength": 3.2,
+					"agility": 1.2,
+					"intelligence": 2.1
+				},
+			},
+		],
+		"enemies": [
+			{
+				"id": "scorchlands_melee",
+				"name": "Scorchlands melee creep",
+				"image": "res://assets/enemies/vale_of_augury_mele.png",
+				"type": "melee",
+				"main_stat": "strength",
+				"main_stat_value": 10,
+				"hp": 150,
+				"mana": 50,
+				"damage": 10,
+				"speed": 1,
+				"armor": 1.5,
+				"XP": 57,
+				"gold": "34-39"
+			},
+			{
+				"id": "scorchlands_melee_2",
+				"name": "Scorchlands melee creep",
+				"image": "res://assets/enemies/vale_of_augury_mele.png",
+				"type": "melee",
+				"main_stat": "strength",
+				"main_stat_value": 10,
+				"hp": 150,
+				"mana": 50,
+				"damage": 10,
+				"speed": 1,
+				"armor": 1.5,
+				"XP": 57,
+				"gold": "34-39"
+			},
+			{
+				"id": "scorchlands_range",
+				"name": "Scorchlands range creep",
+				"image": "res://assets/enemies/vale_of_augury_range.png",
+				"type": "range",
+				"main_stat": "agility",
+				"main_stat_value": 10,
+				"hp": 100,
+				"mana": 50,
+				"damage": 20,
+				"speed": 1,
+				"armor": 1,
+				"XP": 57,
+				"gold": "43-52"
+			}
+		],
+		"unlocked": true,
+		"background": "res://assets/zones/Vale_of_Augury_Snapfire.png",
+		"battle_background": "res://assets/battle_areas/Vale_of_Augury.png"
+	},
+
+	"the_bronze_dominion": {
+		"name": "The Bronze Dominion",
+		"description": "The Bronze Dominion was once the greatest human empire in the known world, built upon immense cities, fortified roads, and an army whose discipline became legendary.
+		Its rulers believed that order was the foundation of civilization, and for centuries their banners marked the borders of a realm that seemed impossible to challenge.
+		At the heart of the Dominion stood its capital, a vast city of stone towers, monumental gates, and bronze-clad fortresses.
+		What remains of the empire is a scarred collection of fortified settlements and abandoned roads, guarded by soldiers who refuse to accept that their war is over.",
+		"music": "the_bronze_dominion",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"bronze_empire": {
-		"name": "Bronze Empire",
-		"description": "The heartland of an ancient and powerful empire.",
-		"music": "bronze_empire",
+	"the_hollowlands": {
+		"name": "The Hollowlands",
+		"description": "The Hollowlands were once the borderlands between three powerful kingdoms, a harsh region of rocky hills and barren valleys that held little value beyond the legends surrounding it.
+		For generations, stories spread of an immense treasure buried somewhere beneath the land. No one knew who had hidden it or how it came to be there, but the rumors grew with every retelling until the kingdoms became convinced that whoever claimed the riches would possess enough wealth to dominate the others.
+		Armies marched across the valleys while sorcerers tore apart the land in search of the treasure. Entire fortresses were destroyed, and thousands died beneath the banners of kingdoms that believed victory would make the sacrifice worthwhile.
+		",
+		"music": "the_hollowlands",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"ruelands": {
-		"name": "Ruelands",
-		"description": "A battered land shaped by centuries of conflict.",
-		"music": "ruelands",
+	"aureth": {
+		"name": "Aureth",
+		"description": "Aureth is an ancient city built among towering cliffs and immense natural formations of stone. At its heart stands a colossal temple carved directly into the mountainside, its foundations descending into caverns that reach far beneath the surface.
+		What began as a small settlement around the temple grew into one of the greatest religious centers of the ancient world.
+		Pilgrims traveled from distant kingdoms to worship within its halls, while generations of priests, scholars, and holy warriors were trained within the city's many sanctuaries.
+		At its height, Aureth was a thriving city of monumental stairways, stone bridges, crowded markets, libraries, monasteries, and fortified temples built into the cliffs. Its wealth came from the countless pilgrims who passed through its gates, and its influence extended far beyond the mountains surrounding it.
+		Until one of the city's most devoted knights returned from war having lost his faith and descended beneath the temple seeking answers.",
+		"music": "aureth",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"emauracus": {
-		"name": "Emauracus",
-		"description": "A remote land surrounded by ancient mysteries.",
-		"music": "emauracus",
+	"vaelith": {
+		"name": "Vaelith",
+		"description": "Vaelith is an ancient city built upon a chain of enormous mountain peaks, far above the valleys below. Its towers, bridges, and palaces cling to sheer cliffs, connected by vast stone arches that disappear into the clouds.
+		The city was built in isolation, deliberately separated from the kingdoms of the lowlands. Over centuries, Vaelith became a center of arcane study and political power, ruled by an ancient royal dynasty whose authority extended across the surrounding mountains.
+		At the highest point of the city stands the Crownspire, the seat of the ruling dynasty. From there, the entire mountain range can be seen stretching beyond the clouds.
+		But the isolation that protected Vaelith from the outside world also allowed its rulers to hide their own conflicts.
+		Beneath the magnificent towers, rival factions fought for control of the Crownspire, while ancient magical oaths bound the city's most powerful guardians to whoever occupied the throne.",
+		"music": "vaelith",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"ghastly_eyrie": {
-		"name": "Ghastly Eyrie",
-		"description": "A haunted region hidden among the clouds.",
-		"music": "ghastly_eyrie",
+	"kharuun": {
+		"name": "Kharuun",
+		"description": "Kharuun is a remote, mountainous island rising far above the surrounding sea. Steep cliffs, mist-covered valleys, and ancient forests divide the island, while narrow paths lead toward settlements hidden among the highlands.
+		For centuries, the people of Kharuun have lived apart from the great kingdoms of the mainland. Their isolation allowed them to develop a unique understanding of magic, treating it not as a weapon or a divine gift, but as a discipline that must be studied, practiced, and passed from one generation to the next.
+		Deep within the highest mountains lie sealed chambers containing records of magical experiments that predate the oldest known civilizations.
+		Outsiders often mistake the people of Kharuun for simple mystics. In truth, their traditions are far more precise than the rituals practiced in most kingdoms.",
+		"music": "kharuun",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"arktura": {
-		"name": "Arktura",
-		"description": "A remote wilderness at the edge of the known world.",
-		"music": "arktura",
+	"kharazhul": {
+		"name": "Kharazhul",
+		"description": "Kharazhul is a vast mountain range hidden beneath perpetual mist, where jagged peaks rise above narrow valleys and ancient forests cling to the steep slopes.
+		The mountains are home to enormous predators and creatures found nowhere else in the world, forcing the people who live there to become hunters of extraordinary skill.
+		The oldest settlements are built around ancient temples carved directly into the mountainsides. Their walls are covered with depictions of two figures whose faces have been deliberately erased from every surviving carving. The people call them the Hunger Below.
+		According to the oldest traditions, the Hunger Below must be fed. Blood spilled in battle, during ritual hunts, and at sacred ceremonies is collected and carried into the highest temples, where it is offered to whatever sleeps beneath the mountains.",
+		"music": "kharazhul",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"xhacatocail_mountains": {
-		"name": "Xhacatocail Mountains",
-		"description": "A vast mountain range filled with ancient dangers.",
-		"music": "xhacatocail_mountains",
+	"the_sandgrave": {
+		"name": "The Sandgrave",
+		"description": "The Sandgrave is a vast desert where the horizon stretches unbroken in every direction. Endless dunes move with the wind, burying old roads, ruins, and entire settlements beneath layers of shifting sand.
+		The region receives almost no rain, and the brutal heat makes travel across the open desert dangerous even for experienced wanderers. Scattered outposts mark the few routes that cross the wasteland, each separated by days of difficult travel.
+		The sand itself is alive with movement. Enormous creatures burrow through the depths, sensing footsteps from far below before erupting from the ground without warning.
+		Some are little more than predators. Others are large enough to swallow entire caravans.",
+		"music": "the_sandgrave",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"kalabor": {
-		"name": "Kalabor",
-		"description": "A harsh land where ancient civilizations once flourished.",
-		"music": "kalabor",
+	"qadaris": {
+		"name": "Qadaris",
+		"description": "Qadaris is a vast expanse of golden dunes stretching across the eastern reaches of the world. From a distance, it appears to be an ordinary desert, barren and silent beneath the endless sun.
+		The sands of Qadaris are part of something far greater than any living creature. Beneath the dunes lies a vast consciousness that extends across the entire region, aware of every movement upon its surface and every change within its depths.
+		No single creature can comprehend such a mind. Its thoughts move slowly, measured not in moments or years, but in generations. Entire mountains may rise and disappear before one of its thoughts reaches completion.
+		The inhabitants of the surrounding lands know nothing of this. To them, the shifting dunes are simply the result of wind and weather.
+		Every few generations, the desert gathers a fragment of itself and gives it form. These beings serve as its eyes, its hands, and its voice among the smaller creatures of the world.",
+		"music": "qadaris",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"scintillant_waste": {
-		"name": "Scintillant Waste",
-		"description": "A barren wasteland shimmering beneath an unforgiving sky.",
-		"music": "scintillant_waste",
+	"carthane": {
+		"name": "Carthane",
+		"description": "Carthane is a wealthy city-state built upon trade, contracts, and the relentless pursuit of profit. Its towering districts rise around enormous markets where goods from nearly every corner of the world can be bought, sold, exchanged, or quietly acquired.
+		Carthane has no great royal dynasty and little interest in ancient notions of honor. Its most powerful figures are merchants, financiers, guildmasters, and those wealthy enough to make laws work in their favor.
+		Here, almost anything can be bought. Information has a price. Protection has a price. Loyalty has a price. Even justice can sometimes be negotiated, provided the buyer can afford the right contract.
+		Despite its reputation, Carthane is not lawless. Its laws are among the most complicated in the world, designed to protect commerce above all else. Clever merchants can exploit them for generations, while those who fail to understand the fine print may lose everything without a single law being broken.
+		Beneath the city lies an enormous network of abandoned tunnels and forgotten passages. Generations ago, Carthane's merchant houses attempted to establish trade routes through the deep earth, seeking rare minerals and resources untouched by the surface kingdoms.
+		But the expeditions were eventually abandoned, and the official records were sealed.",
+		"music": "carthane",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"revtel": {
-		"name": "Revtel",
-		"description": "An ancient region filled with forgotten ruins.",
-		"music": "revtel",
+	"the_wargrave": {
+		"name": "The Wargrave",
+		"description": "The Wargrave is a vast battlefield stretching across the southern lands, where generations of armies have fought over territory, borders, and causes long forgotten. What was once a fertile region has become an endless expanse of ruined fortifications, broken weapons, and countless dead.
+		But the dead of the Wargrave do not return to the earth. The bodies left upon the battlefield do not decay. Flesh remains preserved long after life has left it, buried beneath newer layers of corpses as battle after battle adds to the growing mass.
+		Over the centuries, the battlefield has become a landscape of its own. Hills formed from fallen soldiers rise beside abandoned trenches, while old roads disappear beneath layers of armor, bones, and preserved remains. Entire armies lie beneath the ground, their names and banners forgotten.",
+		"music": "the_wargrave",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"fields_of_carnage": {
-		"name": "Fields of Carnage",
-		"description": "Battlefields where countless warriors have fallen.",
-		"music": "fields_of_carnage",
+	"the_blackveins": {
+		"name": "The Blackveins",
+		"description": "The Blackveins are a bleak highland region where dark streams of an unknown substance flow from the hills and disappear into the forests below.
+		The thick, tar-like liquid stains the stone black and gathers in stagnant pools along the lower valleys.
+		The hills are home to scattered clans who have learned to survive among the harsh terrain and the strange substance that flows through it. They avoid the deepest valleys, where the pools are thickest and the air carries an unpleasant metallic smell.
+		Travelers have long called the region the Blackveins because the dark streams resemble enormous veins running through the mountains.",
+		"music": "the_blackveins",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"bleeding_hills": {
-		"name": "Bleeding Hills",
-		"description": "A grim region stained by endless conflict.",
-		"music": "bleeding_hills",
+	"gloamwood": {
+		"name": "Gloamwood",
+		"description": "Gloamwood is an immense forest stretching for hundreds of miles beneath the slopes of the Blackveins. Its ancient trees form an almost continuous canopy, turning the forest floor into a world of permanent twilight.
+		For centuries, the Gloamwood was one of the most prosperous wilderness regions in the world. Hidden settlements flourished beneath the trees, connected by ancient paths and protected by powerful wardens who kept the peace between the many creatures that called the forest home.
+		That peace ended when the dark substance flowing from the Blackveins began to spread into the woodland.
+		It collected in stagnant pools between the roots, staining the soil and slowly changing the forest.
+		The oldest inhabitants remember a time when the forest was ruled by a powerful king-mage who maintained its fragile balance for generations. His reign ended when a creature from beyond the mortal world entered the Gloamwood, seeking to consume the forest and claim it as its own.
+		The creature was defeated, but the battle left parts of the forest permanently scarred. The fires ignited by its death spread through the black pools, creating flames that burned long after there was nothing left to consume.
+		Deep within the forest, travelers occasionally find a skeletal figure standing motionless among the roots, bow still in hand, as though waiting for a battle that ended centuries ago.",
+		"music": "gloamwood",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"hoven": {
-		"name": "Hoven",
-		"description": "A mysterious land surrounded by ancient wilderness.",
-		"music": "hoven",
+	"the_stonewild": {
+		"name": "The Stonewild",
+		"description": "The Stonewild is an immense jungle where ancient ruins disappear beneath layers of roots, vines, and moss.
+		Towering trees block out much of the sky, while enormous stone structures rise from the vegetation, remnants of a civilization that vanished long ago.
+		Strange energy moves through the oldest parts of the jungle, causing ancient mechanisms to activate and stone figures to move when no living creature is near them.
+		Beneath the deepest layers of the jungle lie enormous chambers. Within them are traces of creatures that once dominated the region long before humans built their first temples.
+		Two of the largest chambers remain sealed.",
+		"music": "the_stonewild",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"fellstrath": {
-		"name": "Fellstrath",
-		"description": "A dark and corrupted region.",
-		"music": "fellstrath",
+	"thundersteppe": {
+		"name": "Thundersteppe",
+		"description": "The Thundersteppe is a vast highland expanse of red earth, barren plateaus, and endless winds.
+		Stretching beneath an open sky, the region offers little shelter from the violent storms that sweep across the land throughout the year.
+		Scattered clans travel between settlements and seasonal camps, following the rains that bring life to the otherwise unforgiving land.
+		Ancient structures lay scattered across the plateaus. Ruined towers and strange metal frameworks stand on the highest ridges, positioned precisely where the storms strike most often.
+		Some clans believe these structures were built by their ancestors to communicate with the storms. Others believe they were built to control them.
+		The most ambitious among them have begun restoring the ancient devices, combining old designs with their own inventions to capture the power of lightning.",
+		"music": "thundersteppe",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"druud": {
-		"name": "Druud",
-		"description": "A dangerous territory filled with forgotten secrets.",
-		"music": "druud",
+	"glasslands": {
+		"name": "Glasslands",
+		"description": "The Glasslands are a barren expanse of cracked earth, scorched rock, and narrow valleys where water is worth more than gold.
+		Rain falls only a few times each year, and entire communities survive by collecting every drop before the dry winds return.
+		The people who inhabit the region have developed strange ways of surviving its relentless climate. Ancient burrowing creatures roam beneath the surface, and some settlements have learned to guide them through the earth, using their unusual abilities to create networks of hollow glass tunnels beneath the desert.
+		When the rare rains arrive, water flows through these underground channels and collects in hidden reservoirs. A single intact system can sustain a settlement for months.
+		The Glasslands are also home to scattered outlaw communities that have existed beyond the reach of distant kingdoms for generations.
+		Religious orders from the surrounding lands have repeatedly attempted to eradicate these tribes traditions, declaring them dangerous and unnatural.
+		Hidden among the barren hills are the remains of an old academy whose purpose has been deliberately erased from surviving records. Its sealed chambers contain evidence of generations of experiments involving magic, bloodlines, and the suppression of supernatural abilities.",
+		"music": "glasslands",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"hazhadal_barrens": {
-		"name": "Hazhadal Barrens",
-		"description": "A vast barren region where survival is a constant struggle.",
-		"music": "hazhadal_barrens",
+	"veyraku": {
+		"name": "Veyraku",
+		"description": "Veyraku was once a secluded island civilization renowned for its mastery of the blade, intricate craftsmanship, and traditions that had been preserved for countless generations.
+		Every warrior of Veyraku carried a mask carved by hand and bound to their lineage.
+		It represented the identity of its wearer, their family, their achievements, and their place within society.
+		The island's greatest masters devoted their entire lives to perfecting the art of the sword. Duels were treated as sacred rituals, and the techniques developed in Veyraku were guarded with extraordinary discipline.
+		For centuries, the islands prospered in isolation. Then, in a single night, everything ended. Fires spread across the settlements while the sea surrounding the islands began to rise in unnatural waves.
+		No surviving record explains what caused the catastrophe. Some believe the ruling houses attempted to harness a power they could not control. Others claim the destruction began when the island's oldest traditions were broken.
+		By dawn, Veyraku had ceased to exist as a civilization.",
+		"music": "veyraku",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"ivory_isles": {
-		"name": "Ivory Isles",
-		"description": "Beautiful islands hiding dangers beneath their surface.",
-		"music": "ivory_isles",
+	"velashan": {
+		"name": "Velashan",
+		"description": "Velashan was once a renowned city of scholars, artists, and sacred artisans, built around a tradition of mystical calligraphy unlike any practiced elsewhere in the world.
+		The people of Velashan believed that written symbols possessed power beyond their physical form. Every line, curve, and mark carried meaning, and master calligraphers spent decades studying the relationship between ink, thought, and spirit.
+		At the center of the city stood an ancient temple containing a sacred runestone. Once in a generation, a chosen guardian would perform the Binding, painting a series of symbols upon the stone with specially prepared temple ink.
+		The ritual connected the guardian to the people of Velashan, allowing them to share strength, pain, and life itself. The guardian became both protector and vessel, carrying the collective spirit of the city within a single soul.
+		For centuries, the ritual was performed without failure. Then one guardian attempted to improve it. The ink had been altered before the ceremony, contaminated with a substance whose origin was never discovered.
+		When the first symbol was painted, the ritual twisted upon itself. The guardian survived by forcing the corruption outward through the bond.
+		Every other soul connected to the ritual received it instead.",
+		"music": "velashan",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"ashkavor": {
-		"name": "Ashkavor",
-		"description": "A volcanic region covered in ash and ancient ruins.",
-		"music": "ashkavor",
+	"the_drowned_marches": {
+		"name": "The Drowned Marches",
+		"description": "The Drowned Marches are a vast expanse of flooded lowlands, shallow lakes, muddy islands, and winding waterways stretching across the eastern frontier.
+		Thousands of small tarns cover the region, separated by narrow strips of land that disappear beneath the water whenever the rains arrive.
+		For generations, the people of the Marches lived under rulers they believed to be divine guardians of their land. The truth was far darker.
+		Those who claimed to speak for the old gods were creatures that had taken control of the region from within, manipulating its people through fear, ritual, and carefully maintained superstition.
+		When an invading army finally entered the Marches, what followed became one of the longest wars in the region's history.
+		The conflict lasted seven years. Battles were fought across islands, flooded villages, narrow causeways, and endless stretches of mud. Armies disappeared beneath the water, entire settlements changed hands repeatedly, and thousands of soldiers died without their bodies ever being recovered.
+		The people of the Marches still tell stories of lights moving across the water at night, far from any settlement.
+		Some believe they are the spirits of those who died during the war.",
+		"music": "the_drowned_marches",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"thousand_tarns": {
-		"name": "Thousand Tarns",
-		"description": "A land of countless lakes and hidden passages.",
-		"music": "thousand_tarns",
+	"yun_shai": {
+		"name": "Yun-Shai",
+		"description": "Yun-Shai is an ancient land shaped by water, where enormous rivers once carved their way through fertile valleys before a catastrophic flood swallowed entire civilizations beneath the waves.
+		Long before the modern kingdoms existed, the people of Yun-Shai built vast systems of canals, reservoirs, stone embankments, and enormous floodgates to control the waters. Their engineers became renowned for their ability to redirect rivers and hold back floods that would have destroyed lesser civilizations.
+		Then came the Great Deluge. For months, the waters continued to rise despite every attempt to contain them. Rivers changed their courses, mountainsides collapsed, and entire cities disappeared beneath the expanding inland sea.
+		The people of Yun-Shai eventually constructed a colossal network of channels designed to drain the flooded valleys and return the waters to the ocean.
+		Today, Yun-Shai is a vast region of ancient riverbeds, enormous stone channels, ruined dams, and half-buried cities. Some waterways still flow through structures built thousands of years ago, following courses determined by engineers whose names have long been forgotten.",
+		"music": "yun_shai",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"gun_yu": {
-		"name": "Gun-Yu",
-		"description": "A distant region with its own ancient traditions.",
-		"music": "gun_yu",
+	"the_last_horizon": {
+		"name": "The Last Horizon",
+		"description": "The Last Horizon is a vast frontier at the farthest edge of the known world, where the roads of the great kingdoms gradually disappear into untouched wilderness.
+		Few permanent settlements exist beyond the old borders, and the maps of most kingdoms simply end at the beginning of the region.
+		For centuries, explorers believed there was little beyond the distant mountains and endless plains. Those who ventured farther rarely returned, and their reports were dismissed as the exaggerations of exhausted travelers.
+		That changed when new paths began appearing across the frontier.
+		Ancient roads emerged from beneath the soil. Stone markers were discovered deep within forests. Ruined structures stood in places no known civilization had ever settled. Even the oldest maps began proving incomplete.",
+		"music": "the_last_horizon",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"new_frontiers": {
-		"name": "New Frontiers",
-		"description": "Uncharted lands waiting to be explored.",
-		"music": "new_frontiers",
+	"the_sunscar": {
+		"name": "The Sunscar",
+		"description": "The Sunscar is a vast stretch of barren land where the heat of the sun has reduced once-fertile valleys to cracked earth and dust.
+		But the region was not always this way. Centuries ago, The Sunscar endured a period of drought so severe that crops failed across entire kingdoms. Season after season passed without meaningful rain, and desperation slowly replaced reason.
+		Communities abandoned their homes, settlements fought over wells, and travelers were blamed for the misfortune that had fallen upon the land.
+		Among the most persecuted were wandering mages.
+		Their presence was blamed for the failing rains, the dying crops, and the endless heat. Villages turned on anyone suspected of practicing magic, and entire groups were driven into the wilderness. Some were captured and publicly executed, while others disappeared into the desert, carrying their knowledge with them.
+		The descendants of those who survived formed scattered communities across The Sunscar, relying on ancient wells, underground cisterns, and carefully preserved knowledge of the land. Some still refuse to speak of magic. Others secretly practice the very arts their ancestors were once killed for.
+		",
+		"music": "the_sunscar",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
 	},
 
-	"drylands": {
-		"name": "Drylands",
-		"description": "A vast dry region where water is more valuable than gold.",
-		"music": "drylands",
-		"heroes": [],
-		"unlocked": true,
-		"background": ""
-	},
-
-	"dezun": {
-		"name": "Dezun",
-		"description": "A mysterious region at the southern edge of the world.",
-		"music": "dezun",
+	"the_veilbound": {
+		"name": "The Veilbound",
+		"description": "The Veilbound is an isolated land dominated by an ancient religious order that has spent generations studying the boundary between the physical world and something that exists beyond it.
+		The order's temples are built around strange natural formations where reality appears unusually thin.
+		Shadows move incorrectly, sounds travel without a source, and objects occasionally appear to exist in two places at once. The Veilbound believe these places are sacred gateways to a realm inhabited by beings they call the Ascended.
+		Children chosen by the order begin their training at an early age. They study meditation, ritual magic, ancient texts, and the strange phenomena surrounding the Veil.
+		Only a handful are eventually permitted to attempt the Rite of Crossing, the final trial required to become a full member of the order.
+		During the ritual, the initiate must pass through the Veil and survive in the realm beyond it.
+		Those who return are never quite the same. Their perception changes. Some develop the ability to see things hidden from ordinary eyes. Others return with memories of places that cannot exist in the physical world. A few come back unable to recognize their own reflections.",
+		"music": "the_veilbound",
 		"heroes": [],
 		"unlocked": true,
 		"background": ""
@@ -2216,10 +2375,12 @@ var zones: Dictionary = {
 # ZONE FUNCTIONS
 # ============================================================
 
-## Converts a display name like "Xhacatocail Mountains" or "Gun-Yu" into
-## the matching dictionary key ("xhacatocail_mountains", "gun_yu").
-## Map.gd should use this instead of hand-building the id, so the two
-## scripts can never drift out of sync with each other again.
+## Converts a zone's display name into its dictionary key - lowercase,
+## spaces and hyphens as underscores (e.g. "The Verdant Scar" ->
+## "the_verdant_scar", "Yun-Shai" -> "yun_shai"). Zone ids are derived
+## from their names this way, so a zone renamed later should get its id
+## (and PlayerManager.LEGACY_ZONE_IDS, for old saves) updated to match.
+## The map itself links its labels to zones by id (Map.gd's REGIONS).
 func zone_id_from_name(zone_name: String) -> String:
 	return zone_name.to_lower().replace(" ", "_").replace("-", "_")
 
@@ -2232,8 +2393,8 @@ func select_zone(zone_id: String) -> void:
 	selected_zone = zone_id
 
 
-## Convenience wrapper: pass the display name straight from Map.gd,
-## e.g. GameManager.select_zone_by_name("Xhacatocail Mountains")
+## Convenience wrapper: select a zone by its display name, e.g.
+## GameManager.select_zone_by_name("The Verdant Scar").
 func select_zone_by_name(zone_name: String) -> void:
 	select_zone(zone_id_from_name(zone_name))
 
@@ -2307,8 +2468,8 @@ const HERO_FIGHT_GOLD_MAX_MULTIPLIER: float = 0.4
 ## can be fought through the same _spawn_enemy()/_enemy_turn() path as
 ## regular creeps. Damage collapses from the hero's "min-max" range to
 ## a flat average, since enemies deal one flat number per hit rather
-## than rolling a range. "range_type" ("Range"/"Melee"/"Mele", not
-## always consistently capitalized) maps to the "mele"/"range" type
+## than rolling a range. "range_type" ("Range"/"Melee"/"Melee", not
+## always consistently capitalized) maps to the "melee"/"range" type
 ## regular enemies use.
 func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 	var stats: Dictionary = hero_static.get("stats", {})
@@ -2326,7 +2487,7 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 		"id": hero_id,
 		"name": hero_static.get("name", "Rival Hero"),
 		"image": hero_static.get("image", ""),
-		"type": "range" if is_ranged else "mele",
+		"type": "range" if is_ranged else "melee",
 		"hp": hp,
 		"damage": flat_damage,
 		"armor": float(stats.get("armor", 0)),
@@ -2362,13 +2523,14 @@ func build_hero_fight_enemy_def(hero_static: Dictionary) -> Dictionary:
 # ============================================================
 # SHOP DATA
 # ============================================================
-# Which item ids are currently sold in the Shop scene, and how many
-# of each are in stock per visit. Kept separate from `items` so the
+# Which item ids are currently sold in the Shop scene, and which of
+# them have limited stock per visit (everything else is unlimited). Kept separate from `items` so the
 # full item catalog (including ones not sold yet, like the stat
 # boosts) doesn't have to be filtered down at runtime.
 
 const SHOP_ITEM_IDS: Array[String] = ["health", "mana", "gauntlets_of_strength", "mantle_of_intelligence",
 "slippers_of_agility", "circlet", "blades_of_attack", "cleaver", "hunters_bow", "morbid_mask", "broadsword", "claymore"]
+const SHOP_LIMITED_STOCK_IDS: Array[String] = ["health", "mana"]
 const SHOP_STOCK_PER_ITEM: int = 3
 
 

@@ -3,53 +3,210 @@
 [ext_resource type="Script" uid="uid://bklsl80wkncih" path="res://scripts/Shop.gd" id="1"]
 [ext_resource type="Texture2D" uid="uid://dbsedb3urnq3v" path="res://assets/shop_menu.jpg" id="2_ec5oe"]
 
-[sub_resource type="StyleBoxFlat" id="ShopGoldPanelStyle"]
-bg_color = Color(0, 0, 0, 0.55)
+[sub_resource type="StyleBoxFlat" id="SellButtonDisabled"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.12, 0.08, 0.07, 1)
 border_width_left = 1
 border_width_top = 1
 border_width_right = 1
 border_width_bottom = 1
-border_color = Color(1, 1, 1, 0.25)
-corner_radius_top_left = 8
-corner_radius_top_right = 8
-corner_radius_bottom_right = 8
-corner_radius_bottom_left = 8
+border_color = Color(0.3, 0.24, 0.18, 0.8)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="SellButtonHover"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.44, 0.1, 0.06, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.85, 0.6, 0.3, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+shadow_color = Color(0.9, 0.35, 0.1, 0.3)
+shadow_size = 4
+
+[sub_resource type="StyleBoxFlat" id="SellButtonNormal"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.3, 0.065, 0.045, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.55, 0.38, 0.2, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="SellButtonPressed"]
+content_margin_left = 10.0
+content_margin_right = 10.0
+bg_color = Color(0.18, 0.035, 0.025, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.55, 0.38, 0.2, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="ShopButtonDisabled"]
+content_margin_left = 8.0
+content_margin_top = 4.0
+content_margin_right = 8.0
+content_margin_bottom = 4.0
+bg_color = Color(0.07, 0.055, 0.05, 0.8)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.28, 0.22, 0.16, 0.7)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxEmpty" id="SellButtonFocus"]
+
+[sub_resource type="StyleBoxFlat" id="ShopButtonHover"]
+content_margin_left = 8.0
+content_margin_top = 4.0
+content_margin_right = 8.0
+content_margin_bottom = 4.0
+bg_color = Color(0.16, 0.11, 0.08, 0.95)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.8, 0.58, 0.3, 1)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+shadow_color = Color(0.9, 0.5, 0.15, 0.25)
+shadow_size = 4
+
+[sub_resource type="StyleBoxFlat" id="ShopButtonNormal"]
+content_margin_left = 8.0
+content_margin_top = 4.0
+content_margin_right = 8.0
+content_margin_bottom = 4.0
+bg_color = Color(0.1, 0.07, 0.055, 0.95)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.45, 0.32, 0.18, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="StyleBoxFlat" id="ShopButtonPressed"]
+content_margin_left = 8.0
+content_margin_top = 4.0
+content_margin_right = 8.0
+content_margin_bottom = 4.0
+bg_color = Color(0.06, 0.04, 0.03, 0.95)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.55, 0.4, 0.22, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
+
+[sub_resource type="Theme" id="ShopTheme"]
+BloodButton/base_type = &"Button"
+BloodButton/colors/font_color = Color(0.93, 0.8, 0.55, 1)
+BloodButton/colors/font_focus_color = Color(0.93, 0.8, 0.55, 1)
+BloodButton/colors/font_hover_color = Color(1, 0.9, 0.68, 1)
+BloodButton/colors/font_pressed_color = Color(0.85, 0.7, 0.45, 1)
+BloodButton/styles/disabled = SubResource("SellButtonDisabled")
+BloodButton/styles/hover = SubResource("SellButtonHover")
+BloodButton/styles/normal = SubResource("SellButtonNormal")
+BloodButton/styles/pressed = SubResource("SellButtonPressed")
+Button/colors/font_color = Color(0.88, 0.8, 0.66, 1)
+Button/colors/font_disabled_color = Color(0.5, 0.44, 0.38, 1)
+Button/colors/font_focus_color = Color(0.88, 0.8, 0.66, 1)
+Button/colors/font_hover_color = Color(1, 0.9, 0.7, 1)
+Button/colors/font_pressed_color = Color(0.8, 0.7, 0.55, 1)
+Button/styles/disabled = SubResource("ShopButtonDisabled")
+Button/styles/focus = SubResource("SellButtonFocus")
+Button/styles/hover = SubResource("ShopButtonHover")
+Button/styles/normal = SubResource("ShopButtonNormal")
+Button/styles/pressed = SubResource("ShopButtonPressed")
+Label/colors/font_color = Color(0.88, 0.82, 0.72, 1)
+
+[sub_resource type="StyleBoxFlat" id="ShopGoldPanelStyle"]
+bg_color = Color(0.05, 0.03, 0.025, 0.85)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.55, 0.4, 0.22, 0.9)
+corner_radius_top_left = 2
+corner_radius_top_right = 2
+corner_radius_bottom_right = 2
+corner_radius_bottom_left = 2
 
 [sub_resource type="StyleBoxFlat" id="ShopItemsPanelStyle"]
-bg_color = Color(0.08, 0.1, 0.09, 0.85)
+bg_color = Color(0, 0, 0, 0)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.3, 0.55, 0.5, 0.8)
-corner_radius_top_left = 10
-corner_radius_top_right = 10
-corner_radius_bottom_right = 10
-corner_radius_bottom_left = 10
+border_color = Color(0.55, 0.4, 0.22, 0.9)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+shadow_color = Color(0, 0, 0, 0.5)
+shadow_size = 12
 
 [sub_resource type="StyleBoxFlat" id="ShopDetailsPanelStyle"]
-bg_color = Color(0.05, 0.04, 0.03, 0.9)
+bg_color = Color(0, 0, 0, 0)
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
-border_color = Color(0.6, 0.5, 0.3, 0.85)
-corner_radius_top_left = 10
-corner_radius_top_right = 10
-corner_radius_bottom_right = 10
-corner_radius_bottom_left = 10
+border_color = Color(0.55, 0.4, 0.22, 0.9)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
 
 [sub_resource type="StyleBoxFlat" id="SellPopupStyle"]
-bg_color = Color(0.04, 0.09, 0.05, 0.97)
-border_width_left = 3
-border_width_top = 3
-border_width_right = 3
-border_width_bottom = 3
-border_color = Color(0.3, 0.85, 0.4, 1)
-corner_radius_top_left = 10
-corner_radius_top_right = 10
-corner_radius_bottom_right = 10
-corner_radius_bottom_left = 10
+bg_color = Color(0.055, 0.035, 0.028, 0.97)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.55, 0.4, 0.22, 1)
+corner_radius_top_left = 3
+corner_radius_top_right = 3
+corner_radius_bottom_right = 3
+corner_radius_bottom_left = 3
+shadow_color = Color(0, 0, 0, 0.75)
+shadow_size = 48
+
+[sub_resource type="StyleBoxLine" id="SellDivider"]
+color = Color(0.55, 0.4, 0.22, 0.7)
+grow_begin = -40.0
+grow_end = -40.0
 
 [node name="Shop" type="Control" unique_id=1608418072]
 layout_mode = 3
@@ -58,6 +215,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+theme = SubResource("ShopTheme")
 script = ExtResource("1")
 
 [node name="Background" type="TextureRect" parent="." unique_id=1961203182]
@@ -109,7 +267,7 @@ alignment = 1
 
 [node name="GoldLabel" type="Label" parent="GoldPanel/GoldMargin/GoldRow" unique_id=293551058]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.88, 0.82, 0.72, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 16
@@ -117,7 +275,7 @@ text = "Gold:"
 
 [node name="GoldValueLabel" type="Label" parent="GoldPanel/GoldMargin/GoldRow" unique_id=1361975407]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_color = Color(0.95, 0.78, 0.4, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 16
@@ -138,14 +296,10 @@ text = "Sell Items"
 [node name="ShopItemsPanel" type="PanelContainer" parent="." unique_id=240671295]
 layout_mode = 1
 anchors_preset = -1
-anchor_left = 0.39100003
-anchor_top = 0.22100002
-anchor_right = 0.92300004
-anchor_bottom = 0.81100005
-offset_left = -0.4800415
-offset_top = -0.120010376
-offset_right = -0.44006348
-offset_bottom = 0.079956055
+anchor_left = 0.45703
+anchor_top = 0.20278
+anchor_right = 0.89844
+anchor_bottom = 0.825
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("ShopItemsPanelStyle")
@@ -165,6 +319,11 @@ theme_override_constants/separation = 14
 layout_mode = 2
 theme_override_constants/separation = 8
 
+[node name="LeftSpacer" type="Control" parent="ShopItemsPanel/ItemsMargin/ItemsVBox/TitleRow" unique_id=1270220961]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+mouse_filter = 2
+
 [node name="PrevPageButton" type="Button" parent="ShopItemsPanel/ItemsMargin/ItemsVBox/TitleRow" unique_id=1525250964]
 custom_minimum_size = Vector2(36, 32)
 layout_mode = 2
@@ -173,7 +332,7 @@ text = "<"
 [node name="TitleLabel" type="Label" parent="ShopItemsPanel/ItemsMargin/ItemsVBox/TitleRow" unique_id=812052636]
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.9, 0.74, 0.45, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 20
@@ -185,8 +344,14 @@ custom_minimum_size = Vector2(36, 32)
 layout_mode = 2
 text = ">"
 
+[node name="RightSpacer" type="Control" parent="ShopItemsPanel/ItemsMargin/ItemsVBox/TitleRow" unique_id=1216787510]
+custom_minimum_size = Vector2(80, 0)
+layout_mode = 2
+mouse_filter = 2
+
 [node name="ItemsGrid" type="GridContainer" parent="ShopItemsPanel/ItemsMargin/ItemsVBox" unique_id=1938864948]
 layout_mode = 2
+size_flags_horizontal = 4
 theme_override_constants/h_separation = 20
 theme_override_constants/v_separation = 18
 columns = 3
@@ -194,31 +359,25 @@ columns = 3
 [node name="MessageLabel" type="Label" parent="." unique_id=202803221]
 layout_mode = 1
 anchors_preset = -1
-anchor_left = 0.017
-anchor_top = 0.63900006
-anchor_right = 0.337
-anchor_bottom = 0.70900005
-offset_left = 0.23999786
-offset_top = -0.08004761
-offset_right = 0.23995972
-offset_bottom = -0.080078125
+anchor_left = 0.03125
+anchor_top = 0.70278
+anchor_right = 0.3625
+anchor_bottom = 0.74444
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_colors/font_color = Color(1, 0.9, 0.5, 1)
+theme_override_colors/font_color = Color(0.82, 0.78, 0.72, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 horizontal_alignment = 1
 
 [node name="ItemDetailsPanel" type="PanelContainer" parent="." unique_id=1507692581]
 layout_mode = 1
 anchors_preset = -1
-anchor_left = 0.020000001
-anchor_top = 0.768
-anchor_right = 0.34
-anchor_bottom = 0.98
-offset_top = 0.039978027
-offset_right = -0.2000122
+anchor_left = 0.02813
+anchor_top = 0.74444
+anchor_right = 0.36562
+anchor_bottom = 0.98889
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_styles/panel = SubResource("ShopDetailsPanelStyle")
@@ -236,7 +395,7 @@ theme_override_constants/separation = 8
 
 [node name="DetailsNameLabel" type="Label" parent="ItemDetailsPanel/DetailsMargin/DetailsVBox" unique_id=2124784410]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_color = Color(0.9, 0.74, 0.45, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 3
 theme_override_font_sizes/font_size = 18
@@ -247,7 +406,7 @@ autowrap_mode = 2
 [node name="DetailsDescriptionLabel" type="Label" parent="ItemDetailsPanel/DetailsMargin/DetailsVBox" unique_id=1254142957]
 layout_mode = 2
 size_flags_vertical = 3
-theme_override_colors/font_color = Color(0.85, 0.85, 0.85, 1)
+theme_override_colors/font_color = Color(0.78, 0.72, 0.64, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -257,7 +416,7 @@ autowrap_mode = 2
 
 [node name="DetailsCostLabel" type="Label" parent="ItemDetailsPanel/DetailsMargin/DetailsVBox" unique_id=1443081243]
 layout_mode = 2
-theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
+theme_override_colors/font_color = Color(0.95, 0.78, 0.4, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 2
 theme_override_font_sizes/font_size = 14
@@ -267,6 +426,7 @@ horizontal_alignment = 1
 visible = false
 custom_minimum_size = Vector2(0, 40)
 layout_mode = 2
+theme_type_variation = &"BloodButton"
 text = "Buy"
 
 [node name="SellPopup" type="PanelContainer" parent="." unique_id=765932440]
@@ -298,12 +458,16 @@ theme_override_constants/separation = 10
 
 [node name="SellTitleLabel" type="Label" parent="SellPopup/SellMargin/SellVBox" unique_id=1076395699]
 layout_mode = 2
-theme_override_colors/font_color = Color(0.5, 1, 0.6, 1)
+theme_override_colors/font_color = Color(0.9, 0.74, 0.45, 1)
 theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
 theme_override_constants/outline_size = 4
 theme_override_font_sizes/font_size = 24
 text = "Sell Items"
 horizontal_alignment = 1
+
+[node name="SellDivider" type="HSeparator" parent="SellPopup/SellMargin/SellVBox" unique_id=601574012]
+layout_mode = 2
+theme_override_styles/separator = SubResource("SellDivider")
 
 [node name="SellItemsList" type="VBoxContainer" parent="SellPopup/SellMargin/SellVBox" unique_id=514736882]
 layout_mode = 2

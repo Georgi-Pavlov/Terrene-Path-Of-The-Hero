@@ -26,6 +26,16 @@ corner_radius_top_right = 8
 corner_radius_bottom_right = 8
 corner_radius_bottom_left = 8
 
+[sub_resource type="Gradient" id="TextScrimGradient"]
+offsets = PackedFloat32Array(0, 0.55, 1)
+colors = PackedColorArray(0.015, 0.02, 0.035, 0.62, 0.015, 0.02, 0.035, 0.4, 0.015, 0.02, 0.035, 0)
+
+[sub_resource type="GradientTexture2D" id="TextScrimTexture"]
+gradient = SubResource("TextScrimGradient")
+fill = 1
+fill_from = Vector2(0.5, 0.5)
+fill_to = Vector2(1, 0.5)
+
 [node name="Zone" type="Control" unique_id=2078494384]
 layout_mode = 3
 anchors_preset = 15
@@ -97,6 +107,16 @@ offset_bottom = 285.0
 text = ">"
 theme_override_font_sizes/font_size = 28
 
+[node name="TextScrim" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 610.0
+offset_top = -60.0
+offset_right = 1310.0
+offset_bottom = 400.0
+mouse_filter = 2
+texture = SubResource("TextScrimTexture")
+expand_mode = 1
+
 [node name="Title" type="Label" parent="." unique_id=680346163]
 layout_mode = 1
 anchors_preset = -1
@@ -109,10 +129,14 @@ offset_top = -79.4
 offset_right = 634.0
 offset_bottom = -29.400002
 grow_horizontal = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 6
-theme_override_font_sizes/font_size = 36
+theme_override_colors/font_color = Color(0.9, 0.76, 0.5, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.75)
+theme_override_constants/outline_size = 3
+theme_override_constants/shadow_offset_x = 0
+theme_override_constants/shadow_offset_y = 2
+theme_override_constants/shadow_outline_size = 10
+theme_override_font_sizes/font_size = 34
 horizontal_alignment = 1
 
 [node name="Description" type="Label" parent="." unique_id=2035998558]
@@ -122,15 +146,20 @@ anchor_left = 0.748
 anchor_top = 0.093
 anchor_right = 0.748
 anchor_bottom = 0.093
-offset_left = -313.44006
-offset_top = 0.040000916
-offset_right = 314.55994
+offset_left = -265.0
+offset_top = 6.0
+offset_right = 265.0
 offset_bottom = 588.04
 grow_horizontal = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_colors/font_outline_color = Color(0, 0, 0, 1)
-theme_override_constants/outline_size = 4
-theme_override_font_sizes/font_size = 20
+theme_override_colors/font_color = Color(0.84, 0.83, 0.8, 0.95)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.7)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.8)
+theme_override_constants/outline_size = 2
+theme_override_constants/shadow_offset_x = 0
+theme_override_constants/shadow_offset_y = 1
+theme_override_constants/shadow_outline_size = 8
+theme_override_constants/line_spacing = 3
+theme_override_font_sizes/font_size = 16
 autowrap_mode = 3
 
 [node name="BackButton" type="Button" parent="." unique_id=1499670038]

@@ -103,9 +103,9 @@ const ENTANGLE_TINT_COLOR := Color(0.6, 1.0, 0.55, 1)
 # _flash_bounce_hit() return to instead of a hard-coded Vector2.ONE.
 const HERO_ENLARGED_SCALE := 1.1
 
-# Mote colors for _play_drain_effect(): Essence Shift's stolen stats
-# in Slark's teal, any lifesteal in red (see _play_lifesteal_effect()).
-const ESSENCE_SHIFT_MOTE_COLOR := Color(0.2, 0.9, 0.8, 1.0)
+# Mote colors for _play_drain_effect(): Leeching Hunger's stolen stats
+# in Veyrik's teal, any lifesteal in red (see _play_lifesteal_effect()).
+const LEECHING_HUNGER_MOTE_COLOR := Color(0.2, 0.9, 0.8, 1.0)
 const LIFESTEAL_MOTE_COLOR := Color(1.0, 0.2, 0.15, 1.0)
 
 # Mist Coil's projectile (see _play_mist_coil_effect()): the ball/trail/
@@ -385,52 +385,52 @@ var _skill_cooldown_labels: Dictionary = {}
 var _pending_level_up_skill_id: String = ""
 
 # ------------------------------------------------------------------
-# Slark's Essence Shift: while active, Slark's next
-# _essence_shift_attacks_remaining melee hits each steal 1 point of
-# the target's main stat (see _apply_essence_shift_steal()). All
+# Veyrik's Leeching Hunger: while active, Veyrik's next
+# _leeching_hunger_attacks_remaining melee hits each steal 1 point of
+# the target's main stat (see _apply_leeching_hunger_steal()). All
 # currently-borrowed stats are handed back - to whichever donor
 # enemies are still alive - together, once
-# _essence_shift_turns_remaining counts down to 0 (see
-# _tick_essence_shift() / _end_essence_shift()).
+# _leeching_hunger_turns_remaining counts down to 0 (see
+# _tick_leeching_hunger() / _end_leeching_hunger()).
 # ------------------------------------------------------------------
-var _essence_shift_active: bool = false
-var _essence_shift_attacks_remaining: int = 0
-var _essence_shift_turns_remaining: int = 0
+var _leeching_hunger_active: bool = false
+var _leeching_hunger_attacks_remaining: int = 0
+var _leeching_hunger_turns_remaining: int = 0
 # True from the moment the skill is cast until the first End Turn
 # after that - the casting turn itself doesn't count against the
-# duration, so this makes _tick_essence_shift() skip exactly one
+# duration, so this makes _tick_leeching_hunger() skip exactly one
 # decrement before duration starts counting down for real.
-var _essence_shift_duration_pending_start: bool = false
+var _leeching_hunger_duration_pending_start: bool = false
 # Every point currently borrowed, so it can be handed back on expiry:
 # each entry is {enemy: Dictionary (that enemy's own _enemies entry),
 # stat: String, amount: int}.
-var _essence_shift_stolen: Array = []
-# Running total of the borrowed stats currently added to Slark -
+var _leeching_hunger_stolen: Array = []
+# Running total of the borrowed stats currently added to Veyrik -
 # purely a battle-local calculation/display modifier (see
 # _roll_hero_damage(), _hero_armor(), _refresh_bars()). Never written
 # to PlayerManager, so it naturally has no effect outside this fight.
-var _essence_shift_bonus: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+var _leeching_hunger_bonus: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 # ------------------------------------------------------------------
-# Slark's Shadow Dance: while active, the hero is hidden (see
+# Veyrik's Depthsveil: while active, the hero is hidden (see
 # _is_hero_hidden()) - regular enemy attacks can't land on him at all
 # (see _enemy_turn()). His next Attack while hidden adds
-# _shadow_dance_bonus_damage on top of the normal roll (still mitigated
+# _depthsveil_bonus_damage on top of the normal roll (still mitigated
 # by the target's armor same as any other damage) and ends the
 # invisibility right there; casting any OTHER skill also ends it
 # early with no bonus damage; using an item does not. Otherwise it
-# just runs out on its own after _shadow_dance_turns_remaining turns.
+# just runs out on its own after _depthsveil_turns_remaining turns.
 # ------------------------------------------------------------------
-var _shadow_dance_active: bool = false
-var _shadow_dance_bonus_damage: float = 0.0
-var _shadow_dance_turns_remaining: int = 0
-# Same "doesn't count on the casting turn" behavior as Essence Shift's
-# duration - see _essence_shift_duration_pending_start.
-var _shadow_dance_duration_pending_start: bool = false
+var _depthsveil_active: bool = false
+var _depthsveil_bonus_damage: float = 0.0
+var _depthsveil_turns_remaining: int = 0
+# Same "doesn't count on the casting turn" behavior as Leeching Hunger's
+# duration - see _leeching_hunger_duration_pending_start.
+var _depthsveil_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
 # Treant Protector's Nature's Guise: functionally the same invisibility
-# as Slark's own Shadow Dance - folded into the very same _is_hero_
+# as Veyrik's own Depthsveil - folded into the very same _is_hero_
 # hidden() check, so every "enemies can't target or chase a hidden
 # hero" rule in _enemy_turn() already applies here for free - just with
 # a different payoff for the Attack that breaks it: instead of bonus
@@ -439,7 +439,7 @@ var _shadow_dance_duration_pending_start: bool = false
 # effects() already ticks down - it can still attack/cast/use items while rooted,
 # same as any other rooted enemy) for _natures_guise_root_turns turns.
 # Casting any OTHER skill still just ends it early with no root, same
-# as Shadow Dance's own "no bonus damage" rule for that case. While
+# as Depthsveil's own "no bonus damage" rule for that case. While
 # active, the hero also moves a flat +1 column further per move (see
 # _hero_move_distance()) - moving unseen covers more ground.
 # ------------------------------------------------------------------
@@ -450,18 +450,18 @@ var _natures_guise_duration_pending_start: bool = false
 
 # ------------------------------------------------------------------
 # Mirana's ultimate, Moonlight Shadow: functionally the same
-# invisibility as Slark's own Shadow Dance - folded into the very same
+# invisibility as Veyrik's own Depthsveil - folded into the very same
 # _is_hero_hidden() check, so every "enemies can't target or chase a
 # hidden hero" rule in _enemy_turn() already applies here for free, and
 # the same bonus-damage-on-breaking-Attack payoff too, just as a
 # PERCENTAGE of the attack's own rolled damage (bonus_damage_pct,
-# applied AFTER the roll) rather than Shadow Dance's own flat pre-roll
+# applied AFTER the roll) rather than Depthsveil's own flat pre-roll
 # bonus_damage - see _apply_hero_attack()'s own read of whichever of
 # the two is actually active (only one hero's kit ever has either, but
 # each still gets its own flag/fields rather than reusing Shadow
 # Dance's, same reasoning Nature's Guise's own separate flag above
 # already follows). Casting any OTHER skill still just ends it early
-# with no bonus damage, same as Shadow Dance's own rule for that case.
+# with no bonus damage, same as Depthsveil's own rule for that case.
 # ------------------------------------------------------------------
 var _moonlight_shadow_active: bool = false
 var _moonlight_shadow_bonus_damage_pct: float = 0.0
@@ -522,15 +522,15 @@ var _reactive_armor_stack_turns: Array[int] = []
 # ------------------------------------------------------------------
 # Winter Wyvern's Arctic Burn: while active, the hero's plain Attacks
 # get a flat bonus_damage (folded into _roll_hero_damage(), same slot
-# Essence Shift's/Shadow Dance's/True Form's own bonus damage use) and
+# Leeching Hunger's/Depthsveil's/True Form's own bonus damage use) and
 # extra reach (folded into _hero_attack_column_range(), so ranged
 # targeting opens further out too), for this level's own `attacks`
 # count of Attacks or `duration` turns - whichever runs out first, same
-# two-limits race as Essence Shift's attacks_remaining/turns_remaining
+# two-limits race as Leeching Hunger's attacks_remaining/turns_remaining
 # (see _apply_arctic_burn_attack()/_tick_arctic_burn()). Recasting
 # while a previous activation is still running just overwrites it
 # outright - there's nothing borrowed to give back first, unlike
-# Essence Shift.
+# Leeching Hunger.
 # ------------------------------------------------------------------
 var _arctic_burn_active: bool = false
 var _arctic_burn_bonus_damage: float = 0.0
@@ -714,7 +714,7 @@ var _ice_shards_wall_nodes: Dictionary = {}
 # ------------------------------------------------------------------
 # Tusk's Tag Team: a self-cast that adds a flat bonus_damage to the
 # hero's own Attacks (folded into _roll_hero_damage(), same slot
-# Arctic Burn's/Essence Shift's/True Form's own bonus damage use) for
+# Arctic Burn's/Leeching Hunger's/True Form's own bonus damage use) for
 # the duration - no attack-count cap, unlike Arctic Burn, just a plain
 # turn-based buff. Same "casting turn doesn't count" pattern as every
 # other duration-based buff (see _tick_tag_team()).
@@ -781,13 +781,13 @@ var _enemy_ai_hero_hidden: bool = false
 
 # ------------------------------------------------------------------
 # Lone Druid's Spirit Link: while active, the hero gets a flat armor
-# bonus (folded into _hero_armor(), same slot Essence Shift's borrowed
+# bonus (folded into _hero_armor(), same slot Leeching Hunger's borrowed
 # armor uses) and lifesteal on his Attacks - a % of an Attack's
 # damage, taken AFTER the target's armor has already reduced it, paid
 # back as HP (see _apply_spirit_link_lifesteal(), called only from
 # _apply_hero_attack() - skill damage never triggers it). Same
-# "casting turn doesn't count" duration pattern as Essence Shift/
-# Shadow Dance. Recasting simply overwrites the running values with
+# "casting turn doesn't count" duration pattern as Leeching Hunger/
+# Depthsveil. Recasting simply overwrites the running values with
 # the new cast's - there's nothing to "give back" the way Essence
 # Shift's borrowed stats are, so no need to end the old one first.
 # ------------------------------------------------------------------
@@ -825,7 +825,7 @@ var _savage_roar_status_label: Label = null
 # CURRENT HP too the moment it's granted, then taken back off again on
 # expiry, clamped so it can never do that part below 1 - see
 # _activate_true_form()/_end_true_form()), bonus damage (folded into
-# _roll_hero_damage() the same way Essence Shift's/Shadow Dance's
+# _roll_hero_damage() the same way Leeching Hunger's/Depthsveil's
 # bonus damage is), and forces melee range for the duration regardless
 # of his own range_type stat (see _is_ranged_hero()) - so if he's
 # normally ranged, Attack just resolves as a melee hit on whatever
@@ -846,10 +846,10 @@ var _true_form_duration_pending_start: bool = false
 # apply_damage()/_end_aphotic_shield()) - in which case it explodes,
 # dealing _aphotic_shield_aoe_damage to every enemy within
 # _aphotic_shield_radius columns of the hero, the same radius-around-
-# a-position AoE concept Dark Pact uses (_cast_dark_pact()). Casting
+# a-position AoE concept Abyssal Spasm uses (_cast_abyssal_spasm()). Casting
 # it also dispels every negative effect currently on the player - root,
-# a hostile Entangle's damage-over-time, Pounce's stun, and a hostile
-# Essence Shift's stat drain (see _activate_aphotic_shield()) - except
+# a hostile Entangle's damage-over-time, Barbed Lunge's stun, and a hostile
+# Leeching Hunger's stat drain (see _activate_aphotic_shield()) - except
 # silence, since _on_skill_pressed() already refuses to cast ANY skill
 # while silenced, so that debuff can never still be active by the time
 # this one goes off.
@@ -932,32 +932,32 @@ var _enemy_potion_mana_count: int = 0
 # starts every skill ready.
 var _enemy_skill_cooldowns: Dictionary = {}
 
-# Slark's Essence Shift, cast by the rival at the PLAYER: unlike the
+# Veyrik's Leeching Hunger, cast by the rival at the PLAYER: unlike the
 # player's own copy (which drains a battle-local counter on the
 # enemy), there's nothing equivalent to permanently drain on the
 # player, so this steals from - and gives back to - a battle-local
-# penalty instead (_player_essence_shift_penalty below), never written
+# penalty instead (_player_leeching_hunger_penalty below), never written
 # to PlayerManager. The stolen stat is always the player's own
 # main_stat (there's only one target, so no need to track "stolen"
-# per-donor the way the player's own _essence_shift_stolen does).
-var _enemy_essence_shift_active: bool = false
-var _enemy_essence_shift_attacks_remaining: int = 0
-var _enemy_essence_shift_turns_remaining: int = 0
-var _enemy_essence_shift_duration_pending_start: bool = false
-var _enemy_essence_shift_bonus: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+# per-donor the way the player's own _leeching_hunger_stolen does).
+var _enemy_leeching_hunger_active: bool = false
+var _enemy_leeching_hunger_attacks_remaining: int = 0
+var _enemy_leeching_hunger_turns_remaining: int = 0
+var _enemy_leeching_hunger_duration_pending_start: bool = false
+var _enemy_leeching_hunger_bonus: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
-# Slark's Shadow Dance, cast by the rival: while active the boss can't
+# Veyrik's Depthsveil, cast by the rival: while active the boss can't
 # be targeted by any of the player's attacks or targeted skills (see
 # _is_target_hidden(), checked from _get_enemy_at()/
 # _start_ranged_targeting()/_start_entangle_targeting()/
-# _cast_dark_pact()) and skips the player's own retaliation-avoidance
+# _cast_abyssal_spasm()) and skips the player's own retaliation-avoidance
 # entirely - rather, HIS retaliation against the player still happens
 # normally (see _enemy_hero_turn()); only being attacked back is
 # blocked.
-var _enemy_shadow_dance_active: bool = false
-var _enemy_shadow_dance_bonus_damage: float = 0.0
-var _enemy_shadow_dance_turns_remaining: int = 0
-var _enemy_shadow_dance_duration_pending_start: bool = false
+var _enemy_depthsveil_active: bool = false
+var _enemy_depthsveil_bonus_damage: float = 0.0
+var _enemy_depthsveil_turns_remaining: int = 0
+var _enemy_depthsveil_duration_pending_start: bool = false
 
 # Lone Druid's Spirit Link, cast by the rival on himself.
 var _enemy_spirit_link_active: bool = false
@@ -1034,7 +1034,7 @@ var _enemy_guardian_sprint_duration_pending_start: bool = false
 # and its own bonus_damage_pct folds into the rival's next Attack as a
 # PERCENTAGE of the roll (see _resolve_enemy_hero_attack()), same "post-
 # roll percentage" shape Bash of the Deep's own bonus uses, rather than
-# Shadow Dance's flat pre-roll one. Reveals itself (ends) the instant
+# Depthsveil's flat pre-roll one. Reveals itself (ends) the instant
 # that empowered Attack actually lands, whether or not it kills the
 # player - same "one guaranteed hit, then the invisibility is spent"
 # rule the player-side copy follows in _apply_hero_attack().
@@ -1061,7 +1061,7 @@ var _enemy_eclipse_duration_pending_start: bool = false
 
 # Kunkka's X Marks the Spot, on the rival - unlike the player's own
 # copy, the target is always the player (the only other participant in
-# a hero fight, same simplification Dark Pact/Mist Coil/Torrent already
+# a hero fight, same simplification Abyssal Spasm/Mist Coil/Torrent already
 # use), so there's nothing to hold onto but a single pending flag - see
 # _cast_enemy_xmarks()/_enemy_hero_turn()'s own teleport check at its
 # very top.
@@ -1136,7 +1136,7 @@ var _enemy_tag_team_duration_pending_start: bool = false
 # mirrors the player's own _activate_natures_guise()/_tick_natures_
 # guise()/_end_natures_guise(): folded into _is_target_hidden() (the
 # enemy-side mirror of the player's own _is_hero_hidden()) so the
-# player can't target/select the hidden boss, same as Shadow Dance's own
+# player can't target/select the hidden boss, same as Depthsveil's own
 # copy - see _is_target_hidden()/_update_enemy_hero_visibility(). The
 # Attack that breaks it roots the player instead of dealing bonus damage
 # - see _resolve_enemy_hero_attack()'s own "attacking_from_enemy_
@@ -1149,7 +1149,7 @@ var _enemy_natures_guise_duration_pending_start: bool = false
 # Treant Protector's Living Armor, cast by the rival on himself - mirrors
 # the player's own _activate_living_armor()/_tick_living_armor()/
 # _end_living_armor(): bonus_armor folds into _enemy_hero_bonus_armor()
-# (the same slot Essence Shift's/Spirit Link's own bonus armor already
+# (the same slot Leeching Hunger's/Spirit Link's own bonus armor already
 # share there), bonus_hp_regen heals the rival on top of his own
 # baseline passive regen (_tick_enemy_passive_regen()) every tick - see
 # _tick_enemy_living_armor().
@@ -1238,16 +1238,16 @@ var _last_enemy_illusion_redirect: Dictionary = {}
 # _reset_enemy_hero_state() before each new one.
 # ------------------------------------------------------------------
 
-# Essence Shift's running toll on the player - subtracted everywhere
-# the matching _essence_shift_bonus is normally ADDED (see
+# Leeching Hunger's running toll on the player - subtracted everywhere
+# the matching _leeching_hunger_bonus is normally ADDED (see
 # _hero_max_hp(), _hero_armor(), _roll_hero_damage(), _refresh_bars())
-# so a hostile Essence Shift is exactly as strong in reverse as the
+# so a hostile Leeching Hunger is exactly as strong in reverse as the
 # player's own copy is in his favor. Reset to all-zero, in one shot,
-# once the cast that caused it ends (_end_enemy_essence_shift()) -
+# once the cast that caused it ends (_end_enemy_leeching_hunger()) -
 # there's only one victim (the player), so there's no per-donor
-# bookkeeping to do the way the player's own _essence_shift_stolen
+# bookkeeping to do the way the player's own _leeching_hunger_stolen
 # needs for potentially many enemies.
-var _player_essence_shift_penalty: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+var _player_leeching_hunger_penalty: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 # Entangle's root/silence/damage-over-time, cast by the rival on the
 # player - the mirror of _apply_root(), just aimed at the player
@@ -1259,18 +1259,18 @@ var _player_silence_turns_left: int = 0
 var _player_entangle_dot_damage: float = 0.0
 var _player_entangle_dot_turns_left: int = 0
 
-# Pounce's stun on the player - counts down once per _end_turn() call
+# Barbed Lunge's stun on the player - counts down once per _end_turn() call
 # while > 0, each time skipping the player's own action entirely and
 # immediately re-triggering _end_turn() again (see its tail) so the
 # rival keeps acting until it wears off, the same way a stunned enemy
-# just loses its turn to the player's own Pounce.
+# just loses its turn to the player's own Barbed Lunge.
 var _player_stun_turns_left: int = 0
 
 # Set alongside _player_stun_turns_left specifically by
 # _cast_enemy_winters_curse() (see that function's own comment on why
 # it collapses onto the shared stun field) - purely cosmetic, so the
 # frost screen tint/status icon can tell "frozen by Winter's Curse"
-# apart from a Torrent/Pounce/Ice Blast/Frostbite stun, all of which
+# apart from a Torrent/Barbed Lunge/Ice Blast/Frostbite stun, all of which
 # also just set the same field. Cleared wherever the stun itself is
 # (a fresh dispel or the stun's own natural countdown reaching 0).
 var _player_winters_curse_active: bool = false
@@ -1574,7 +1574,7 @@ const RANGE_ENEMY_FLEE_DISTANCE := 1
 # _apply_enemy_curse_of_avernus_stack()/
 # _maybe_consume_enemy_tidebringer_stack()).
 const ENEMY_KNOWN_SKILL_IDS: Array[String] = [
-	"dark_pact", "pounce", "essence_shift", "shadow_dance",
+	"abyssal_spasm", "barbed_lunge", "leeching_hunger", "depthsveil",
 	"entangle", "summon_spirit_bear", "spirit_link", "true_form",
 	"mist_coil", "aphotic_shield", "torrent", "x_marks_the_spot", "ghostship",
 	"cold_feet", "ice_vortex", "chilling_touch", "ice_blast",
@@ -1631,7 +1631,7 @@ var _in_hero_fight: bool = false
 var _hero_fight_target_id: String = ""
 
 # Bumped every time _advance_to_next_stage() runs. Action handlers
-# that might kill the last enemy of a stage (attack, Pounce, Dark
+# that might kill the last enemy of a stage (attack, Barbed Lunge, Dark
 # Pact) capture this before acting and check it again after - if it
 # changed, a stage transition already reset the turn state (fresh
 # actions, only skill cooldowns carried over) and they must NOT then
@@ -1735,24 +1735,24 @@ func _apply_armor_reduction(raw_damage: float, armor: float) -> float:
 	return maxf(0.0, raw_damage * (1.0 - reduction))
 
 
-## Hero's total max HP: base stat plus Essence Shift's borrowed hp
+## Hero's total max HP: base stat plus Leeching Hunger's borrowed hp
 ## plus True Form's bonus hp while each is active - the one place
 ## that combination is computed, used by the HP bar, Savage Roar's
 ## threshold check, and the bear-death HP penalty.
 func _hero_max_hp() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("hp", 0)) + _essence_shift_bonus.get("hp", 0.0) + _true_form_bonus_hp - _player_essence_shift_penalty.get("hp", 0.0)
+	return float(stats.get("hp", 0)) + _leeching_hunger_bonus.get("hp", 0.0) + _true_form_bonus_hp - _player_leeching_hunger_penalty.get("hp", 0.0)
 
 
 ## Hero's total armor: base stat from GameManager plus any permanent
 ## bonus picked up from items (mirrors how damage bonus is combined
 ## in _roll_hero_damage), plus any armor currently borrowed via
-## Essence Shift, plus Spirit Link's flat bonus, Living Armor's own
+## Leeching Hunger, plus Spirit Link's flat bonus, Living Armor's own
 ## flat bonus, and Reactive Armor's own per-stack bonus, each while
 ## active.
 func _hero_armor() -> float:
 	var stats: Dictionary = _recruited.get("stats", {})
-	return float(stats.get("armor", 0)) + _essence_shift_bonus.get("armor", 0.0) + _spirit_link_bonus_armor + _living_armor_bonus_armor + _reactive_armor_bonus_armor() - _player_essence_shift_penalty.get("armor", 0.0) - _player_armor_reduction
+	return float(stats.get("armor", 0)) + _leeching_hunger_bonus.get("armor", 0.0) + _spirit_link_bonus_armor + _living_armor_bonus_armor + _reactive_armor_bonus_armor() - _player_leeching_hunger_penalty.get("armor", 0.0) - _player_armor_reduction
 
 
 ## Savage Roar's current level data ({} if not learned yet) - looked
@@ -1874,19 +1874,19 @@ func _load_enemies() -> void:
 	var zone_data: Dictionary = GameManager.get_selected_zone()
 	var enemy_defs: Array = zone_data.get("enemies", [])
 
-	var mele_templates: Array = []
+	var melee_templates: Array = []
 	var range_templates: Array = []
 	for enemy_def in enemy_defs:
 		if enemy_def.get("type", "") == "range":
 			range_templates.append(enemy_def)
 		else:
-			mele_templates.append(enemy_def)
+			melee_templates.append(enemy_def)
 
 	var counts: Dictionary = GameManager.get_stage_enemy_counts(_current_stage)
 
 	# Tutorial stage 3 (see TutorialManager.start_stage3()) puts the
 	# hero into this stage's real enemy composition (5 melee + 2 range
-	# at Cladd Isles) while deliberately low on HP - fine for the brief
+	# at The Ironbound Isles) while deliberately low on HP - fine for the brief
 	# stage 2 scenario (one attack, then flee), but that many attackers
 	# every turn is lethal over stage 3's longer script (level up, wait
 	# for reinforcements, cast the ultimate, mop up). Opens with stage
@@ -1896,7 +1896,7 @@ func _load_enemies() -> void:
 	if TutorialManager.is_active and TutorialManager.current_stage == 3:
 		counts = GameManager.get_stage_enemy_counts(1)
 
-	_spawn_stage_enemies(mele_templates, int(counts.get("mele", 0)))
+	_spawn_stage_enemies(melee_templates, int(counts.get("melee", 0)))
 	_spawn_stage_enemies(range_templates, int(counts.get("range", 0)))
 
 
@@ -1976,7 +1976,7 @@ func _spawn_enemy(enemy_def: Dictionary) -> void:
 		visual_offset = _enemy_count_of_type("range") * 16.0
 	else:
 		pos_index = 7
-		visual_offset = _enemy_count_of_type("mele") * 16.0
+		visual_offset = _enemy_count_of_type("melee") * 16.0
 
 	tex_rect.position = Vector2(_index_to_x(pos_index) + visual_offset, y_pos)
 
@@ -2208,22 +2208,22 @@ func _spawn_reinforcements() -> void:
 	var zone_data: Dictionary = GameManager.get_selected_zone()
 	var enemy_defs: Array = zone_data.get("enemies", [])
 
-	var mele_templates: Array = []
+	var melee_templates: Array = []
 	var range_templates: Array = []
 	for enemy_def in enemy_defs:
 		if enemy_def.get("type", "") == "range":
 			range_templates.append(enemy_def)
 		else:
-			mele_templates.append(enemy_def)
+			melee_templates.append(enemy_def)
 
 	var counts: Dictionary = GameManager.get_stage_enemy_counts(_current_stage) if _in_hero_fight else GameManager.get_reinforcement_enemy_counts(_current_stage)
-	var mele_count: int = int(counts.get("mele", 0))
+	var melee_count: int = int(counts.get("melee", 0))
 	var range_count: int = int(counts.get("range", 0))
 
-	_spawn_stage_enemies(mele_templates, mele_count)
+	_spawn_stage_enemies(melee_templates, melee_count)
 	_spawn_stage_enemies(range_templates, range_count)
 
-	if (not mele_templates.is_empty() and mele_count > 0) or (not range_templates.is_empty() and range_count > 0):
+	if (not melee_templates.is_empty() and melee_count > 0) or (not range_templates.is_empty() and range_count > 0):
 		_show_message_over_hero("Reinforcements arrived!")
 		_tutorial_maybe_explain_reinforcements()
 		_tutorial_maybe_advance_stage3_for_reinforcements()
@@ -2276,7 +2276,7 @@ func _populate_item_grid() -> void:
 				# Items are locked out for as long as Cold Embrace is
 				# active on the hero (see _cold_embrace_active), or while
 				# he's stunned/frozen (_player_stun_turns_left > 0 - set
-				# by Torrent's/Pounce's/Ice Blast's/Frostbite's/Winter's
+				# by Torrent's/Barbed Lunge's/Ice Blast's/Frostbite's/Winter's
 				# Curse's own stun, whether cast by the player or a rival
 				# hero) - a stunned hero loses the turn entirely, same as
 				# a stunned enemy loses its own (see _enemy_turn()'s stun
@@ -2363,15 +2363,15 @@ func _refresh_bars() -> void:
 	_recruited = PlayerManager.get_recruited_hero()
 	var stats: Dictionary = _recruited.get("stats", {})
 
-	# Essence Shift's borrowed hp/mana, and True Form's bonus hp while
+	# Leeching Hunger's borrowed hp/mana, and True Form's bonus hp while
 	# it's active, show up as extra max here - a battle-local display
 	# bonus only, never written back to PlayerManager (see
-	# _essence_shift_bonus/_true_form_bonus_hp).
+	# _leeching_hunger_bonus/_true_form_bonus_hp).
 	hp_bar.max_value = _hero_max_hp()
 	hp_bar.value = _recruited.get("current_hp", 0)
 	hp_value_label.text = str(int(hp_bar.value)) + "/" + str(int(hp_bar.max_value))
 
-	mana_bar.max_value = float(stats.get("mana", 1)) + _essence_shift_bonus.get("mana", 0.0) - _player_essence_shift_penalty.get("mana", 0.0)
+	mana_bar.max_value = float(stats.get("mana", 1)) + _leeching_hunger_bonus.get("mana", 0.0) - _player_leeching_hunger_penalty.get("mana", 0.0)
 	mana_bar.value = _recruited.get("current_mana", 0)
 	mana_value_label.text = str(int(mana_bar.value)) + "/" + str(int(mana_bar.max_value))
 
@@ -2585,7 +2585,7 @@ func _populate_skill_buttons() -> void:
 ## Splits a skill's name across two lines for its button - the first
 ## word on its own line, every word after it on the second - so a
 ## multi-word name (e.g. "Summon Spirit Bear") doesn't get clipped or
-## force its slot wider than its single-word neighbors (e.g. "Pounce").
+## force its slot wider than its single-word neighbors (e.g. "Barbed Lunge").
 ## A one-word name is returned as-is, with no second line.
 func _skill_name_button_text(skill_name: String) -> String:
 	var space_index: int = skill_name.find(" ")
@@ -2634,13 +2634,13 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
 	match skill_id:
-		"pounce":
-			if not _cast_pounce(level_data):
+		"barbed_lunge":
+			if not _cast_barbed_lunge(level_data):
 				# No target found - nothing happened, so don't spend
 				# mana, the turn, or start the cooldown.
 				return
-		"dark_pact":
-			if not _cast_dark_pact(level_data):
+		"abyssal_spasm":
+			if not _cast_abyssal_spasm(level_data):
 				# No enemies in range - same as above, no-op.
 				return
 		"whirling_death":
@@ -2749,10 +2749,10 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			# this function without falling through to the shared
 			# spend logic below, same as Entangle.
 			return
-		"essence_shift":
-			_activate_essence_shift(level_data)
-		"shadow_dance":
-			_activate_shadow_dance(level_data)
+		"leeching_hunger":
+			_activate_leeching_hunger(level_data)
+		"depthsveil":
+			_activate_depthsveil(level_data)
 		"nature's_guise":
 			_activate_natures_guise(level_data)
 		"arctic_burn":
@@ -2912,15 +2912,15 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 			# confirms the wiring works end to end.
 			print("Used skill: ", skill.get("name", ""))
 
-	# Shadow Dance/Nature's Guise/Moonlight Shadow only break from
+	# Depthsveil/Nature's Guise/Moonlight Shadow only break from
 	# attacking or casting ANOTHER skill - not from the cast that just
 	# activated them in the first place, and not from items/potions
 	# (those never reach this function at all). Only one of the three
 	# could ever be active in a given battle (different heroes' own
 	# kits), so this just ends whichever one actually is.
-	if _is_hero_hidden() and skill_id != "shadow_dance" and skill_id != "nature's_guise" and skill_id != "moonlight_shadow":
-		if _shadow_dance_active:
-			_end_shadow_dance()
+	if _is_hero_hidden() and skill_id != "depthsveil" and skill_id != "nature's_guise" and skill_id != "moonlight_shadow":
+		if _depthsveil_active:
+			_end_depthsveil()
 		elif _natures_guise_active:
 			_end_natures_guise()
 		elif _moonlight_shadow_active:
@@ -2942,7 +2942,7 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 	_mark_turn_used()
 
 
-## Slark's Pounce: leaps `level_data.distance` columns toward the
+## Veyrik's Barbed Lunge: leaps `level_data.distance` columns toward the
 ## nearest enemy - overriding the hero's normal speed-based move
 ## distance - and stops early if it lands on an enemy's column along
 ## the way. That enemy takes a standard attack and gets stunned for
@@ -2950,9 +2950,9 @@ func _on_skill_pressed(skill: Dictionary) -> void:
 ## counter checked at the top of each enemy's turn in _enemy_turn()).
 ## Returns false (leaving position/turn untouched) if there's no
 ## enemy anywhere to leap toward.
-func _cast_pounce(level_data: Dictionary) -> bool:
+func _cast_barbed_lunge(level_data: Dictionary) -> bool:
 	if _enemies.is_empty():
-		_show_message_over_hero("No target for Pounce")
+		_show_message_over_hero("No target for Barbed Lunge")
 		return false
 
 	var nearest: Dictionary = {}
@@ -3003,14 +3003,14 @@ func _cast_pounce(level_data: Dictionary) -> bool:
 	return true
 
 
-## Slark's Dark Pact: deals `level_data.damage_multiplier` of one
+## Veyrik's Abyssal Spasm: deals `level_data.damage_multiplier` of one
 ## rolled hero-damage hit to every enemy within `level_data.radius`
-## columns of Slark (0 = only Slark's own column), each still
+## columns of Veyrik (0 = only Veyrik's own column), each still
 ## mitigated by that enemy's own armor. All hits share the same
-## rolled amount - it's one burst around Slark, not a separate attack
+## rolled amount - it's one burst around Veyrik, not a separate attack
 ## roll per enemy. (Silencing enemies caught in it isn't implemented yet.)
 ## Returns false (no mana/turn/cooldown spent) if nothing is in range.
-func _cast_dark_pact(level_data: Dictionary) -> bool:
+func _cast_abyssal_spasm(level_data: Dictionary) -> bool:
 	var radius: int = int(level_data.get("radius", 0))
 	var targets: Array = []
 	for enemy in _enemies:
@@ -3042,7 +3042,7 @@ func _cast_dark_pact(level_data: Dictionary) -> bool:
 ## Timbersaw's Whirling Death: deals `level_data.damage` (a flat amount,
 ## not a roll off the hero's own attack) to every enemy within
 ## `level_data.radius` columns of Timbersaw. Same shape as
-## _cast_dark_pact() above, just with a flat damage value instead of a
+## _cast_abyssal_spasm() above, just with a flat damage value instead of a
 ## multiplier on a rolled hit. Returns false (no mana/turn/cooldown
 ## spent) if nothing is in range.
 func _cast_whirling_death(level_data: Dictionary) -> bool:
@@ -3073,7 +3073,7 @@ func _cast_whirling_death(level_data: Dictionary) -> bool:
 
 
 ## Slardar's Slithereen Crush: deals `level_data.damage` and stuns
-## (target["stun_turns_left"], same shared field Pounce's/Torrent's own
+## (target["stun_turns_left"], same shared field Barbed Lunge's/Torrent's own
 ## stun use) every enemy within `level_data.radius` columns of Slardar -
 ## same shape as _cast_whirling_death() above, just with a stun folded
 ## in and only ever stunning a hit that actually left the target alive.
@@ -3162,7 +3162,7 @@ func _cast_starstorm(level_data: Dictionary) -> bool:
 
 
 ## Naga Siren's ultimate, Song of the Siren: stuns (target["stun_turns_
-## left"], same shared field Pounce's/Torrent's/Firesnap Cookie's own
+## left"], same shared field Barbed Lunge's/Torrent's/Firesnap Cookie's own
 ## stun use) and shreds the armor (target["armor_reduction"]/
 ## "armor_reduction_turns_left", the same per-instance runtime fields
 ## Lil' Shredder's own shred uses - stacking additively with any
@@ -3293,7 +3293,7 @@ func _play_scatterblast_effect(origin_node: Control, direction: int, range_colum
 ## landing, deals level_data.damage and stuns for level_data.stun_turns
 ## every enemy within level_data.radius columns of wherever she ends
 ## up, if any (there doesn't need to be one for the hop itself to
-## happen - unlike Pounce, this never "fails" for lack of a target).
+## happen - unlike Barbed Lunge, this never "fails" for lack of a target).
 ## Only stuns a hit enemy that's still alive - a dead one has already
 ## been removed from _enemies by _deal_fixed_damage_to_enemy's kill
 ## check.
@@ -3342,7 +3342,7 @@ func _activate_leap(level_data: Dictionary) -> void:
 
 ## Resolves an Ensnare cast on `target`: `level_data.damage` (mitigated
 ## by the target's own armor via _deal_fixed_damage_to_enemy(), same
-## helper Dark Pact/Torrent/Ghostship use) plus a root for this level's
+## helper Abyssal Spasm/Torrent/Ghostship use) plus a root for this level's
 ## own `root_turns` - reusing _apply_root() with no `silence_turns`/
 ## `dot_damage`/`dot_duration` keys in `level_data` (all default to 0
 ## there), so unlike Entangle this only ever roots, never silences or
@@ -3411,12 +3411,12 @@ func _resolve_corrosive_haze_cast(target: Dictionary, level_data: Dictionary) ->
 ## Resolves a Sacred Arrow cast on `target`: deals this level's own
 ## base_damage plus bonus_per_column for every column between Mirana
 ## and `target` at the moment it was clicked (mitigated by the target's
-## own armor via _deal_fixed_damage_to_enemy(), same helper Dark Pact/
+## own armor via _deal_fixed_damage_to_enemy(), same helper Abyssal Spasm/
 ## Torrent/Ghostship use) - since `target` was only ever a valid click
 ## within this level's own `range` in the first place (see
 ## _start_sacred_arrow_targeting()), the farthest it can ever reach is
 ## exactly the table's own "Max Damage" column, reached at max range.
-## Then stuns it (target["stun_turns_left"], same shared field Pounce's/
+## Then stuns it (target["stun_turns_left"], same shared field Barbed Lunge's/
 ## Torrent's own stun use) for this level's own stun_turns, only if the
 ## hit left it alive. _play_sacred_arrow_flight() plays the actual
 ## flight alongside this already-resolved damage, same "cosmetic only,
@@ -3448,7 +3448,7 @@ func _resolve_sacred_arrow_cast(target: Dictionary, level_data: Dictionary) -> v
 ## `damage` (mitigated by the target's own armor via
 ## _deal_fixed_damage_to_enemy(), same helper Sacred Arrow uses above),
 ## then stuns it (target["stun_turns_left"], same shared field Sacred
-## Arrow's/Pounce's/Torrent's own stun use) for this level's own
+## Arrow's/Barbed Lunge's/Torrent's own stun use) for this level's own
 ## stun_turns, only if the hit left it alive.
 func _resolve_lucent_beam_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
@@ -3489,7 +3489,7 @@ func _resolve_entangle_cast(target: Dictionary, level_data: Dictionary) -> void:
 	_refresh_entangle_tints()
 
 	if _is_hero_hidden():
-		_end_shadow_dance()
+		_end_depthsveil()
 
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
 	spend_mana(mana_cost)
@@ -3505,7 +3505,7 @@ func _resolve_entangle_cast(target: Dictionary, level_data: Dictionary) -> void:
 
 ## Resolves a Mist Coil cast on an enemy: deals `level_data.damage`
 ## straight damage (still mitigated by the target's own armor, via
-## _deal_fixed_damage_to_enemy() - same helper Dark Pact and the bear
+## _deal_fixed_damage_to_enemy() - same helper Abyssal Spasm and the bear
 ## use), then spends mana, starts Mist Coil's cooldown, and ends the
 ## turn - the same bookkeeping _resolve_entangle_cast() does for
 ## Entangle, since Mist Coil's target isn't known until after
@@ -3532,12 +3532,12 @@ func _resolve_mist_coil_enemy_cast(target: Dictionary, level_data: Dictionary) -
 
 ## Resolves a Torrent cast on `target`: deals `level_data.damage`
 ## (mitigated by the target's own armor, via _deal_fixed_damage_to_
-## enemy() - same helper Dark Pact/Mist Coil use) and stuns it for
-## `level_data.stun_turns` if it survives, exactly like Pounce's own
+## enemy() - same helper Abyssal Spasm/Mist Coil use) and stuns it for
+## `level_data.stun_turns` if it survives, exactly like Barbed Lunge's own
 ## stun. At max level (level_data.radius > 0), also splashes every
 ## OTHER living, targetable enemy within that radius of `target`'s own
 ## column for the same damage - centered on the target rather than the
-## hero, unlike Dark Pact's radius (which is centered on Kunkka
+## hero, unlike Abyssal Spasm's radius (which is centered on Kunkka
 ## himself) - so the splash never re-hits `target` a second time.
 func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
@@ -3564,8 +3564,8 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 		_play_torrent_splash_on_illusions(_enemy_illusions, target_pos, radius)
 		_deal_aoe_damage_to_enemy_illusions(target_pos, radius, damage)
 
-	# No Shadow Dance check here, unlike Entangle's own resolve - that
-	# only ever matters for Slark's own kit, and Torrent belongs to
+	# No Depthsveil check here, unlike Entangle's own resolve - that
+	# only ever matters for Veyrik's own kit, and Torrent belongs to
 	# Kunkka (same reasoning as Mist Coil's enemy-cast, Abaddon's own
 	# skill, right above/below this).
 	var mana_cost: float = float(level_data.get("mana_cost", 0))
@@ -3600,7 +3600,7 @@ func _resolve_torrent_cast(target: Dictionary, level_data: Dictionary) -> void:
 ## teleport() (called from _end_turn()) for what actually happens with
 ## it, on the hero's own next turn. Recasting (marking a different
 ## target before the first one ever triggers) simply overwrites the
-## pending mark outright, same as Essence Shift/True Form being
+## pending mark outright, same as Leeching Hunger/True Form being
 ## recast - there's nothing to "give back" from the old one.
 func _resolve_xmarks_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
@@ -3653,7 +3653,7 @@ func _resolve_xmarks_teleport() -> void:
 ## ends) takes `level_data.damage` - not just `target` itself, unlike
 ## every other single-target cast above. Each hit is still mitigated by
 ## that enemy's own armor, via _deal_fixed_damage_to_enemy() (same
-## helper Dark Pact/Torrent use to split one amount across several
+## helper Abyssal Spasm/Torrent use to split one amount across several
 ## targets). The whole path is snapshotted into `hit_targets` before
 ## any damage is dealt, so a kill partway through the loop (removing
 ## the dead enemy from _enemies) can't skip whoever comes after it in
@@ -4366,7 +4366,7 @@ func _refresh_corrosive_haze() -> void:
 ## follows the sprite's position/scale for free - but NOT its stealth
 ## fade: the haze is the mark's true sight, so its inner layer divides
 ## out the sprite's own alpha every frame, staying fully visible over a
-## faded (Shadow Dance/Nature's Guise/Moonlight Shadow) target. Fades
+## faded (Depthsveil/Nature's Guise/Moonlight Shadow) target. Fades
 ## in/out; only does anything when the state actually changes (the
 ## child's presence is the marker).
 func _set_corrosive_haze(node: Variant, active: bool) -> void:
@@ -4885,9 +4885,9 @@ func _resolve_ice_vortex_cast(target: Dictionary, level_data: Dictionary) -> voi
 ## hero's own rolled Attack damage (_roll_hero_damage(), the same roll
 ## a plain Attack uses) plus this level's own flat bonus_damage on top,
 ## mitigated by the target's own armor via _deal_fixed_damage_to_enemy()
-## - same helper Dark Pact/Torrent/Ghostship use. This is SKILL damage,
+## - same helper Abyssal Spasm/Torrent/Ghostship use. This is SKILL damage,
 ## not the plain Attack action itself, so - same as every other skill
-## here - it never triggers Essence Shift's steal, Spirit Link's
+## here - it never triggers Leeching Hunger's steal, Spirit Link's
 ## lifesteal, or Curse of Avernus's stacking; those are all scoped
 ## specifically to _apply_hero_attack().
 func _resolve_chilling_touch_cast(target: Dictionary, level_data: Dictionary) -> void:
@@ -4911,7 +4911,7 @@ func _resolve_chilling_touch_cast(target: Dictionary, level_data: Dictionary) ->
 ## Resolves a Lil' Shredder cast on `target`: fires this level's own
 ## `shots` count of separately-rolled hits at it (each
 ## _roll_hero_damage() * damage_pct, same "own roll per shot" idiom
-## Whirling Death/Dark Pact use for "one roll shared across many
+## Whirling Death/Abyssal Spasm use for "one roll shared across many
 ## targets" just inverted here into "many rolls at one target"), each
 ## shot ALSO stacking armor_reduction_per_shot onto `target`'s own
 ## armor_reduction - a per-instance runtime field folded into
@@ -5367,7 +5367,7 @@ func _kill_illusion(illusion: Dictionary) -> void:
 ## while no illusions are up.
 ## `flash_hits` gives each one hit the same red hit-flash as Moon
 ## Glaives' bounce (_flash_bounce_hit()) - off by default, opted into by
-## Dark Pact.
+## Abyssal Spasm.
 func _deal_aoe_damage_to_illusions(center_pos_index: int, radius: int, amount: float, flash_hits: bool = false) -> void:
 	if _illusions.is_empty() or amount <= 0.0:
 		return
@@ -5422,7 +5422,7 @@ func _deal_directional_aoe_damage_to_illusions(origin_pos_index: int, direction:
 
 ## Resolves an Ice Blast cast on `target`: `level_data.damage` to
 ## `target` and every OTHER living, targetable enemy within
-## `level_data.radius` columns of it (mirroring Dark Pact's/Torrent's
+## `level_data.radius` columns of it (mirroring Abyssal Spasm's/Torrent's
 ## own "one rolled amount, many separately-mitigated hits" pattern),
 ## then arms this level's own DoT (dot_damage/dot_duration) AND execute
 ## threshold (execute_pct, the "reserved %" of max HP - see
@@ -5536,7 +5536,7 @@ func _resolve_splinter_blast_cast(target: Dictionary, level_data: Dictionary) ->
 ## enemy within `level_data.curse_range` columns of it for as long as
 ## that freeze holds (see _is_winters_curse_active()). Recasting while a
 ## previous curse is still running simply overwrites it outright -
-## there's nothing to give back the way Essence Shift's borrowed stats
+## there's nothing to give back the way Leeching Hunger's borrowed stats
 ## need.
 func _resolve_winters_curse_cast(target: Dictionary, level_data: Dictionary) -> void:
 	var generation_before: int = _stage_generation
@@ -5707,8 +5707,8 @@ func _maybe_consume_tidebringer_stack() -> Dictionary:
 ## cleave_damage_pct of `attack_damage` - the same raw, pre-mitigation
 ## roll `target` was just hit with (bonus damage already folded in by
 ## _apply_hero_attack()), each still mitigated by ITS OWN armor via
-## _deal_fixed_damage_to_enemy(), mirroring Dark Pact's own "one rolled
-## amount, many separately-mitigated hits" pattern (_cast_dark_pact()).
+## _deal_fixed_damage_to_enemy(), mirroring Abyssal Spasm's own "one rolled
+## amount, many separately-mitigated hits" pattern (_cast_abyssal_spasm()).
 func _apply_tidebringer_cleave(target: Dictionary, attack_damage: float, level_data: Dictionary) -> void:
 	var cleave_damage: float = attack_damage * float(level_data.get("cleave_damage_pct", 0.0))
 	if cleave_damage <= 0.0:
@@ -5778,7 +5778,7 @@ func _apply_cleaver_cleave(target: Dictionary, attack_damage: float) -> void:
 ## also takes HUNTERS_BOW_DAMAGE_PCT of `attack_damage` (the Attack's
 ## raw, pre-mitigation roll), mitigated by its own armor, with a gold
 ## arrow peeling off to it and the standard red splash flash. Damage
-## only - no on-hit effects (lifesteal, Essence Shift, Moon Glaives...)
+## only - no on-hit effects (lifesteal, Leeching Hunger, Moon Glaives...)
 ## for the second target, same as Cleaver's splash. A full charge with
 ## no second enemy in range stays full for the next Attack instead of
 ## being spent. Rival illusions aren't eligible - they only ever take
@@ -6627,11 +6627,11 @@ func _shatter_ice_block(block: Variant, height: float = -1.0, burst_scale: float
 ## outside it can't step into one, i.e. can't move past it. A true
 ## teleport (X Marks the Spot) still isn't checked against this - it
 ## doesn't travel through the columns in between at all, unlike a jump
-## (Pounce, Snowball) or a pull (Timber Chain), which now ARE stopped
-## by a wall in their path on both sides (see _cast_pounce()/
+## (Barbed Lunge, Snowball) or a pull (Timber Chain), which now ARE stopped
+## by a wall in their path on both sides (see _cast_barbed_lunge()/
 ## _resolve_snowball_cast()/_resolve_timber_chain_cast() and their own
 ## _is_column_enemy_ice_shards_blocked() checks for the player's own
-## copies, _cast_enemy_pounce()/_cast_enemy_snowball() for the rival's).
+## copies, _cast_enemy_barbed_lunge()/_cast_enemy_snowball() for the rival's).
 func _is_column_ice_shards_blocked(col: int) -> bool:
 	return _ice_shards_active and col in _ice_shards_blocked_columns
 
@@ -6668,7 +6668,7 @@ func _resolve_snowball_cast(target: Dictionary, level_data: Dictionary) -> void:
 	# The charge physically carries the hero across every column in
 	# between (unlike X Marks the Spot's true teleport), so a rival's
 	# Ice Shards wall in its path stops it one column short of
-	# target_pos_index, same rule Pounce's own leap and Timber Chain's
+	# target_pos_index, same rule Barbed Lunge's own leap and Timber Chain's
 	# own pull now follow.
 	var charge_direction: int = _step_toward(start_pos_index, target_pos_index)
 	var landing_pos_index: int = start_pos_index
@@ -7138,7 +7138,7 @@ func _activate_overgrowth(level_data: Dictionary) -> void:
 ## heals for `level_data.heal`, which is always more than the HP cost,
 ## for a net gain. If the hero doesn't have enough HP to cover the
 ## cost, nothing happens at all: no HP lost, no heal, and - like a
-## failed Pounce/Dark Pact/Entangle target search - no mana, cooldown,
+## failed Barbed Lunge/Abyssal Spasm/Entangle target search - no mana, cooldown,
 ## or turn spent either, so the player can simply try something else.
 func _resolve_mist_coil_self_cast(level_data: Dictionary) -> void:
 	var hp_cost: float = float(level_data.get("hp_cost", 0))
@@ -7464,36 +7464,36 @@ func _is_enemy_silenced(enemy: Dictionary) -> bool:
 	return enemy.get("silence_turns_left", 0) > 0
 
 
-## Activates Essence Shift: arms the next `level_data.attacks` melee
+## Activates Leeching Hunger: arms the next `level_data.attacks` melee
 ## hits to each steal 1 point of their target's main stat, for
 ## `level_data.duration` turns. Always "succeeds" (there's no target
-## or range requirement to activate it, unlike Pounce/Dark Pact) - it
+## or range requirement to activate it, unlike Barbed Lunge/Abyssal Spasm) - it
 ## just arms the effect for upcoming attacks. Recasting while a
 ## previous activation is still running first returns everything that
 ## one had borrowed (as if its duration had just run out) so the two
 ## instances' durations/attack counts never get mixed together.
-func _activate_essence_shift(level_data: Dictionary) -> void:
-	if _essence_shift_active:
-		_end_essence_shift()
+func _activate_leeching_hunger(level_data: Dictionary) -> void:
+	if _leeching_hunger_active:
+		_end_leeching_hunger()
 
-	_essence_shift_active = true
-	_essence_shift_attacks_remaining = int(level_data.get("attacks", 0))
-	_essence_shift_turns_remaining = int(level_data.get("duration", 0))
+	_leeching_hunger_active = true
+	_leeching_hunger_attacks_remaining = int(level_data.get("attacks", 0))
+	_leeching_hunger_turns_remaining = int(level_data.get("duration", 0))
 	# The casting turn itself doesn't count - duration only starts
-	# ticking from the turn after (see _tick_essence_shift()).
-	_essence_shift_duration_pending_start = true
+	# ticking from the turn after (see _tick_leeching_hunger()).
+	_leeching_hunger_duration_pending_start = true
 
 
 ## Called right after a melee Attack lands (see _apply_hero_attack()).
-## If Essence Shift is active and still has attacks banked, steals 1
+## If Leeching Hunger is active and still has attacks banked, steals 1
 ## point of `target`'s main stat - down to
-## GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT, never lower - and
-## converts it into the matching Slark bonus via
-## _essence_shift_contribution_for(). A hit that can't steal anything
+## GameManager.LEECHING_HUNGER_MIN_ENEMY_MAIN_STAT, never lower - and
+## converts it into the matching Veyrik bonus via
+## _leeching_hunger_contribution_for(). A hit that can't steal anything
 ## (enemy already at the floor, or has no main stat at all) doesn't
 ## spend one of the banked attacks.
-func _apply_essence_shift_steal(target: Dictionary) -> void:
-	if not _essence_shift_active or _essence_shift_attacks_remaining <= 0:
+func _apply_leeching_hunger_steal(target: Dictionary) -> void:
+	if not _leeching_hunger_active or _leeching_hunger_attacks_remaining <= 0:
 		return
 
 	var stat_name: String = str(target["static"].get("main_stat", "")).to_lower()
@@ -7501,21 +7501,21 @@ func _apply_essence_shift_steal(target: Dictionary) -> void:
 		return
 
 	var current_value: float = float(target.get("current_main_stat_value", 0.0))
-	if current_value <= GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT:
+	if current_value <= GameManager.LEECHING_HUNGER_MIN_ENEMY_MAIN_STAT:
 		_show_message_over_hero("Nothing left to steal")
 		return
 
 	target["current_main_stat_value"] = current_value - 1.0
-	_essence_shift_attacks_remaining -= 1
-	_essence_shift_stolen.append({"enemy": target, "stat": stat_name, "amount": 1.0})
+	_leeching_hunger_attacks_remaining -= 1
+	_leeching_hunger_stolen.append({"enemy": target, "stat": stat_name, "amount": 1.0})
 
-	var contribution: Dictionary = _essence_shift_contribution_for(stat_name)
-	_essence_shift_bonus["damage"] = _essence_shift_bonus.get("damage", 0.0) + contribution["damage"]
-	_essence_shift_bonus["hp"] = _essence_shift_bonus.get("hp", 0.0) + contribution["hp"]
-	_essence_shift_bonus["mana"] = _essence_shift_bonus.get("mana", 0.0) + contribution["mana"]
-	_essence_shift_bonus["armor"] = _essence_shift_bonus.get("armor", 0.0) + contribution["armor"]
+	var contribution: Dictionary = _leeching_hunger_contribution_for(stat_name)
+	_leeching_hunger_bonus["damage"] = _leeching_hunger_bonus.get("damage", 0.0) + contribution["damage"]
+	_leeching_hunger_bonus["hp"] = _leeching_hunger_bonus.get("hp", 0.0) + contribution["hp"]
+	_leeching_hunger_bonus["mana"] = _leeching_hunger_bonus.get("mana", 0.0) + contribution["mana"]
+	_leeching_hunger_bonus["armor"] = _leeching_hunger_bonus.get("armor", 0.0) + contribution["armor"]
 
-	_play_drain_effect(target.get("node"), hero_image, ESSENCE_SHIFT_MOTE_COLOR)
+	_play_drain_effect(target.get("node"), hero_image, LEECHING_HUNGER_MOTE_COLOR)
 	_refresh_bars()
 
 
@@ -7523,7 +7523,7 @@ func _apply_essence_shift_steal(target: Dictionary) -> void:
 ## `from_node` (whoever was just drained) to `to_node` (whoever did the
 ## draining), each along its own slightly-arced path and staggered so
 ## they read as a flow rather than a single blob, in `mote_color`. Used
-## by Essence Shift's steal (ESSENCE_SHIFT_MOTE_COLOR) and Spirit Link's
+## by Leeching Hunger's steal (LEECHING_HUNGER_MOTE_COLOR) and Spirit Link's
 ## lifesteal (LIFESTEAL_MOTE_COLOR, via _play_lifesteal_effect()), each from both the player's side
 ## and the rival's - the stat/HP has already moved by the time this
 ## plays; it never gates on this. Individual tweened ColorRects rather than
@@ -7582,13 +7582,13 @@ func _play_drain_effect(from_node: Variant, to_node: Variant, mote_color: Color)
 
 
 ## What 1 stolen point of `stat_name` ("strength"/"agility"/
-## "intelligence") is worth to Slark, in the same battle-facing terms
+## "intelligence") is worth to Veyrik, in the same battle-facing terms
 ## his own stat growth uses (see GameManager.compute_derived_stats):
 ## strength -> hp, agility -> armor, intelligence -> mana, each at
 ## that same per-point rate. On top of that, if `stat_name` happens to
-## be Slark's own main stat, the point also adds damage - exactly like
+## be Veyrik's own main stat, the point also adds damage - exactly like
 ## a hero's main-stat growth does.
-func _essence_shift_contribution_for(stat_name: String) -> Dictionary:
+func _leeching_hunger_contribution_for(stat_name: String) -> Dictionary:
 	var contribution: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 	match stat_name:
@@ -7605,46 +7605,46 @@ func _essence_shift_contribution_for(stat_name: String) -> Dictionary:
 	return contribution
 
 
-## Ticks Essence Shift's duration down once per End Turn, same timing
+## Ticks Leeching Hunger's duration down once per End Turn, same timing
 ## as _tick_skill_cooldowns() - except the very first call after the
-## skill is cast is skipped (see _essence_shift_duration_pending_start)
+## skill is cast is skipped (see _leeching_hunger_duration_pending_start)
 ## so the casting turn itself doesn't count against the duration.
-func _tick_essence_shift() -> void:
-	if not _essence_shift_active:
+func _tick_leeching_hunger() -> void:
+	if not _leeching_hunger_active:
 		return
 
-	if _essence_shift_duration_pending_start:
-		_essence_shift_duration_pending_start = false
+	if _leeching_hunger_duration_pending_start:
+		_leeching_hunger_duration_pending_start = false
 		return
 
-	_essence_shift_turns_remaining -= 1
-	if _essence_shift_turns_remaining <= 0:
-		_end_essence_shift()
+	_leeching_hunger_turns_remaining -= 1
+	if _leeching_hunger_turns_remaining <= 0:
+		_end_leeching_hunger()
 
 
-## Essence Shift has run its course: Slark loses every borrowed point
+## Leeching Hunger has run its course: Veyrik loses every borrowed point
 ## and each donor enemy that's still alive gets its point(s) back
 ## (donors from a stage/hero fight that's already moved on are simply
 ## skipped - see _is_enemy_still_active()).
-func _end_essence_shift() -> void:
-	for entry in _essence_shift_stolen:
+func _end_leeching_hunger() -> void:
+	for entry in _leeching_hunger_stolen:
 		var donor: Dictionary = entry["enemy"]
 		if _is_enemy_still_active(donor):
 			donor["current_main_stat_value"] = float(donor.get("current_main_stat_value", 0.0)) + float(entry["amount"])
 
-	_essence_shift_stolen.clear()
-	_essence_shift_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
-	_essence_shift_active = false
-	_essence_shift_attacks_remaining = 0
-	_essence_shift_turns_remaining = 0
-	_essence_shift_duration_pending_start = false
+	_leeching_hunger_stolen.clear()
+	_leeching_hunger_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_leeching_hunger_active = false
+	_leeching_hunger_attacks_remaining = 0
+	_leeching_hunger_turns_remaining = 0
+	_leeching_hunger_duration_pending_start = false
 
 	_refresh_bars()
-	_show_message_over_hero("Essence Shift wore off")
+	_show_message_over_hero("Leeching Hunger wore off")
 
 
 ## Whether `enemy_ref` (one of _enemies' own dictionaries, stashed
-## earlier in _essence_shift_stolen) is still part of the current
+## earlier in _leeching_hunger_stolen) is still part of the current
 ## fight - false once it's died, or once a stage/hero-fight transition
 ## has cleared and replaced the whole _enemies roster.
 func _is_enemy_still_active(enemy_ref: Dictionary) -> bool:
@@ -7662,8 +7662,8 @@ func _is_enemy_still_active(enemy_ref: Dictionary) -> bool:
 ## for the next `level_data.attacks` plain Attacks, or `level_data.
 ## duration` turns - whichever runs out first (see
 ## _apply_arctic_burn_attack()/_tick_arctic_burn()). Always "succeeds" -
-## no target or range requirement to cast it, same as Essence Shift/
-## Shadow Dance.
+## no target or range requirement to cast it, same as Leeching Hunger/
+## Depthsveil.
 func _activate_arctic_burn(level_data: Dictionary) -> void:
 	_arctic_burn_active = true
 	_arctic_burn_bonus_damage = float(level_data.get("bonus_damage", 0))
@@ -7692,8 +7692,8 @@ func _apply_arctic_burn_attack() -> void:
 
 
 ## Ticks Arctic Burn's duration down once per End Turn, same timing (and
-## same "the casting turn doesn't count" skip) as Essence Shift's own
-## _tick_essence_shift().
+## same "the casting turn doesn't count" skip) as Leeching Hunger's own
+## _tick_leeching_hunger().
 func _tick_arctic_burn() -> void:
 	if not _arctic_burn_active:
 		return
@@ -7759,17 +7759,17 @@ func _activate_cold_embrace(level_data: Dictionary) -> void:
 ## boss could have inflicted (root, silence, Entangle's/Curse of
 ## Avernus's/Cold Feet's/Ice Vortex's/Ice Blast's/Frostbite's/Leech
 ## Seed's/Overgrowth's/Mortimer Kisses' burn damage-over-time, Ice
-## Blast's execute threshold, Pounce's/Torrent's stun, Lil' Shredder's
-## own armor reduction, and a hostile Essence Shift's stat penalty) -
+## Blast's execute threshold, Barbed Lunge's/Torrent's stun, Lil' Shredder's
+## own armor reduction, and a hostile Leeching Hunger's stat penalty) -
 ## the same field list _reset_enemy_hero_state() clears fresh for each
 ## new hero fight.
 func _dispel_all_hero_effects() -> void:
 	if _arctic_burn_active:
 		_end_arctic_burn()
-	if _essence_shift_active:
-		_end_essence_shift()
-	if _shadow_dance_active:
-		_end_shadow_dance()
+	if _leeching_hunger_active:
+		_end_leeching_hunger()
+	if _depthsveil_active:
+		_end_depthsveil()
 	if _moonlight_shadow_active:
 		_end_moonlight_shadow()
 	if _spirit_link_active:
@@ -7781,7 +7781,7 @@ func _dispel_all_hero_effects() -> void:
 	if _borrowed_time_active:
 		_end_borrowed_time()
 
-	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_player_leeching_hunger_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 	_player_root_turns_left = 0
 	_player_silence_turns_left = 0
 	_player_entangle_dot_damage = 0.0
@@ -7850,19 +7850,19 @@ func _end_cold_embrace() -> void:
 
 
 # ------------------------------------------------------------------
-# Slark's Shadow Dance.
+# Veyrik's Depthsveil.
 # ------------------------------------------------------------------
 
-## True while the hero is hidden by Shadow Dance OR Nature's Guise -
+## True while the hero is hidden by Depthsveil OR Nature's Guise -
 ## whichever the current hero actually has, since only one of the two
 ## could ever be active in a given battle. Enemy attacks check this in
 ## _enemy_turn() and simply don't land while it's true.
 func _is_hero_hidden() -> bool:
-	return _shadow_dance_active or _natures_guise_active or _moonlight_shadow_active
+	return _depthsveil_active or _natures_guise_active or _moonlight_shadow_active
 
 
 ## Whether the rival can currently see (and therefore attack, chase, or
-## otherwise target) the player, despite Shadow Dance's/Nature's
+## otherwise target) the player, despite Depthsveil's/Nature's
 ## Guise's/Moonlight Shadow's own stealth - true sight from a rival
 ## Slardar's own Corrosive Haze (_player_corrosive_haze_bonus_pct > 0,
 ## the same field _cast_enemy_corrosive_haze() writes and apply_damage()
@@ -7882,42 +7882,42 @@ func _can_enemy_see_hero() -> bool:
 	return not _is_hero_hidden()
 
 
-## Activates Shadow Dance: hides Slark for `level_data.duration` turns
+## Activates Depthsveil: hides Veyrik for `level_data.duration` turns
 ## (not counting the casting turn itself - see
-## _shadow_dance_duration_pending_start) and arms
+## _depthsveil_duration_pending_start) and arms
 ## `level_data.bonus_damage` for whichever comes first, his next
 ## Attack or the duration running out.
-func _activate_shadow_dance(level_data: Dictionary) -> void:
-	_shadow_dance_active = true
-	_shadow_dance_bonus_damage = float(level_data.get("bonus_damage", 0))
-	_shadow_dance_turns_remaining = int(level_data.get("duration", 0))
-	_shadow_dance_duration_pending_start = true
+func _activate_depthsveil(level_data: Dictionary) -> void:
+	_depthsveil_active = true
+	_depthsveil_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_depthsveil_turns_remaining = int(level_data.get("duration", 0))
+	_depthsveil_duration_pending_start = true
 	_update_hero_visibility()
 
 
-## Ticks Shadow Dance's duration down once per End Turn, same timing
-## and same "casting turn doesn't count" rule as Essence Shift (see
-## _tick_essence_shift()).
-func _tick_shadow_dance() -> void:
-	if not _shadow_dance_active:
+## Ticks Depthsveil's duration down once per End Turn, same timing
+## and same "casting turn doesn't count" rule as Leeching Hunger (see
+## _tick_leeching_hunger()).
+func _tick_depthsveil() -> void:
+	if not _depthsveil_active:
 		return
 
-	if _shadow_dance_duration_pending_start:
-		_shadow_dance_duration_pending_start = false
+	if _depthsveil_duration_pending_start:
+		_depthsveil_duration_pending_start = false
 		return
 
-	_shadow_dance_turns_remaining -= 1
-	if _shadow_dance_turns_remaining <= 0:
-		_end_shadow_dance()
+	_depthsveil_turns_remaining -= 1
+	if _depthsveil_turns_remaining <= 0:
+		_end_depthsveil()
 
 
-## Ends Shadow Dance, whether from its duration running out, Slark
+## Ends Depthsveil, whether from its duration running out, Veyrik
 ## attacking while hidden, or casting another skill while hidden.
-func _end_shadow_dance() -> void:
-	_shadow_dance_active = false
-	_shadow_dance_bonus_damage = 0.0
-	_shadow_dance_turns_remaining = 0
-	_shadow_dance_duration_pending_start = false
+func _end_depthsveil() -> void:
+	_depthsveil_active = false
+	_depthsveil_bonus_damage = 0.0
+	_depthsveil_turns_remaining = 0
+	_depthsveil_duration_pending_start = false
 	_update_hero_visibility()
 
 
@@ -7929,8 +7929,8 @@ func _end_shadow_dance() -> void:
 ## turns (not counting the casting turn itself) and arms `level_data.
 ## root_turns` for whichever comes first, his next Attack or the
 ## duration running out - same "casting turn doesn't count"/"one-shot
-## payoff on the breaking Attack" shape as Shadow Dance's own
-## _activate_shadow_dance(), just with a root instead of bonus damage.
+## payoff on the breaking Attack" shape as Depthsveil's own
+## _activate_depthsveil(), just with a root instead of bonus damage.
 func _activate_natures_guise(level_data: Dictionary) -> void:
 	_natures_guise_active = true
 	_natures_guise_root_turns = int(level_data.get("root_turns", 0))
@@ -7940,8 +7940,8 @@ func _activate_natures_guise(level_data: Dictionary) -> void:
 
 
 ## Ticks Nature's Guise's duration down once per End Turn, same timing
-## and same "casting turn doesn't count" rule as Shadow Dance's own
-## _tick_shadow_dance().
+## and same "casting turn doesn't count" rule as Depthsveil's own
+## _tick_depthsveil().
 func _tick_natures_guise() -> void:
 	if not _natures_guise_active:
 		return
@@ -7974,7 +7974,7 @@ func _end_natures_guise() -> void:
 ## _moonlight_shadow_duration_pending_start) and arms
 ## `level_data.bonus_damage_pct` for whichever comes first, her next
 ## Attack or the duration running out - same overall shape as Shadow
-## Dance's own _activate_shadow_dance(), just a percentage bonus
+## Dance's own _activate_depthsveil(), just a percentage bonus
 ## instead of a flat one (see the field comment above
 ## _moonlight_shadow_active).
 func _activate_moonlight_shadow(level_data: Dictionary) -> void:
@@ -7986,8 +7986,8 @@ func _activate_moonlight_shadow(level_data: Dictionary) -> void:
 
 
 ## Ticks Moonlight Shadow's duration down once per End Turn, same
-## timing and same "casting turn doesn't count" rule as Shadow Dance
-## (see _tick_shadow_dance()).
+## timing and same "casting turn doesn't count" rule as Depthsveil
+## (see _tick_depthsveil()).
 func _tick_moonlight_shadow() -> void:
 	if not _moonlight_shadow_active:
 		return
@@ -8012,7 +8012,7 @@ func _end_moonlight_shadow() -> void:
 
 
 ## Slight fade to represent invisibility - fully opaque and visible
-## otherwise. Called whenever Shadow Dance, Nature's Guise, or
+## otherwise. Called whenever Depthsveil, Nature's Guise, or
 ## Moonlight Shadow starts or ends.
 func _update_hero_visibility() -> void:
 	hero_image.modulate = Color(1, 1, 1, 0.4) if _is_hero_hidden() else Color(1, 1, 1, 1)
@@ -8023,7 +8023,7 @@ func _update_hero_visibility() -> void:
 # ------------------------------------------------------------------
 
 ## Activates (or refreshes) Spirit Link at `level_data`'s values.
-## Nothing needs to be "returned" the way Essence Shift's borrowed
+## Nothing needs to be "returned" the way Leeching Hunger's borrowed
 ## stats do on recast, since the bonus armor/lifesteal aren't taken
 ## from anything - overwriting the running values is enough.
 func _activate_spirit_link(level_data: Dictionary) -> void:
@@ -8036,7 +8036,7 @@ func _activate_spirit_link(level_data: Dictionary) -> void:
 
 
 ## Ticks Spirit Link's duration down once per End Turn, same timing
-## and "casting turn doesn't count" rule as Essence Shift/Shadow Dance.
+## and "casting turn doesn't count" rule as Leeching Hunger/Depthsveil.
 func _tick_spirit_link() -> void:
 	if not _spirit_link_active:
 		return
@@ -8084,7 +8084,7 @@ func _set_hero_enlarged(node: Variant, active: bool) -> void:
 ## Spirit Link's lifesteal: converts `_spirit_link_lifesteal_pct` of an
 ## Attack's damage - AFTER the target's armor has already reduced it -
 ## into HP for the hero. Only called from _apply_hero_attack() (the
-## plain Attack action, melee or ranged) - skill damage (Pounce, Dark
+## plain Attack action, melee or ranged) - skill damage (Barbed Lunge, Dark
 ## Pact, Entangle's DoT, the Spirit Bear's own hits, etc.) never routes
 ## through here, matching the skill's own wording. No-op while Spirit
 ## Link isn't active or the hit did no damage (e.g. fully absorbed).
@@ -8118,7 +8118,7 @@ func _apply_morbid_mask_lifesteal(mitigated_attack_damage: float, target: Dictio
 
 ## Purely cosmetic: the standard lifesteal visual - red motes flowing
 ## from `from_node` (whoever was hit) to `to_node` (whoever healed off
-## the hit), the same drain stream Essence Shift uses (_play_drain_
+## the hit), the same drain stream Leeching Hunger uses (_play_drain_
 ## effect()), in LIFESTEAL_MOTE_COLOR. Any lifesteal - Spirit Link, the
 ## Morbid Mask item, and future ones - should play it, so they all look
 ## the same. Two lifesteals off the same hit (Spirit Link + Morbid Mask)
@@ -8136,7 +8136,7 @@ func _play_lifesteal_effect(from_node: Variant, to_node: Variant) -> void:
 ## and arms the bonus HP/damage plus the forced-melee range for the
 ## duration (see _hero_max_hp(), _roll_hero_damage(), _is_ranged_hero()
 ## respectively - each reads the state set here directly). The bonus
-## HP raises his max HP the same way Essence Shift's borrowed HP does
+## HP raises his max HP the same way Leeching Hunger's borrowed HP does
 ## (see _hero_max_hp()) rather than instantly topping him up - it's
 ## extra capacity for the duration, not a free heal.
 func _activate_true_form(level_data: Dictionary) -> void:
@@ -8156,7 +8156,7 @@ func _activate_true_form(level_data: Dictionary) -> void:
 
 
 ## Ticks True Form's duration down once per End Turn, same timing and
-## "casting turn doesn't count" rule as Essence Shift/Shadow Dance/
+## "casting turn doesn't count" rule as Leeching Hunger/Depthsveil/
 ## Spirit Link.
 func _tick_true_form() -> void:
 	if not _true_form_active:
@@ -8287,7 +8287,7 @@ func _deal_damage_to_bear(amount: float) -> void:
 ## bear is out.
 ## `flash_hits` gives each one hit the same red hit-flash as Moon
 ## Glaives' bounce (_flash_bounce_hit()) - off by default, opted into by
-## Dark Pact.
+## Abyssal Spasm.
 func _deal_aoe_damage_to_bear(center_pos_index: int, radius: int, amount: float, flash_hits: bool = false) -> void:
 	if not _is_bear_alive() or amount <= 0.0:
 		return
@@ -8440,7 +8440,7 @@ func _refresh_skill_cooldown_labels() -> void:
 
 
 ## Ticks every tracked skill cooldown down by one turn, clamped at 0,
-## and ticks Essence Shift's, Shadow Dance's, Arctic Burn's, Cold
+## and ticks Leeching Hunger's, Depthsveil's, Arctic Burn's, Cold
 ## Embrace's, Freezing Field's, Ice Shards', Tag Team's, Nature's
 ## Guise's, Living Armor's, Reactive Armor's (each stack independently),
 ## Chakram's, Spirit Link's, True Form's, Aphotic Shield's, and Borrowed
@@ -8459,8 +8459,8 @@ func _tick_skill_cooldowns() -> void:
 		_skill_cooldowns[skill_id] = new_value
 		PlayerManager.set_skill_cooldown(skill_id, new_value)
 
-	_tick_essence_shift()
-	_tick_shadow_dance()
+	_tick_leeching_hunger()
+	_tick_depthsveil()
 	_tick_natures_guise()
 	_tick_moonlight_shadow()
 	_tick_arctic_burn()
@@ -8485,8 +8485,8 @@ func _tick_skill_cooldowns() -> void:
 		for skill_id in _enemy_skill_cooldowns.keys():
 			_enemy_skill_cooldowns[skill_id] = maxi(0, _enemy_skill_cooldowns[skill_id] - 1)
 
-		_tick_enemy_essence_shift()
-		_tick_enemy_shadow_dance()
+		_tick_enemy_leeching_hunger()
+		_tick_enemy_depthsveil()
 		_tick_enemy_spirit_link()
 		_tick_enemy_true_form()
 		_tick_enemy_aphotic_shield()
@@ -8532,7 +8532,7 @@ const PASSIVE_MANA_REGEN_PER_INT := 0.05
 ## The player hero's own passive regen. Reads strength/intelligence
 ## straight off _recruited's own stats - the same raw base values
 ## _hero_armor()/_hero_max_hp() already read for their own bonus terms
-## - since Essence Shift/True Form never touch strength/intelligence
+## - since Leeching Hunger/True Form never touch strength/intelligence
 ## themselves (only derived hp/mana/armor/damage), no extra bonus
 ## terms belong here.
 func _apply_passive_hero_regen() -> void:
@@ -8578,7 +8578,7 @@ func _tick_enemy_passive_regen() -> void:
 		if is_boss:
 			var intelligence: float = float(_enemy_hero_static.get("stats", {}).get("intelligence", 0))
 			var mana_regen: float = PASSIVE_MANA_REGEN_BASE + intelligence * PASSIVE_MANA_REGEN_PER_INT
-			var max_mana: float = _enemy_max_mana + _enemy_essence_shift_bonus.get("mana", 0.0)
+			var max_mana: float = _enemy_max_mana + _enemy_leeching_hunger_bonus.get("mana", 0.0)
 			_enemy_current_mana = minf(max_mana, _enemy_current_mana + mana_regen)
 
 
@@ -8607,7 +8607,7 @@ func _activate_aphotic_shield(level_data: Dictionary) -> void:
 	# cleanse sparks in _show_aphotic_shell().
 	var cleansed: bool = _player_root_turns_left > 0 or _player_entangle_dot_turns_left > 0 \
 		or _player_stun_turns_left > 0 or _player_winters_curse_active
-	for penalty in _player_essence_shift_penalty.values():
+	for penalty in _player_leeching_hunger_penalty.values():
 		if float(penalty) > 0.0:
 			cleansed = true
 
@@ -8616,7 +8616,7 @@ func _activate_aphotic_shield(level_data: Dictionary) -> void:
 	_player_entangle_dot_turns_left = 0
 	_player_stun_turns_left = 0
 	_player_winters_curse_active = false
-	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_player_leeching_hunger_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 	_show_message_over_hero("Shield up!")
 	_show_aphotic_shell(hero_image, _aphotic_shield_hp, cleansed)
@@ -8624,7 +8624,7 @@ func _activate_aphotic_shield(level_data: Dictionary) -> void:
 
 
 ## Ticks the shield's duration down once per End Turn, same "casting
-## turn doesn't count" pattern as Essence Shift/Shadow Dance/Spirit
+## turn doesn't count" pattern as Leeching Hunger/Depthsveil/Spirit
 ## Link/True Form. Only reached while the shield is still standing -
 ## see apply_damage() for the other way it can end, mid-turn, from
 ## being drained to 0 instead of outlasting its clock.
@@ -8645,8 +8645,8 @@ func _tick_aphotic_shield() -> void:
 ## false - it just fades) or enough damage drained it to 0 HP
 ## (`exploded` true, from apply_damage()) - in which case it deals the
 ## cast's own aoe_damage to every living, targetable enemy within its
-## own radius columns of the hero, mirroring Dark Pact's radius-around-
-## a-position AoE (_cast_dark_pact()). Captures the level's aoe_damage/
+## own radius columns of the hero, mirroring Abyssal Spasm's radius-around-
+## a-position AoE (_cast_abyssal_spasm()). Captures the level's aoe_damage/
 ## radius into locals before clearing the state below, since the
 ## explosion still needs them afterward.
 func _end_aphotic_shield(exploded: bool) -> void:
@@ -8674,7 +8674,7 @@ func _end_aphotic_shield(exploded: bool) -> void:
 			targets.append(enemy)
 	for enemy in targets:
 		_deal_fixed_damage_to_enemy(enemy, aoe_damage)
-		# Same red hit-flash as Dark Pact.
+		# Same red hit-flash as Abyssal Spasm.
 		if is_instance_valid(enemy.get("node")):
 			_flash_bounce_hit(enemy["node"])
 	# Self-centered on the hero, same as the check above - a rival's own
@@ -9421,7 +9421,7 @@ func _hero_move_distance() -> int:
 func _is_ranged_hero() -> bool:
 	if _true_form_active:
 		return false
-	return _hero_static.get("range_type", "Mele") == "Range"
+	return _hero_static.get("range_type", "Melee") == "Range"
 
 
 ## Melee heroes only fight by standing exactly on an enemy's column,
@@ -10370,7 +10370,7 @@ func _highlight_hero_self_target() -> void:
 ## (_update_hero_visibility(), not a hardcoded Color(1,1,1)) - Mist
 ## Coil's own self-target highlight tints hero_image the same way a
 ## valid enemy target gets tinted, so this needs to undo that without
-## also stomping Shadow Dance's/Nature's Guise's own invisibility fade
+## also stomping Depthsveil's/Nature's Guise's own invisibility fade
 ## if either is still active. _cancel_targeting() runs constantly -
 ## every _end_turn() call, every new targeting session - so a hardcoded
 ## reset here was clobbering the invisibility fade back to fully opaque
@@ -10472,7 +10472,7 @@ func _on_enemy_clicked(enemy: Dictionary) -> void:
 		return
 
 	# Resolve to whichever enemy on this same column is actually lowest
-	# HP, same as a melee Attack/Pounce/the bear already do via
+	# HP, same as a melee Attack/Barbed Lunge/the bear already do via
 	# _get_enemy_at() - clicking a specific sprite just picks the
 	# column/spot to strike, not necessarily which of several stacked
 	# enemies there takes the hit. Falls back to the clicked enemy
@@ -10585,16 +10585,16 @@ func _on_hero_image_clicked() -> void:
 func _apply_hero_attack(target: Dictionary) -> void:
 	var generation_before: int = _stage_generation
 
-	# If Slark is hidden, this Attack gets Shadow Dance's own bonus
+	# If Veyrik is hidden, this Attack gets Depthsveil's own bonus
 	# damage folded straight into the roll (added to the min/max range
 	# BEFORE rolling, so it goes through armor mitigation exactly like
 	# the rest of the hit - see _roll_hero_damage()) and ends the
 	# invisibility right here, whether or not the hit kills the target.
-	var shadow_dance_bonus: float = _shadow_dance_bonus_damage if _shadow_dance_active else 0.0
+	var depthsveil_bonus: float = _depthsveil_bonus_damage if _depthsveil_active else 0.0
 	# Mirana's own Moonlight Shadow pays off the same way, just as a
 	# PERCENTAGE of the attack's own rolled damage (folded in AFTER the
 	# roll, below - same "post-roll percentage" shape Bash of the
-	# Deep's own bonus uses) rather than Shadow Dance's flat pre-roll
+	# Deep's own bonus uses) rather than Depthsveil's flat pre-roll
 	# bonus. Only one of the two could ever be active in a given battle
 	# (different heroes' own kits), so this never double-counts either
 	# way.
@@ -10607,7 +10607,7 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# Tidebringer counts this Attack toward its own threshold - once
 	# reached, THIS hit's roll gets its bonus damage folded in below
 	# (so the cleave that follows is based on the same empowered
-	# total), same as Shadow Dance's own one-shot bonus above.
+	# total), same as Depthsveil's own one-shot bonus above.
 	var tidebringer_level_data: Dictionary = _maybe_consume_tidebringer_stack()
 	var tidebringer_bonus: float = float(tidebringer_level_data.get("bonus_damage", 0.0))
 	# Bash of the Deep counts this Attack toward its own threshold too,
@@ -10620,19 +10620,19 @@ func _apply_hero_attack(target: Dictionary) -> void:
 	# that reads it has already resolved).
 	var bash_level_data: Dictionary = _maybe_consume_bash_of_the_deep_stack()
 
-	var attack_damage: float = _roll_hero_damage(shadow_dance_bonus + tidebringer_bonus)
+	var attack_damage: float = _roll_hero_damage(depthsveil_bonus + tidebringer_bonus)
 	if moonlight_shadow_active_bonus_pct > 0.0:
 		attack_damage += attack_damage * moonlight_shadow_active_bonus_pct
 	if not bash_level_data.is_empty():
 		attack_damage += attack_damage * float(bash_level_data.get("bonus_damage_pct", 0.0))
 	var mitigated_damage: float = _deal_fixed_damage_to_enemy(target, attack_damage)
-	_apply_essence_shift_steal(target)
+	_apply_leeching_hunger_steal(target)
 	# Arctic Burn's bonus_damage is already folded into the roll above
 	# (see _roll_hero_damage()) - this just spends one of its banked
 	# Attacks, ending the effect once the last one is used.
 	_apply_arctic_burn_attack()
 	# Lifesteal only ever applies to this plain Attack action - never
-	# to skill damage (Pounce, Dark Pact, Entangle's DoT, etc.) - and
+	# to skill damage (Barbed Lunge, Abyssal Spasm, Entangle's DoT, etc.) - and
 	# uses the damage actually dealt, i.e. after the target's armor
 	# has already reduced it.
 	_apply_spirit_link_lifesteal(mitigated_damage, target)
@@ -10684,8 +10684,8 @@ func _apply_hero_attack(target: Dictionary) -> void:
 		elif target.get("current_hp", 0) > 0:
 			_apply_bash_of_the_deep_knockback(target, bash_level_data)
 
-	if shadow_dance_bonus > 0.0:
-		_end_shadow_dance()
+	if depthsveil_bonus > 0.0:
+		_end_depthsveil()
 	elif moonlight_shadow_active_bonus_pct > 0.0:
 		_end_moonlight_shadow()
 
@@ -10706,14 +10706,14 @@ func _apply_hero_attack(target: Dictionary) -> void:
 
 ## Rolls hero damage, applies the target's armor mitigation, subtracts
 ## it from the target's HP, and kills it if that brings it to 0.
-## Shared by Pounce and other skills that deal a standard attack as
+## Shared by Barbed Lunge and other skills that deal a standard attack as
 ## part of their effect but shouldn't duplicate the turn-flag/button
 ## bookkeeping (the plain Attack button goes through
 ## _apply_hero_attack() directly instead, since it also needs to fold
-## in Shadow Dance's one-shot bonus damage).
+## in Depthsveil's one-shot bonus damage).
 ## Rolls hero damage and applies it to a single target via
 ## _deal_fixed_damage_to_enemy. Used by the plain Attack button and by
-## skills (like Pounce) that deal exactly one standard attack.
+## skills (like Barbed Lunge) that deal exactly one standard attack.
 func _deal_damage_to_enemy(target: Dictionary) -> void:
 	_deal_fixed_damage_to_enemy(target, _roll_hero_damage())
 
@@ -10721,7 +10721,7 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## Applies an already-determined damage amount to one target (still
 ## mitigated by that target's own armor) and kills it if that brings
 ## it to 0. Shared by _deal_damage_to_enemy (single rolled hit),
-## Dark Pact (one rolled amount split across every enemy in range),
+## Abyssal Spasm (one rolled amount split across every enemy in range),
 ## and Entangle's DoT. Returns the mitigated damage actually dealt, so
 ## callers that need it (Spirit Link's lifesteal, via
 ## _apply_hero_attack()) don't have to re-derive it.
@@ -10730,7 +10730,7 @@ func _deal_damage_to_enemy(target: Dictionary) -> void:
 ## a heal, and failing that, Aphotic Shield absorbs it into its own HP
 ## pool first - same redirection order as the player's copy, just
 ## checked here since every source of damage to an enemy (attacks,
-## Dark Pact, DoTs) already funnels through this one function.
+## Abyssal Spasm, DoTs) already funnels through this one function.
 ## `is_critical` just forwards to _show_damage_number()'s own bigger-
 ## and-golden-with-a-"!" treatment (see Walrus Punch's own
 ## _resolve_walrus_punch_cast()) - it has no effect on the damage math
@@ -10840,7 +10840,7 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 	return mitigated
 
 
-## A rival hero's own Essence Shift/Spirit Link armor bonuses, folded
+## A rival hero's own Leeching Hunger/Spirit Link armor bonuses, folded
 ## into the armor the player's damage has to punch through - the enemy-
 ## side mirror of _hero_armor()'s own borrowed-armor terms. 0 for
 ## anything that isn't the actual boss (a regular creep, or the boss's
@@ -10848,7 +10848,7 @@ func _deal_fixed_damage_to_enemy(target: Dictionary, amount: float, is_critical:
 func _enemy_hero_bonus_armor(target: Dictionary) -> float:
 	if not target["static"].get("is_hero_fight_boss", false):
 		return 0.0
-	return _enemy_essence_shift_bonus.get("armor", 0.0) + _enemy_spirit_link_bonus_armor + _enemy_living_armor_bonus_armor + _enemy_reactive_armor_bonus_armor()
+	return _enemy_leeching_hunger_bonus.get("armor", 0.0) + _enemy_spirit_link_bonus_armor + _enemy_living_armor_bonus_armor + _enemy_reactive_armor_bonus_armor()
 
 
 ## The enemy to actually hit for whatever's on `pos_index` - the
@@ -10857,7 +10857,7 @@ func _enemy_hero_bonus_armor(target: Dictionary) -> float:
 ## a real hero fight and its simulated equivalent make the same call).
 ## Ties keep whichever comes first in _enemies (stable, arbitrary but
 ## consistent). Used for every "whatever's on this column" resolution -
-## a melee Attack, the bear's own attack, Pounce's leap, and (via
+## a melee Attack, the bear's own attack, Barbed Lunge's leap, and (via
 ## _on_enemy_clicked()'s own redirect) every ranged-click skill cast
 ## too - so stacking two weak creeps in one column can't be used to
 ## soak hits meant for a low-HP kill target hiding behind them.
@@ -10871,11 +10871,11 @@ func _get_enemy_at(pos_index: int) -> Dictionary:
 	return lowest
 
 
-## True for the rival hero currently hidden by their own Shadow Dance or
+## True for the rival hero currently hidden by their own Depthsveil or
 ## Nature's Guise - the player can't select, attack, or target them with
 ## a skill while this holds (see _get_enemy_at(), _start_ranged_
-## targeting(), _start_entangle_targeting(), _cast_dark_pact()), exactly
-## mirroring what the player's own Shadow Dance/Nature's Guise does to
+## targeting(), _start_entangle_targeting(), _cast_abyssal_spasm()), exactly
+## mirroring what the player's own Depthsveil/Nature's Guise does to
 ## him in _enemy_turn() (both folded into his own _is_hero_hidden()).
 ## Slardar's Corrosive Haze overrides this for whichever enemy it's
 ## currently marked (target["corrosive_haze_bonus_pct"] > 0, the same
@@ -10890,13 +10890,13 @@ func _get_enemy_at(pos_index: int) -> Dictionary:
 func _is_target_hidden(target: Dictionary) -> bool:
 	if float(target.get("corrosive_haze_bonus_pct", 0.0)) > 0.0:
 		return false
-	return target["static"].get("is_hero_fight_boss", false) and (_enemy_shadow_dance_active or _enemy_natures_guise_active or _enemy_moonlight_shadow_active)
+	return target["static"].get("is_hero_fight_boss", false) and (_enemy_depthsveil_active or _enemy_natures_guise_active or _enemy_moonlight_shadow_active)
 
 
-## Rolls a hero attack's damage, adding Essence Shift's ongoing
+## Rolls a hero attack's damage, adding Leeching Hunger's ongoing
 ## borrowed damage, True Form's bonus damage, Winter Wyvern's Arctic
 ## Burn bonus damage, and Tusk's Tag Team bonus damage (while each is
-## active) plus (for the single hit that triggers it) Shadow Dance's
+## active) plus (for the single hit that triggers it) Depthsveil's
 ## one-shot `extra_bonus`, before mitigation. Luna's Lunar Blessing then
 ## scales the resulting total by its own bonus_damage_pct, same as a
 ## permanent stat-derived damage bonus would.
@@ -10907,19 +10907,19 @@ func _roll_hero_damage(extra_bonus: float = 0.0) -> float:
 	var min_dmg: float = float(parts[0]) if parts.size() > 0 else 0.0
 	var max_dmg: float = float(parts[1]) if parts.size() > 1 else min_dmg
 
-	# Essence Shift's borrowed damage, True Form's bonus damage, Arctic
+	# Leeching Hunger's borrowed damage, True Form's bonus damage, Arctic
 	# Burn's bonus damage, and Tag Team's bonus damage (while each is
 	# active) apply on top of both ends of the roll, same as a permanent
-	# damage bonus would - Shadow Dance's bonus (passed in by the
+	# damage bonus would - Depthsveil's bonus (passed in by the
 	# caller, only for the specific hit that triggers it) stacks on top
 	# of that the same way.
-	var bonus_damage: float = _essence_shift_bonus.get("damage", 0.0) + _true_form_bonus_damage + _arctic_burn_bonus_damage + _tag_team_bonus_damage + extra_bonus - _player_essence_shift_penalty.get("damage", 0.0)
+	var bonus_damage: float = _leeching_hunger_bonus.get("damage", 0.0) + _true_form_bonus_damage + _arctic_burn_bonus_damage + _tag_team_bonus_damage + extra_bonus - _player_leeching_hunger_penalty.get("damage", 0.0)
 	min_dmg += bonus_damage
 	max_dmg += bonus_damage
 
 	# Lunar Blessing - read fresh off the player's current level every
 	# roll (see _get_lunar_blessing_level_data()) rather than tracked in
-	# a field, since it's never toggled on/off like Shadow Dance/Arctic
+	# a field, since it's never toggled on/off like Depthsveil/Arctic
 	# Burn/Tag Team above, just always-on once learned. Applied last so
 	# it scales the whole roll (base weapon damage plus every flat bonus
 	# above), not just the hero's own base stat.
@@ -11224,16 +11224,16 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_hero_id = hero_static.get("id", "")
 	_enemy_skill_cooldowns.clear()
 
-	_enemy_essence_shift_active = false
-	_enemy_essence_shift_attacks_remaining = 0
-	_enemy_essence_shift_turns_remaining = 0
-	_enemy_essence_shift_duration_pending_start = false
-	_enemy_essence_shift_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_enemy_leeching_hunger_active = false
+	_enemy_leeching_hunger_attacks_remaining = 0
+	_enemy_leeching_hunger_turns_remaining = 0
+	_enemy_leeching_hunger_duration_pending_start = false
+	_enemy_leeching_hunger_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
-	_enemy_shadow_dance_active = false
-	_enemy_shadow_dance_bonus_damage = 0.0
-	_enemy_shadow_dance_turns_remaining = 0
-	_enemy_shadow_dance_duration_pending_start = false
+	_enemy_depthsveil_active = false
+	_enemy_depthsveil_bonus_damage = 0.0
+	_enemy_depthsveil_turns_remaining = 0
+	_enemy_depthsveil_duration_pending_start = false
 
 	_enemy_spirit_link_active = false
 	_enemy_spirit_link_lifesteal_pct = 0.0
@@ -11327,7 +11327,7 @@ func _reset_enemy_hero_state(hero_static: Dictionary) -> void:
 	_enemy_potion_health_count = PlayerManager.get_npc_potion_count(_enemy_hero_id, "health")
 	_enemy_potion_mana_count = PlayerManager.get_npc_potion_count(_enemy_hero_id, "mana")
 
-	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_player_leeching_hunger_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 	_player_root_turns_left = 0
 	_player_silence_turns_left = 0
 	_player_entangle_dot_damage = 0.0
@@ -11523,7 +11523,7 @@ func _end_turn() -> void:
 	# open): the player gets no action at all this "turn" - skip
 	# straight back to another _end_turn() call (Spirit Bear + enemy
 	# turn again) after a short pause, the same way a stunned enemy
-	# just loses its own turn to the player's own Pounce, rather than
+	# just loses its own turn to the player's own Barbed Lunge, rather than
 	# opening the action buttons only to lock them again next turn. Name
 	# whichever effect is actually responsible so the player knows why,
 	# same as any other floating status message.
@@ -11549,12 +11549,12 @@ func _end_turn() -> void:
 ##            |
 ##          MOVE
 ##
-## While Slark is hidden by Shadow Dance (_is_hero_hidden()), neither
+## While Veyrik is hidden by Depthsveil (_is_hero_hidden()), neither
 ## enemy type's attack can land on him, AND enemies stop moving/
 ## chasing him entirely - they hold their ground instead of stepping
 ## toward where he was. If the Spirit Bear is out, it's still fair
 ## game: enemies will shoot/swing at it, and will still chase it down,
-## since only Slark himself is untraceable while invisible. The hero
+## since only Veyrik himself is untraceable while invisible. The hero
 ## is always the priority target when both he and the bear are in
 ## range at once (while visible); only "too close" flee logic keys
 ## off him specifically, not the bear.
@@ -11669,7 +11669,7 @@ func _enemy_turn() -> void:
 					var next_pos: int = enemy["pos_index"] + step
 					if not _is_column_ice_shards_blocked(next_pos):
 						_move_enemy(enemy, next_pos)
-			elif enemy_type == "mele":
+			elif enemy_type == "melee":
 				if enemy["pos_index"] == curse_target_pos:
 					_play_enemy_attack_lunge(enemy)
 					# Same reasoning as the ranged branch above.
@@ -11725,7 +11725,7 @@ func _enemy_turn() -> void:
 					if not _is_column_ice_shards_blocked(next_pos):
 						_move_enemy(enemy, next_pos)
 
-		elif enemy_type == "mele":
+		elif enemy_type == "melee":
 			var attacked: bool = false
 			if enemy["pos_index"] == _hero_pos_index and not hero_hidden:
 				_play_enemy_attack_lunge(enemy)
@@ -11751,7 +11751,7 @@ func _enemy_turn() -> void:
 ## attack/flee range this turn (see _enemy_turn()).
 ##
 ## `hero_is_hidden` excludes the hero from consideration entirely -
-## while Slark is invisible enemies can't track him to move toward
+## while Veyrik is invisible enemies can't track him to move toward
 ## him, only the bear (if one is out). Returns -1 when there's
 ## nothing left to chase, which the caller reads as "don't move".
 func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
@@ -11771,7 +11771,7 @@ func _nearest_threat_pos(enemy_pos: int, hero_is_hidden: bool = false) -> int:
 # (see _pick_enemy_ready_skill()/_cast_enemy_skill()), falling back to
 # the same flee/attack/approach behavior a regular creep uses in
 # _enemy_turn() if nothing is ready/affordable/worthwhile right now, or
-# if the player is currently untargetable (his own Shadow Dance).
+# if the player is currently untargetable (his own Depthsveil).
 #
 # Two simplifications versus a regular creep's own targeting: a rival
 # hero always focuses the player's hero directly rather than ever
@@ -11877,7 +11877,7 @@ func _enemy_hero_turn(enemy: Dictionary) -> void:
 		if hero_distance <= RANGE_ENEMY_ATTACK_RANGE and not hero_hidden:
 			_resolve_enemy_hero_attack(enemy)
 			return
-	else:  # "mele"
+	else:  # "melee"
 		if hero_distance <= 0 and not hero_hidden:
 			_resolve_enemy_hero_attack(enemy)
 			return
@@ -11923,7 +11923,7 @@ func _drink_enemy_health_potion(enemy: Dictionary) -> void:
 
 ## Restores the Mana Potion's own flat value. _enemy_max_mana is the
 ## rival's base max mana, so a hostile-looking but actually-beneficial
-## Essence Shift bonus (_enemy_essence_shift_bonus's own "mana" key)
+## Leeching Hunger bonus (_enemy_leeching_hunger_bonus's own "mana" key)
 ## has to be added back in for the clamp, the same pairing
 ## _build_enemy_ai_context() uses for its own "hero_mana"/"hero_max_
 ## mana" fields.
@@ -11932,22 +11932,22 @@ func _drink_enemy_mana_potion() -> void:
 	PlayerManager.set_npc_potion_count(_enemy_hero_id, "mana", _enemy_potion_mana_count)
 
 	var mana_amount: float = float(GameManager.get_item("mana").get("value", 0))
-	var max_mana: float = _enemy_max_mana + _enemy_essence_shift_bonus.get("mana", 0.0)
+	var max_mana: float = _enemy_max_mana + _enemy_leeching_hunger_bonus.get("mana", 0.0)
 	_enemy_current_mana = minf(max_mana, _enemy_current_mana + mana_amount)
 	_show_message_over_hero("Rival drank a Mana Potion")
 	_refresh_bars()
 
 
 ## The rival hero's plain Attack against the player: rolls their
-## effective damage (folding in their own Essence Shift/True Form
-## bonuses and, once per activation, Shadow Dance's one-shot bonus if
+## effective damage (folding in their own Leeching Hunger/True Form
+## bonuses and, once per activation, Depthsveil's one-shot bonus if
 ## they're currently hidden), applies it to the player, then runs
-## Essence Shift's steal and Spirit Link's lifesteal - both of which,
+## Leeching Hunger's steal and Spirit Link's lifesteal - both of which,
 ## exactly like the player's own copies, only ever trigger off this
 ## plain Attack, never off a skill.
 func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	_play_enemy_attack_lunge(enemy)
-	var shadow_bonus: float = _enemy_shadow_dance_bonus_damage if _enemy_shadow_dance_active else 0.0
+	var shadow_bonus: float = _enemy_depthsveil_bonus_damage if _enemy_depthsveil_active else 0.0
 	# Same idea for Nature's Guise, just with a root on the player
 	# instead of bonus damage - captured now, before the attack (and
 	# possibly _end_enemy_natures_guise()) below can change what
@@ -11966,7 +11966,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	# Mirana's own Moonlight Shadow pays off the same way, just as a
 	# PERCENTAGE of the attack's own rolled damage (folded in AFTER the
 	# roll, below), same "post-roll percentage" shape Bash of the Deep's
-	# own bonus uses. Only one of Shadow Dance/Moonlight Shadow could
+	# own bonus uses. Only one of Depthsveil/Moonlight Shadow could
 	# ever be active in a given fight (different heroes' own kits), so
 	# this never double-counts either way.
 	var moonlight_shadow_active_bonus_pct: float = _enemy_moonlight_shadow_bonus_damage_pct if _enemy_moonlight_shadow_active else 0.0
@@ -11977,7 +11977,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 		attack_damage += attack_damage * float(bash_level_data.get("bonus_damage_pct", 0.0))
 	var mitigated: float = apply_damage(attack_damage)
 
-	_apply_enemy_essence_shift_steal(enemy)
+	_apply_enemy_leeching_hunger_steal(enemy)
 	_apply_enemy_spirit_link_lifesteal(enemy, mitigated)
 	_apply_enemy_curse_of_avernus_stack()
 	_apply_enemy_arctic_burn_attack()
@@ -11997,7 +11997,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	# Tidebringer's above.
 	_apply_enemy_moon_glaives_bounces(attack_damage)
 
-	# Bash of the Deep's own knockback - after essence shift/lifesteal/
+	# Bash of the Deep's own knockback - after leeching hunger/lifesteal/
 	# curse of avernus above, same "resolve every OTHER effect of the hit
 	# before shoving the target somewhere else" ordering
 	# _apply_hero_attack()'s own player-side copy follows. A no-op unless
@@ -12006,8 +12006,8 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 	if not bash_level_data.is_empty() and _recruited.get("current_hp", 0) > 0:
 		_apply_enemy_bash_of_the_deep_knockback(enemy, bash_level_data)
 
-	if _enemy_shadow_dance_active and shadow_bonus > 0.0:
-		_end_enemy_shadow_dance()
+	if _enemy_depthsveil_active and shadow_bonus > 0.0:
+		_end_enemy_depthsveil()
 	elif moonlight_shadow_active_bonus_pct > 0.0:
 		_end_enemy_moonlight_shadow()
 
@@ -12026,7 +12026,7 @@ func _resolve_enemy_hero_attack(enemy: Dictionary) -> void:
 ## range.
 func _roll_enemy_hero_damage(enemy: Dictionary, extra_bonus: float = 0.0) -> float:
 	var base_damage: float = float(enemy["static"].get("damage", 0))
-	var bonus: float = _enemy_essence_shift_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + _enemy_arctic_burn_bonus_damage + _enemy_tag_team_bonus_damage + extra_bonus
+	var bonus: float = _enemy_leeching_hunger_bonus.get("damage", 0.0) + _enemy_true_form_bonus_damage + _enemy_arctic_burn_bonus_damage + _enemy_tag_team_bonus_damage + extra_bonus
 	var total: float = maxf(0.0, base_damage + bonus)
 
 	# Luna's Lunar Blessing - read fresh off the rival's current level
@@ -12044,11 +12044,11 @@ func _roll_enemy_hero_damage(enemy: Dictionary, extra_bonus: float = 0.0) -> flo
 	return total
 
 
-## The rival's current max hp: base + Essence Shift's borrowed hp +
+## The rival's current max hp: base + Leeching Hunger's borrowed hp +
 ## True Form's bonus hp while each is active - the enemy-side mirror
 ## of _hero_max_hp(). Used to clamp Spirit Link's lifesteal.
 func _enemy_hero_effective_max_hp(enemy: Dictionary) -> float:
-	return float(enemy["static"].get("hp", 1)) + _enemy_essence_shift_bonus.get("hp", 0.0) + _enemy_true_form_bonus_hp
+	return float(enemy["static"].get("hp", 1)) + _enemy_leeching_hunger_bonus.get("hp", 0.0) + _enemy_true_form_bonus_hp
 
 
 func _get_hero_fight_boss() -> Dictionary:
@@ -12085,17 +12085,17 @@ func _enemy_skill_mana_cost(skill_id: String) -> float:
 
 
 ## False for a buff/summon skill that's already active and wouldn't do
-## anything new right now (recasting Essence Shift/Shadow Dance/Spirit
+## anything new right now (recasting Leeching Hunger/Depthsveil/Spirit
 ## Link/True Form just restarts their duration from the same values,
 ## and a Spirit Bear that's already out doesn't need replacing) - so
 ## the rival doesn't burn mana refreshing something with no benefit
-## instead of attacking. Dark Pact/Pounce/Entangle always report true.
+## instead of attacking. Abyssal Spasm/Barbed Lunge/Entangle always report true.
 func _enemy_skill_worth_casting(skill_id: String) -> bool:
 	match skill_id:
-		"essence_shift":
-			return not _enemy_essence_shift_active
-		"shadow_dance":
-			return not _enemy_shadow_dance_active
+		"leeching_hunger":
+			return not _enemy_leeching_hunger_active
+		"depthsveil":
+			return not _enemy_depthsveil_active
 		"moonlight_shadow":
 			return not _enemy_moonlight_shadow_active
 		"eclipse":
@@ -12217,7 +12217,7 @@ func _is_enemy_skill_ready(skill_id: String, enemy_type: String, hero_distance: 
 ## the caller's own existing basic-attack fallback takes over unchanged.
 ## `enemy_type`/`hero_distance` still gate skills that actually need to
 ## reach the player - see _enemy_skill_in_range()/EnemySkillRange - so a
-## boss can't land Dark Pact or Entangle from clear across the board; it
+## boss can't land Abyssal Spasm or Entangle from clear across the board; it
 ## has to close in first, same as it already must for a plain Attack.
 ## This replaces the old "first match in ENEMY_KNOWN_SKILL_IDS wins"
 ## rule - the array is still every skill this AI ever considers, it's
@@ -12626,9 +12626,9 @@ func _enemy_skill_in_range(skill_id: String, enemy_type: String, hero_distance: 
 
 	# Torrent's/X Marks the Spot's/Ghostship's/Cold Feet's own targeting
 	# range lives in a "range" field rather than "radius" (Torrent's
-	# separate, level-4-only splash radius); Pounce's own leap reach
+	# separate, level-4-only splash radius); Barbed Lunge's own leap reach
 	# lives in a "distance" field instead - see EnemySkillRange's
-	# "torrent"/"x_marks_the_spot"/"ghostship"/"pounce"/"cold_feet" case,
+	# "torrent"/"x_marks_the_spot"/"ghostship"/"barbed_lunge"/"cold_feet" case,
 	# which compares distance against whichever of the three this
 	# resolves to. Ice Vortex is the one exception: its own targeting
 	# range is the FIXED constant ICE_VORTEX_RANGE, never part of its
@@ -12670,14 +12670,14 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 	_enemy_skill_on_bear = not mist_coil_self and ENEMY_BEAR_TARGETABLE_SKILLS.has(skill_id) and _choose_enemy_skill_on_bear(enemy, skill_id)
 
 	match skill_id:
-		"dark_pact":
-			_cast_enemy_dark_pact(enemy, level_data)
-		"pounce":
-			_cast_enemy_pounce(enemy, level_data)
-		"essence_shift":
-			_activate_enemy_essence_shift(level_data)
-		"shadow_dance":
-			_activate_enemy_shadow_dance(level_data)
+		"abyssal_spasm":
+			_cast_enemy_abyssal_spasm(enemy, level_data)
+		"barbed_lunge":
+			_cast_enemy_barbed_lunge(enemy, level_data)
+		"leeching_hunger":
+			_activate_enemy_leeching_hunger(level_data)
+		"depthsveil":
+			_activate_enemy_depthsveil(level_data)
 		"entangle":
 			_cast_enemy_entangle(level_data)
 		"summon_spirit_bear":
@@ -12773,7 +12773,7 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 		"eclipse":
 			_cast_enemy_eclipse(level_data)
 
-	# Shadow Dance/Nature's Guise only break from casting ANOTHER skill
+	# Depthsveil/Nature's Guise only break from casting ANOTHER skill
 	# (or attacking, handled separately in _resolve_enemy_hero_attack()),
 	# never from a cast/recast of themselves - mirrors the player's own
 	# _on_skill_pressed(). Only one of the two could ever be active at
@@ -12782,8 +12782,8 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 	_enemy_skill_on_bear = false
 	_enemy_mist_coil_self = false
 
-	if _enemy_shadow_dance_active and skill_id != "shadow_dance":
-		_end_enemy_shadow_dance()
+	if _enemy_depthsveil_active and skill_id != "depthsveil":
+		_end_enemy_depthsveil()
 	if _enemy_natures_guise_active and skill_id != "nature's_guise":
 		_end_enemy_natures_guise()
 	# Sacred Arrow is deliberately exempt - mirrors the player's own
@@ -12795,7 +12795,7 @@ func _cast_enemy_skill(enemy: Dictionary, skill_id: String) -> void:
 	if _enemy_moonlight_shadow_active and skill_id != "moonlight_shadow" and skill_id != "sacred_arrow":
 		_end_enemy_moonlight_shadow()
 
-	# After Shadow Dance's own break above, so the caster's modulate is
+	# After Depthsveil's own break above, so the caster's modulate is
 	# already back to opaque before the flash reads/writes it.
 	_play_enemy_cast_feedback(enemy, skill)
 
@@ -13375,28 +13375,28 @@ func _shake_screen() -> void:
 	tween.tween_property(self, "position", base_position, 0.03)
 
 
-## Dark Pact only ever has one possible target here (there's no other
+## Abyssal Spasm only ever has one possible target here (there's no other
 ## enemy for the rival to hit besides the player), unlike the player's
-## own _cast_dark_pact() which has to scan multiple enemies - so this
+## own _cast_abyssal_spasm() which has to scan multiple enemies - so this
 ## just hits. The radius check against the player's distance already
 ## happened before this skill was even picked (see
 ## _enemy_skill_in_range()/EnemySkillRange), so by the time this runs
 ## the player is guaranteed to be in range.
-func _cast_enemy_dark_pact(enemy: Dictionary, level_data: Dictionary) -> void:
+func _cast_enemy_abyssal_spasm(enemy: Dictionary, level_data: Dictionary) -> void:
 	var multiplier: float = float(level_data.get("damage_multiplier", 0.75))
 	var pact_damage: float = _roll_enemy_hero_damage(enemy) * multiplier
 	apply_damage(pact_damage)
-	# Same red hit-flash the player's own Dark Pact gives every enemy it
-	# catches (see _cast_dark_pact()).
+	# Same red hit-flash the player's own Abyssal Spasm gives every enemy it
+	# catches (see _cast_abyssal_spasm()).
 	_flash_bounce_hit(hero_image)
-	# Dark Pact is centered on the CASTER's own column, not the
+	# Abyssal Spasm is centered on the CASTER's own column, not the
 	# player's - an illusion standing near the rival (not necessarily
 	# near the hero) can still be caught in it.
 	_deal_aoe_damage_to_illusions(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage, true)
 	_deal_aoe_damage_to_bear(enemy["pos_index"], int(level_data.get("radius", 0)), pact_damage, true)
 
 
-func _cast_enemy_pounce(enemy: Dictionary, level_data: Dictionary) -> void:
+func _cast_enemy_barbed_lunge(enemy: Dictionary, level_data: Dictionary) -> void:
 	var direction: int = _step_toward(enemy["pos_index"], _hero_pos_index)
 	if direction == 0:
 		direction = 1
@@ -13411,7 +13411,7 @@ func _cast_enemy_pounce(enemy: Dictionary, level_data: Dictionary) -> void:
 			break
 		# The player's own Ice Shards wall stops the leap dead, same
 		# "can't jump past a wall in its path" rule the player's own
-		# Pounce follows now (see _cast_pounce()).
+		# Barbed Lunge follows now (see _cast_barbed_lunge()).
 		if _is_column_ice_shards_blocked(next_pos):
 			break
 		pos = next_pos
@@ -13428,67 +13428,67 @@ func _cast_enemy_pounce(enemy: Dictionary, level_data: Dictionary) -> void:
 
 
 # ------------------------------------------------------------------
-# Slark's Essence Shift, cast by the rival at the player - mirrors the
-# player's own _activate_essence_shift()/_tick_essence_shift()/
-# _end_essence_shift(), just draining a battle-local penalty on the
-# player (_player_essence_shift_penalty) instead of a battle-local
+# Veyrik's Leeching Hunger, cast by the rival at the player - mirrors the
+# player's own _activate_leeching_hunger()/_tick_leeching_hunger()/
+# _end_leeching_hunger(), just draining a battle-local penalty on the
+# player (_player_leeching_hunger_penalty) instead of a battle-local
 # counter on an enemy, since the player has no such counter to drain.
 # ------------------------------------------------------------------
 
-func _activate_enemy_essence_shift(level_data: Dictionary) -> void:
-	if _enemy_essence_shift_active:
-		_end_enemy_essence_shift()
-	_enemy_essence_shift_active = true
-	_enemy_essence_shift_attacks_remaining = int(level_data.get("attacks", 0))
-	_enemy_essence_shift_turns_remaining = int(level_data.get("duration", 0))
-	_enemy_essence_shift_duration_pending_start = true
+func _activate_enemy_leeching_hunger(level_data: Dictionary) -> void:
+	if _enemy_leeching_hunger_active:
+		_end_enemy_leeching_hunger()
+	_enemy_leeching_hunger_active = true
+	_enemy_leeching_hunger_attacks_remaining = int(level_data.get("attacks", 0))
+	_enemy_leeching_hunger_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_leeching_hunger_duration_pending_start = true
 
 
 ## Steals one point of the player's own main stat, converting it into
 ## the same hp/armor/mana contribution (plus damage, since the stolen
 ## stat is always the player's own main stat by definition) that the
 ## same point would be worth on the player's side of the fight -
-## mirrors _essence_shift_contribution_for(), just applied as a
+## mirrors _leeching_hunger_contribution_for(), just applied as a
 ## penalty to the player instead of a bonus to whoever cast it.
 ##
 ## Simplification versus the player's own copy: there's no floor on
 ## how much can be drained from the player the way enemies' battle-
 ## local main-stat counters bottom out at
-## GameManager.ESSENCE_SHIFT_MIN_ENEMY_MAIN_STAT, since the player has
+## GameManager.LEECHING_HUNGER_MIN_ENEMY_MAIN_STAT, since the player has
 ## no such counter - a hero fight is expected to resolve in far fewer
 ## turns than it'd take for this to matter in practice.
-func _apply_enemy_essence_shift_steal(enemy: Dictionary) -> void:
-	if not _enemy_essence_shift_active or _enemy_essence_shift_attacks_remaining <= 0:
+func _apply_enemy_leeching_hunger_steal(enemy: Dictionary) -> void:
+	if not _enemy_leeching_hunger_active or _enemy_leeching_hunger_attacks_remaining <= 0:
 		return
 
 	var stat_name: String = str(_hero_static.get("main_stat", "")).to_lower()
 	if stat_name == "":
 		return
 
-	_enemy_essence_shift_attacks_remaining -= 1
+	_enemy_leeching_hunger_attacks_remaining -= 1
 
 	match stat_name:
 		"strength":
-			_player_essence_shift_penalty["hp"] = _player_essence_shift_penalty.get("hp", 0.0) + GameManager.HP_PER_STRENGTH
+			_player_leeching_hunger_penalty["hp"] = _player_leeching_hunger_penalty.get("hp", 0.0) + GameManager.HP_PER_STRENGTH
 		"agility":
-			_player_essence_shift_penalty["armor"] = _player_essence_shift_penalty.get("armor", 0.0) + GameManager.ARMOR_PER_AGILITY
+			_player_leeching_hunger_penalty["armor"] = _player_leeching_hunger_penalty.get("armor", 0.0) + GameManager.ARMOR_PER_AGILITY
 		"intelligence":
-			_player_essence_shift_penalty["mana"] = _player_essence_shift_penalty.get("mana", 0.0) + GameManager.MANA_PER_INTELLIGENCE
-	_player_essence_shift_penalty["damage"] = _player_essence_shift_penalty.get("damage", 0.0) + GameManager.DAMAGE_PER_MAIN_STAT
+			_player_leeching_hunger_penalty["mana"] = _player_leeching_hunger_penalty.get("mana", 0.0) + GameManager.MANA_PER_INTELLIGENCE
+	_player_leeching_hunger_penalty["damage"] = _player_leeching_hunger_penalty.get("damage", 0.0) + GameManager.DAMAGE_PER_MAIN_STAT
 
-	var enemy_contribution: Dictionary = _enemy_essence_shift_contribution_for(stat_name)
+	var enemy_contribution: Dictionary = _enemy_leeching_hunger_contribution_for(stat_name)
 	for stat_key in enemy_contribution.keys():
-		_enemy_essence_shift_bonus[stat_key] = _enemy_essence_shift_bonus.get(stat_key, 0.0) + enemy_contribution[stat_key]
+		_enemy_leeching_hunger_bonus[stat_key] = _enemy_leeching_hunger_bonus.get(stat_key, 0.0) + enemy_contribution[stat_key]
 
-	_play_drain_effect(hero_image, enemy.get("node"), ESSENCE_SHIFT_MOTE_COLOR)
+	_play_drain_effect(hero_image, enemy.get("node"), LEECHING_HUNGER_MOTE_COLOR)
 	_refresh_bars()
 
 
 ## What the RIVAL gains from stealing one point of `stat_name` - the
-## same conversion table as _essence_shift_contribution_for(), just
+## same conversion table as _leeching_hunger_contribution_for(), just
 ## checked against the rival's own main stat (rather than the
 ## player's) for the extra-damage condition.
-func _enemy_essence_shift_contribution_for(stat_name: String) -> Dictionary:
+func _enemy_leeching_hunger_contribution_for(stat_name: String) -> Dictionary:
 	var contribution: Dictionary = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
 
 	match stat_name:
@@ -13505,66 +13505,66 @@ func _enemy_essence_shift_contribution_for(stat_name: String) -> Dictionary:
 	return contribution
 
 
-func _tick_enemy_essence_shift() -> void:
-	if not _enemy_essence_shift_active:
+func _tick_enemy_leeching_hunger() -> void:
+	if not _enemy_leeching_hunger_active:
 		return
-	if _enemy_essence_shift_duration_pending_start:
-		_enemy_essence_shift_duration_pending_start = false
+	if _enemy_leeching_hunger_duration_pending_start:
+		_enemy_leeching_hunger_duration_pending_start = false
 		return
-	_enemy_essence_shift_turns_remaining -= 1
-	if _enemy_essence_shift_turns_remaining <= 0:
-		_end_enemy_essence_shift()
+	_enemy_leeching_hunger_turns_remaining -= 1
+	if _enemy_leeching_hunger_turns_remaining <= 0:
+		_end_enemy_leeching_hunger()
 
 
-func _end_enemy_essence_shift() -> void:
-	_player_essence_shift_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
-	_enemy_essence_shift_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
-	_enemy_essence_shift_active = false
-	_enemy_essence_shift_attacks_remaining = 0
-	_enemy_essence_shift_turns_remaining = 0
-	_enemy_essence_shift_duration_pending_start = false
+func _end_enemy_leeching_hunger() -> void:
+	_player_leeching_hunger_penalty = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_enemy_leeching_hunger_bonus = {"damage": 0.0, "hp": 0.0, "mana": 0.0, "armor": 0.0}
+	_enemy_leeching_hunger_active = false
+	_enemy_leeching_hunger_attacks_remaining = 0
+	_enemy_leeching_hunger_turns_remaining = 0
+	_enemy_leeching_hunger_duration_pending_start = false
 	_refresh_bars()
 
 
 # ------------------------------------------------------------------
-# Slark's Shadow Dance, cast by the rival on themselves - mirrors the
-# player's own _activate_shadow_dance()/_tick_shadow_dance()/
-# _end_shadow_dance(). "Hidden" here means the player's attacks and
+# Veyrik's Depthsveil, cast by the rival on themselves - mirrors the
+# player's own _activate_depthsveil()/_tick_depthsveil()/
+# _end_depthsveil(). "Hidden" here means the player's attacks and
 # targeted skills can't select them at all (_is_target_hidden(),
 # checked from _get_enemy_at()/_start_ranged_targeting()/
-# _start_entangle_targeting()/_cast_dark_pact()) - their own turn
+# _start_entangle_targeting()/_cast_abyssal_spasm()) - their own turn
 # proceeds completely normally while hidden.
 # ------------------------------------------------------------------
 
-func _activate_enemy_shadow_dance(level_data: Dictionary) -> void:
-	_enemy_shadow_dance_active = true
-	_enemy_shadow_dance_bonus_damage = float(level_data.get("bonus_damage", 0))
-	_enemy_shadow_dance_turns_remaining = int(level_data.get("duration", 0))
-	_enemy_shadow_dance_duration_pending_start = true
+func _activate_enemy_depthsveil(level_data: Dictionary) -> void:
+	_enemy_depthsveil_active = true
+	_enemy_depthsveil_bonus_damage = float(level_data.get("bonus_damage", 0))
+	_enemy_depthsveil_turns_remaining = int(level_data.get("duration", 0))
+	_enemy_depthsveil_duration_pending_start = true
 	_update_enemy_hero_visibility()
 
 
-func _tick_enemy_shadow_dance() -> void:
-	if not _enemy_shadow_dance_active:
+func _tick_enemy_depthsveil() -> void:
+	if not _enemy_depthsveil_active:
 		return
-	if _enemy_shadow_dance_duration_pending_start:
-		_enemy_shadow_dance_duration_pending_start = false
+	if _enemy_depthsveil_duration_pending_start:
+		_enemy_depthsveil_duration_pending_start = false
 		return
-	_enemy_shadow_dance_turns_remaining -= 1
-	if _enemy_shadow_dance_turns_remaining <= 0:
-		_end_enemy_shadow_dance()
+	_enemy_depthsveil_turns_remaining -= 1
+	if _enemy_depthsveil_turns_remaining <= 0:
+		_end_enemy_depthsveil()
 
 
-func _end_enemy_shadow_dance() -> void:
-	_enemy_shadow_dance_active = false
-	_enemy_shadow_dance_bonus_damage = 0.0
-	_enemy_shadow_dance_turns_remaining = 0
-	_enemy_shadow_dance_duration_pending_start = false
+func _end_enemy_depthsveil() -> void:
+	_enemy_depthsveil_active = false
+	_enemy_depthsveil_bonus_damage = 0.0
+	_enemy_depthsveil_turns_remaining = 0
+	_enemy_depthsveil_duration_pending_start = false
 	_update_enemy_hero_visibility()
 
 
 ## Fades the boss's own enemy node while hidden, the same visual cue
-## the player's own Shadow Dance gives his portrait - just as a direct
+## the player's own Depthsveil gives his portrait - just as a direct
 ## modulate on the enemy TextureRect rather than a dedicated node,
 ## since a hero-fight boss is otherwise a completely ordinary entry in
 ## _enemies.
@@ -13572,7 +13572,7 @@ func _update_enemy_hero_visibility() -> void:
 	var boss: Dictionary = _get_hero_fight_boss()
 	if boss.is_empty() or not is_instance_valid(boss["node"]):
 		return
-	var hidden: bool = _enemy_shadow_dance_active or _enemy_natures_guise_active or _enemy_moonlight_shadow_active
+	var hidden: bool = _enemy_depthsveil_active or _enemy_natures_guise_active or _enemy_moonlight_shadow_active
 	boss["node"].modulate = Color(1, 1, 1, 0.4) if hidden else Color(1, 1, 1, 1)
 
 
@@ -13624,7 +13624,7 @@ func _summon_enemy_spirit_bear(level_data: Dictionary) -> void:
 		"id": "enemy_spirit_bear",
 		"name": "Spirit Bear",
 		"image": SPIRIT_BEAR_IMAGE_PATH,
-		"type": "mele",
+		"type": "melee",
 		"hp": float(level_data.get("hp", 1)),
 		"damage": roundi((damage_min + damage_max) / 2.0),
 		"armor": float(level_data.get("armor", 0)),
@@ -13688,7 +13688,7 @@ func _end_enemy_spirit_link() -> void:
 
 
 ## Only ever called for the plain basic-attack branch of the rival's
-## turn - like the player's own copy, skill damage (Dark Pact, Pounce,
+## turn - like the player's own copy, skill damage (Abyssal Spasm, Barbed Lunge,
 ## Entangle's DoT) never triggers this. Heals the boss directly,
 ## clamped to their current effective max hp.
 func _apply_enemy_spirit_link_lifesteal(enemy: Dictionary, mitigated_attack_damage: float) -> void:
@@ -14017,7 +14017,7 @@ func _play_ice_blast_effect(from_node: Variant, to_node: Variant) -> void:
 ## Activates (or, if already active, replaces outright, same as the
 ## player's own copy) Aphotic Shield on the rival, and dispels every
 ## negative effect currently on him - here that's whatever the
-## player's own Entangle/Pounce/Curse of Avernus wrote directly onto
+## player's own Entangle/Barbed Lunge/Curse of Avernus wrote directly onto
 ## this enemy Dictionary (see _apply_root()/_apply_curse_of_avernus_
 ## stack()), since a hero-fight boss is otherwise a completely ordinary
 ## entry in _enemies.
@@ -14089,7 +14089,7 @@ func _end_enemy_aphotic_shield(exploded: bool) -> void:
 	var hero_in_range: bool = not boss.is_empty() and _distance(_hero_pos_index, boss["pos_index"]) <= radius
 	if hero_in_range and not _is_hero_hidden():
 		apply_damage(aoe_damage)
-		# Same red hit-flash as Dark Pact.
+		# Same red hit-flash as Abyssal Spasm.
 		_flash_bounce_hit(hero_image)
 	# The explosion is centered on the boss's own column, not the
 	# player's - an illusion or the bear standing near him can still be
@@ -14103,7 +14103,7 @@ func _end_enemy_aphotic_shield(exploded: bool) -> void:
 # ------------------------------------------------------------------
 # Kunkka's Torrent, cast by the rival on the player - mirrors the
 # player's own _resolve_torrent_cast(). Simplification versus that
-# player-facing copy: like Dark Pact/Mist Coil, there's only one
+# player-facing copy: like Abyssal Spasm/Mist Coil, there's only one
 # possible target in a hero fight (no other enemy, and no bear/column
 # concept to splash onto), so the level-4 AoE radius has nothing extra
 # to reach here - this always resolves as a single hit.
@@ -14234,7 +14234,7 @@ func _cast_enemy_xmarks() -> void:
 # Kunkka's Ghostship, cast by the rival - mirrors the player's own
 # _resolve_ghostship_cast(). Simplification versus that player-facing
 # copy: the ship's whole path-of-enemies concept collapses to a single
-# hit here, same "only one possible target" simplification Dark Pact/
+# hit here, same "only one possible target" simplification Abyssal Spasm/
 # Mist Coil/Torrent already use - there's no bear-on-the-path concept
 # for the rival AI to consider either, matching how it never targets
 # the bear in the first place (see _enemy_hero_turn()'s own doc
@@ -14395,7 +14395,7 @@ func _end_enemy_borrowed_time() -> void:
 # (same simplification Entangle's own _player_entangle_dot_* fields
 # already use). Ice Vortex's own AoE has nothing else to reach in a
 # hero fight (there's no other enemy besides the player), same "only
-# one possible target" simplification Dark Pact/Torrent's splash
+# one possible target" simplification Abyssal Spasm/Torrent's splash
 # already use for a rival.
 # ------------------------------------------------------------------
 
@@ -14496,7 +14496,7 @@ func _tick_player_allies_ice_vortex() -> void:
 # Attack damage (_roll_enemy_hero_damage(), the enemy-side mirror of
 # _roll_hero_damage()) plus this level's own flat bonus_damage on top.
 # Like the player's own copy, this is SKILL damage, not the plain
-# Attack action itself, so it never triggers Essence Shift's steal,
+# Attack action itself, so it never triggers Leeching Hunger's steal,
 # Spirit Link's lifesteal, or Curse of Avernus's stacking - those stay
 # scoped specifically to _resolve_enemy_hero_attack().
 # ------------------------------------------------------------------
@@ -14511,7 +14511,7 @@ func _cast_enemy_chilling_touch(enemy: Dictionary, level_data: Dictionary) -> vo
 # ------------------------------------------------------------------
 # Ancient Apparition's Ice Blast, cast by the rival - mirrors the
 # player's own _resolve_ice_blast_cast().
-# Like Dark Pact/Torrent/Ghostship's own rival copies, there's only one
+# Like Abyssal Spasm/Torrent/Ghostship's own rival copies, there's only one
 # possible target in a hero fight (the player), so the "hit everyone
 # within radius" AoE collapses to a single hit; the DoT/execute state
 # lives in the single-player _player_ice_blast_* vars instead of a
@@ -14592,7 +14592,7 @@ func _end_enemy_arctic_burn() -> void:
 # ------------------------------------------------------------------
 # Winter Wyvern's Splinter Blast, cast by the rival on the player -
 # mirrors the player's own _resolve_splinter_blast_cast(). Simplification
-# versus that player-facing copy: like Dark Pact/Mist Coil/Torrent,
+# versus that player-facing copy: like Abyssal Spasm/Mist Coil/Torrent,
 # there's only one possible target in a hero fight, so the splash onto
 # "every OTHER enemy within splinter_range" has nothing else to reach -
 # this always resolves as a single hit.
@@ -14661,10 +14661,10 @@ func _cast_enemy_cold_embrace(level_data: Dictionary) -> void:
 func _dispel_all_enemy_hero_effects() -> void:
 	if _enemy_arctic_burn_active:
 		_end_enemy_arctic_burn()
-	if _enemy_essence_shift_active:
-		_end_enemy_essence_shift()
-	if _enemy_shadow_dance_active:
-		_end_enemy_shadow_dance()
+	if _enemy_leeching_hunger_active:
+		_end_enemy_leeching_hunger()
+	if _enemy_depthsveil_active:
+		_end_enemy_depthsveil()
 	if _enemy_spirit_link_active:
 		_end_enemy_spirit_link()
 	if _enemy_true_form_active:
@@ -14718,9 +14718,9 @@ func _end_enemy_cold_embrace() -> void:
 # controlled directly rather than by the same AI _enemy_turn() redirect
 # logic uses, so there's no second enemy to pull off of him. This
 # collapses Winter's Curse down to freezing the player outright
-# (reusing the shared _player_stun_turns_left field Torrent's/Pounce's/
+# (reusing the shared _player_stun_turns_left field Torrent's/Barbed Lunge's/
 # Ice Blast's own stun already use), the same "AoE/redirect skill with
-# only one possible target" simplification Dark Pact/Splinter Blast/
+# only one possible target" simplification Abyssal Spasm/Splinter Blast/
 # Ice Vortex already use for a rival.
 # ------------------------------------------------------------------
 
@@ -14742,7 +14742,7 @@ func _cast_enemy_winters_curse(level_data: Dictionary) -> void:
 # copies: there's only one possible target in a hero fight (the player),
 # so Crystal Nova's own "every other enemy within radius of the primary
 # target" splash has nothing else to reach - same "AoE skill with only
-# one possible target" simplification Dark Pact/Splinter Blast/Ice
+# one possible target" simplification Abyssal Spasm/Splinter Blast/Ice
 # Vortex already use for a rival.
 # ------------------------------------------------------------------
 
@@ -15049,7 +15049,7 @@ func _cast_enemy_walrus_punch(enemy: Dictionary, level_data: Dictionary) -> void
 # Treant Protector's Nature's Guise, cast by the rival on himself -
 # mirrors the player's own _activate_natures_guise()/_tick_natures_
 # guise()/_end_natures_guise(): functionally the same invisibility as
-# Shadow Dance (folded into the very same _is_target_hidden()/_update_
+# Depthsveil (folded into the very same _is_target_hidden()/_update_
 # enemy_hero_visibility() checks), just with a root on the player
 # instead of bonus damage for the Attack that breaks it - see
 # _resolve_enemy_hero_attack()'s own "attacking_from_enemy_natures_
@@ -15521,8 +15521,8 @@ func _cast_enemy_lil_shredder(enemy: Dictionary, level_data: Dictionary) -> void
 # context()'s own "rip_tide_*" fields. Its AoE splash (aoe_damage_pct/
 # radius) never has an actual second target to reach in a real hero fight
 # (there's only ever the one player to hit - same "no cleave" collapse
-# Dark Pact's/Ghostship's/Whirling Death's own rival copies already have,
-# see _cast_enemy_dark_pact()'s own docstring), so unlike the player's
+# Abyssal Spasm's/Ghostship's/Whirling Death's own rival copies already have,
+# see _cast_enemy_abyssal_spasm()'s own docstring), so unlike the player's
 # own _apply_rip_tide_cleave(), its splash off her plain Attack reaches
 # the player's own illusions and Spirit Bear near him (see
 # _apply_enemy_rip_tide_splash()) - the player himself is the struck
@@ -15754,7 +15754,7 @@ func _kill_enemy_illusion(illusion: Dictionary) -> void:
 
 ## The boss's own effective armor for mitigating a hit onto one of its
 ## illusions - base armor plus its own borrowed bonuses (Reactive
-## Armor's stack, Essence Shift, etc., via _enemy_hero_bonus_armor())
+## Armor's stack, Leeching Hunger, etc., via _enemy_hero_bonus_armor())
 ## minus Lil' Shredder's own shred, same three terms
 ## _deal_fixed_damage_to_enemy()'s own redirect branch already reads.
 ## An illusion is a copy of the boss, not a separate combatant with its
@@ -15774,7 +15774,7 @@ func _enemy_hero_effective_armor(boss: Dictionary) -> float:
 ## armor from (i.e. outside a hero fight).
 ## `flash_hits` gives each one hit the same red hit-flash as Moon
 ## Glaives' bounce (_flash_bounce_hit()) - off by default, opted into by
-## Dark Pact.
+## Abyssal Spasm.
 func _deal_aoe_damage_to_enemy_illusions(center_pos_index: int, radius: int, amount: float, flash_hits: bool = false) -> void:
 	if _enemy_illusions.is_empty() or amount <= 0.0:
 		return
@@ -15862,7 +15862,7 @@ func _cast_enemy_ensnare(level_data: Dictionary) -> void:
 # ------------------------------------------------------------------
 # Naga Siren's ultimate, Song of the Siren, cast by the rival - mirrors
 # the player's own _cast_song_of_the_siren(): stuns (_player_stun_turns_
-# left, the same shared field Pounce's/Torrent's/Firesnap Cookie's own
+# left, the same shared field Barbed Lunge's/Torrent's/Firesnap Cookie's own
 # stun already use) and shreds the armor (_player_armor_reduction/
 # _player_armor_reduction_turns_left, the same per-instance runtime
 # fields Lil' Shredder's own shred uses - stacking additively with any
@@ -15978,7 +15978,7 @@ func _end_enemy_guardian_sprint() -> void:
 # Slardar's Slithereen Crush, cast by the rival - mirrors the player's
 # own _cast_slithereen_crush(): this level's own `damage` (through normal
 # armor mitigation, via apply_damage()) plus a stun (_player_stun_turns_
-# left, the same shared field Pounce's/Torrent's/Song of the Siren's own
+# left, the same shared field Barbed Lunge's/Torrent's/Song of the Siren's own
 # stun already use) for `stun_turns` of the player's own turns, if
 # they're within `radius` columns of the rival's CURRENT position -
 # there's only one possible target in a hero fight, so this collapses to
@@ -16064,7 +16064,7 @@ func _maybe_consume_enemy_bash_of_the_deep_stack() -> Dictionary:
 ## Knocks the player back this level's own `knockback` columns, away from
 ## the rival (its own distance-to-player direction, falling back to its
 ## own facing on the rare column-share tie, same "still shove SOMEWHERE"
-## reasoning Pounce's own leap uses for the mirror-image case) - stopping
+## reasoning Barbed Lunge's own leap uses for the mirror-image case) - stopping
 ## early at the board edge or a player-cast Ice Shards wall. Repositions
 ## instantly via _hero_pos_index/_update_hero_position(), the same path
 ## every other player-repositioning effect in this file uses.
@@ -16164,7 +16164,7 @@ func _cast_enemy_starstorm(enemy: Dictionary, level_data: Dictionary) -> void:
 # plus bonus_per_column for every column between the rival and the
 # player at the moment it's cast (through normal armor mitigation, via
 # apply_damage()), then stuns the player (_player_stun_turns_left, the
-# same shared field Pounce's/Torrent's/Song of the Siren's own stun
+# same shared field Barbed Lunge's/Torrent's/Song of the Siren's own stun
 # already use) for this level's own stun_turns, only if the hit left him
 # alive. There's only one possible target in a hero fight, so - unlike
 # the player's own copy, which needs a separate targeting click - this
@@ -16342,7 +16342,7 @@ func _get_enemy_lunar_blessing_level_data() -> Dictionary:
 # player's own _resolve_lucent_beam_cast(): this level's own flat
 # `damage` (through normal armor mitigation, via apply_damage()), then
 # stuns the player (_player_stun_turns_left, the same shared field
-# Pounce's/Torrent's/Sacred Arrow's own stun already use) for this
+# Barbed Lunge's/Torrent's/Sacred Arrow's own stun already use) for this
 # level's own stun_turns, only if the hit left him alive. There's only
 # one possible target in a hero fight, so - unlike the player's own copy,
 # which needs a separate targeting click - this needs no separate
@@ -16849,7 +16849,7 @@ func _advance_tutorial_stage1_step(step_id: String) -> void:
 			# drifted PAST that column already, needing "move_left"
 			# instead of the "move_right" the very first approach in
 			# stage 1 always needs.
-			var melee_enemy: Dictionary = _tutorial_find_enemy_by_type("mele")
+			var melee_enemy: Dictionary = _tutorial_find_enemy_by_type("melee")
 			var move_action: String = "move_right"
 			if not melee_enemy.is_empty() and melee_enemy["pos_index"] < _hero_pos_index:
 				move_action = "move_left"
@@ -17085,7 +17085,7 @@ func _advance_tutorial_stage3_step(step_id: String) -> void:
 			TutorialManager.set_allowed_actions([])
 			_update_action_buttons()
 			TutorialManager.show_popup(
-				"That's every stage of your home zone cleared! From here you're free to roam Terrene "
+				"That's every stage of your home zone cleared! From here you're free to roam the world "
 				+ "and challenge other heroes to duels to prove yourself - each of them has their own "
 				+ "unique, dangerous skills, so stay sharp.\n\nGood luck out there.",
 				TutorialManager.exit_tutorial

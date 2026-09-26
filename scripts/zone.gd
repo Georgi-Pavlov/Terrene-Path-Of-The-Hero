@@ -133,9 +133,9 @@ func _ready() -> void:
 		_apply_tutorial_restrictions()
 
 
-## Tutorial support: Cladd Isles only has one hero (Kunkka) anyway, so
+## Tutorial support: The Ironbound Isles only has one hero (Kunkka) anyway, so
 ## the picker already lands on him - this just locks the skill choice
-## down to Torrent (see GameManager's cladd_isles hero data) and blocks
+## down to Torrent (see GameManager's the_ironbound_isles hero data) and blocks
 ## leaving the screen any other way than the tutorial's own popups.
 func _apply_tutorial_restrictions() -> void:
 	back_button.disabled = true
